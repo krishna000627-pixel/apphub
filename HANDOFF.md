@@ -12,6 +12,14 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v21
+- Fix: the installed check silently skipped every app with no package name (e.g. the QuestBlock preset, apps added without one), so nothing showed. checkInstalls now fills a missing package name from the saved APK (PackageManager.getPackageArchiveInfo), else from applicationId in the repo's app/build.gradle(.kts) (GitHub.packageOf, once per session per app), saves it on the project, then checks the phone. It also runs after every dashboard sync and when a project opens, with a guard against overlapping runs. Cards without a known package show "? Package unknown"; the package can still be set by hand in the app's Settings tab.
+
+## v20
+- True background download (ApkStore.kt): SyncWorker (WorkManager, ~hourly, runs with the app closed) checks each app's latest release and saves its APK in filesDir/apks when it is newer than the installed marker and not saved yet. Constraints: Wi-Fi (unmetered) by default, battery not low. Needs a GitHub login. Settings -> "Background download": Auto-download switch + Wi-Fi only switch (Prefs.autoDownload / wifiOnly, HubVM.updateAutoDownload / updateWifiOnly). Sync.schedule runs on every app start and when a switch changes.
+- ApkStore.fetch is shared by UI and worker (one download per app at a time). The worker writes only Prefs; checkInstalls copies the saved tag into HubVM.cached on resume. Installing is never automatic: the Dashboard banner / Install screen stays the way in.
+- Dependency: androidx.work:work-runtime-ktx:2.9.1.
+
 ## v19
 - Latest APK is saved in the app's own storage (filesDir/apks, FileProvider files-path), one file per app, replaced by each newer release. It is no longer deleted after install (Reinstall needs no download); only a newer release or a missing file drops it. Old cacheDir/apks is wiped.
 - When a sync finds a release newer than the installed one, its APK is downloaded in the background (HubVM.refresh) so Update is one tap.

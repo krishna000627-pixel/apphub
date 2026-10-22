@@ -254,7 +254,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             when (vm.isInstalled(p)) {
                 true -> Pill("● On phone ${vm.onPhone[p.id] ?: ""}".trim(), Green)
                 false -> Pill("○ Not installed", Muted)
-                null -> {}
+                null -> if (p.packageName.isBlank()) Pill("? Package unknown", Muted)
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -280,7 +280,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val err = vm.errors[id] ?: ""
     val upd = vm.hasUpdate(p)
     val pend = vm.pending(p)
-    LaunchedEffect(id) { vm.refresh(p, false); vm.loadDetails(p, false) }
+    LaunchedEffect(id) { vm.refresh(p, false); vm.loadDetails(p, false); vm.checkInstalls() }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Header(p.name, nav) {
@@ -713,6 +713,14 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             Spacer(Modifier.height(8.dp))
             if (vm.login.isBlank()) BigButton("Login with GitHub", Icons.Default.Login) { vm.startLogin() }
             else OutlinedButton({ vm.logout() }) { Text("Log out") }
+        }
+        Panel {
+            Text("Background download", fontWeight = FontWeight.Bold)
+            Text("Saves the newest APK of your apps about once an hour, even when App Hub is closed. Installing is still your tap.", fontSize = 12.sp, color = Muted)
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.autoDownload, { vm.updateAutoDownload(it) }); Text("  Auto-download new builds", fontSize = 13.sp) }
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.wifiOnly, { vm.updateWifiOnly(it) }); Text("  Wi-Fi only", fontSize = 13.sp) }
         }
         Panel {
             Text("Apps", fontWeight = FontWeight.Bold)

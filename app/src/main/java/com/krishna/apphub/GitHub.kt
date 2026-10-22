@@ -328,6 +328,16 @@ class GitHub(private val prefs: Prefs) {
         return null
     }
 
+    /** applicationId of the app, read from app/build.gradle(.kts) in the repo. "" when not found. */
+    suspend fun packageOf(repo: String): String {
+        for (f in listOf("app/build.gradle.kts", "app/build.gradle")) {
+            val (c, b) = get("/repos/$repo/contents/$f"); if (c != 200) continue
+            val txt = runCatching { String(Base64.decode(JSONObject(b).optString("content").replace("\n", ""), Base64.DEFAULT)) }.getOrDefault("")
+            Regex("applicationId\\s*=?\\s*\"([^\"]+)\"").find(txt)?.let { return it.groupValues[1] }
+        }
+        return ""
+    }
+
     suspend fun download(url: String, dest: File, onProgress: (Long, Long) -> Unit) = withContext(Dispatchers.IO) {
         val r = rb(url).header("Accept", "application/octet-stream").build()
         http.newCall(r).execute().use { resp ->

@@ -85,6 +85,15 @@ class Prefs(ctx: Context) {
     fun detailsAt(id: Long) = sp.getLong("dt_$id", 0L)
     fun setDetailsAt(id: Long, v: Long) { sp.edit().putLong("dt_$id", v).apply() }
 
+    /** Save new APKs in the background (WorkManager), even when the app is closed. */
+    var autoDownload: Boolean
+        get() = sp.getBoolean("auto_dl", true)
+        set(v) { sp.edit().putBoolean("auto_dl", v).apply() }
+    /** Background downloads only on Wi-Fi / unmetered networks. */
+    var wifiOnly: Boolean
+        get() = sp.getBoolean("wifi_only", true)
+        set(v) { sp.edit().putBoolean("wifi_only", v).apply() }
+
     fun zipSeen(id: Long) = s("zs_$id")
     fun setZipSeen(id: Long, v: String) = put("zs_$id", v)
 
@@ -108,7 +117,7 @@ object Presets {
     val all = listOf(
         Preset("QuestBlock", "questblock", "", HOME + "QuestBlock", version = "v285"),
         Preset("BgBrowser", "bgbrowser", "com.bgbrowser", HOME + "BgBrowser"),
-        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v19"),
+        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v21"),
         Preset("Videowall", "videowall", "", HOME + "Videowall")
     )
 }

@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Base64
 import android.widget.Toast
@@ -51,6 +52,10 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var zipPack by mutableStateOf<Zipper.Pack?>(null)
     var deploying by mutableStateOf(false)
     var autoInstall by mutableStateOf(prefs.autoInstall)
+        private set
+    var autoDownload by mutableStateOf(prefs.autoDownload)
+        private set
+    var wifiOnly by mutableStateOf(prefs.wifiOnly)
         private set
     private var deployGen = 0
     val deployLog = mutableStateListOf<String>()
@@ -124,10 +129,10 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     // ---- APK cache: downloaded -> installed -> cleared ----
     // Saved in the app's own storage (not the system cache), so Android does not wipe the latest APK. One file per app, replaced by each newer release.
-    private val apkDir get() = File(getApplication<Application>().filesDir, "apks")
+    private val apkDir get() = ApkStore.dir(getApplication<Application>())
     private val downloading = mutableSetOf<Long>()
     val onPhone = mutableStateMapOf<Long, String>()   // versionName of the app on this phone, "" = not installed (apps without a package name are absent)
-    fun apkFile(p: Project) = File(apkDir, "app_${p.id}.apk")
+    fun apkFile(p: Project) = ApkStore.file(getApplication<Application>(), p.id)
     fun cachedTag(id: Long) = cached[id] ?: prefs.cachedTag(id)
     fun hasCached(p: Project) = cachedTag(p.id).isNotBlank() && apkFile(p).exists()
 
@@ -141,13 +146,10 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun installSkipped(p: Project) = prefs.installTry(p.id) > 0L
 
     /** Downloads the release APK into the cache (via a .part file so a broken download is never installed). */
-    suspend fun fetchApk(p: Project, r: GitHub.Rel, onProgress: (Long, Long) -> Unit): Boolean = withContext(Dispatchers.IO) {
-        val f = apkFile(p); val part = File(f.path + ".part")
-        f.parentFile?.mkdirs()
-        val ok = runCatching { gh.download(r.assetUrl, part, onProgress) }.isSuccess && part.length() > 0 && run { f.delete(); part.renameTo(f) }
-        if (!ok) { part.delete(); return@withContext false }
-        prefs.setCachedTag(p.id, r.tag); prefs.setInstallTry(p.id, 0L); cached[p.id] = r.tag
-        true
+    suspend fun fetchApk(p: Project, r: GitHub.Rel, onProgress: (Long, Long) -> Unit): Boolean {
+        val ok = ApkStore.fetch(getApplication<Application>(), gh, prefs, p, r, onProgress)
+        if (ok) cached[p.id] = r.tag
+        return ok
     }
 
     /** Opens the system installer for the cached APK. The app is marked installed only once Android confirms it (checkInstalls). */
@@ -172,28 +174,60 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     }
 
     /** Confirms installs that finished (package updated after the installer was opened), then clears used or stale APKs. */
-    fun checkInstalls() = viewModelScope.launch(Dispatchers.IO) {
-        val list = dao.all().first()
-        val pm = getApplication<Application>().packageManager
-        getApplication<Application>().cacheDir.let { File(it, "apks").deleteRecursively() }   // old location (before v19)
-        list.forEach { p ->
-            // is the app on this phone? an uninstalled app also clears its installed marker
-            if (p.packageName.isNotBlank()) {
-                val ver = runCatching { pm.getPackageInfo(p.packageName, 0).versionName ?: "?" }.getOrNull()
-                onPhone[p.id] = ver ?: ""
-                if (ver == null && installedTag(p.id).isNotBlank()) markInstalled(p.id, "")
-            }
-            val tag = cachedTag(p.id)
-            val tried = prefs.installTry(p.id)
-            if (tag.isNotBlank() && tried > 0L && p.packageName.isNotBlank()) {
-                val updated = runCatching { pm.getPackageInfo(p.packageName, 0).lastUpdateTime }.getOrNull()
-                if (updated != null && updated >= tried) markInstalled(p.id, tag)
-            }
-            pruneOne(p)
+    private val checking = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val detecting = mutableSetOf<Long>()   // apps whose package name was already looked up online this session
+
+    /** Package name of an app that has none yet: from its saved APK, else from applicationId in the repo's app/build.gradle(.kts). */
+    private suspend fun detectPackage(p: Project, pm: PackageManager): String {
+        val f = apkFile(p)
+        if (f.exists()) {
+            val n = runCatching { pm.getPackageArchiveInfo(f.path, 0)?.packageName }.getOrNull()
+            if (!n.isNullOrBlank()) return n
         }
-        // leftovers from older versions or deleted apps (finished downloads only, never a .part in progress)
-        val keep = list.filter { cachedTag(it.id).isNotBlank() }.map { apkFile(it).name }.toSet()
-        apkDir.listFiles()?.filter { it.name !in keep && !it.name.endsWith(".part") }?.forEach { it.delete() }
+        if (p.repo.contains("/") && prefs.token.isNotBlank() && detecting.add(p.id)) {
+            val r = runCatching { gh.packageOf(p.repo) }
+            if (r.isFailure) detecting.remove(p.id)
+            return r.getOrDefault("")
+        }
+        return ""
+    }
+
+    /** Runs on every resume: finds missing package names, checks which apps are on this phone, confirms finished installs, clears stale APKs. */
+    fun checkInstalls() = viewModelScope.launch(Dispatchers.IO) {
+        if (!checking.compareAndSet(false, true)) return@launch
+        try {
+            val list = dao.all().first()
+            val pm = getApplication<Application>().packageManager
+            getApplication<Application>().cacheDir.let { File(it, "apks").deleteRecursively() }   // old location (before v19)
+            list.forEach { p0 ->
+                var p = p0
+                if (p.packageName.isBlank()) {
+                    val found = detectPackage(p, pm)
+                    if (found.isNotBlank()) {
+                        p = p.copy(packageName = found)
+                        lock.withLock { projects.value.firstOrNull { it.id == p0.id }?.let { dao.save(it.copy(packageName = found)) } }
+                    }
+                }
+                // the background worker saves APKs without the UI: pick up what it stored
+                prefs.cachedTag(p.id).let { if (it.isBlank()) cached.remove(p.id) else if (cached[p.id] != it) cached[p.id] = it }
+                // is the app on this phone? an uninstalled app also clears its installed marker
+                if (p.packageName.isNotBlank()) {
+                    val ver = runCatching { pm.getPackageInfo(p.packageName, 0).versionName ?: "?" }.getOrNull()
+                    onPhone[p.id] = ver ?: ""
+                    if (ver == null && installedTag(p.id).isNotBlank()) markInstalled(p.id, "")
+                }
+                val tag = cachedTag(p.id)
+                val tried = prefs.installTry(p.id)
+                if (tag.isNotBlank() && tried > 0L && p.packageName.isNotBlank()) {
+                    val updated = runCatching { pm.getPackageInfo(p.packageName, 0).lastUpdateTime }.getOrNull()
+                    if (updated != null && updated >= tried) markInstalled(p.id, tag)
+                }
+                pruneOne(p)
+            }
+            // leftovers from older versions or deleted apps (finished downloads only, never a .part in progress)
+            val keep = list.filter { cachedTag(it.id).isNotBlank() }.map { apkFile(it).name }.toSet()
+            apkDir.listFiles()?.filter { it.name !in keep && !it.name.endsWith(".part") }?.forEach { it.delete() }
+        } finally { checking.set(false) }
     }
 
     /** True when the version label is ahead of what was last pushed (an update waiting to be pushed). */
@@ -287,6 +321,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         toast(if (c > 0) "Added $c preset app(s)" else "All preset apps are already added")
     }
 
+    fun updateAutoDownload(v: Boolean) { autoDownload = v; prefs.autoDownload = v; Sync.schedule(getApplication<Application>(), prefs) }
+    fun updateWifiOnly(v: Boolean) { wifiOnly = v; prefs.wifiOnly = v; Sync.schedule(getApplication<Application>(), prefs) }
+
     fun bumpVersion(p: Project) = update(p.copy(version = Commands.bump(p.version)))
 
     fun sel(): Project? = projects.value.firstOrNull { it.id == selId } ?: projects.value.firstOrNull()
@@ -331,7 +368,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         rel?.let { latest[p.id] = it.tag }
         pruneOne(p)
         // a newer release than the installed one: save its APK in the app now, so Update is one tap
-        if (rel != null && hasUpdate(p) && cachedTag(p.id) != rel.tag && downloading.add(p.id)) {
+        if (autoDownload && rel != null && hasUpdate(p) && cachedTag(p.id) != rel.tag && downloading.add(p.id)) {
             viewModelScope.launch { try { fetchApk(p, rel) { _, _ -> } } finally { downloading.remove(p.id) } }
         }
         lock.withLock {
@@ -361,6 +398,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         refreshing = true
         projects.value.map { refresh(it, force) }.forEach { it.join() }
         scanZips(getApplication())
+        checkInstalls()
         refreshing = false
     }
 
