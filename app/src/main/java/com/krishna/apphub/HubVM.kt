@@ -72,7 +72,32 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var logLines by mutableStateOf<List<String>>(emptyList())
     var logLoading by mutableStateOf(false)
 
+    // ---- local snapshot: last known GitHub data, so the UI is filled instantly and only syncs when stale ----
+    private val snapDir get() = File(getApplication<Application>().cacheDir, "snap")
+    private val snapped = mutableSetOf<Long>()
+    private val staleMs = 10 * 60_000L
+    private fun fresh(at: Long) = System.currentTimeMillis() - at < staleMs
+
+    private fun loadSnaps() {
+        snapDir.listFiles()?.forEach { f ->
+            val id = f.nameWithoutExtension.toLongOrNull() ?: return@forEach
+            val s = SnapCache.load(snapDir, id) ?: return@forEach
+            snapped += id
+            runs[id] = s.runs; errors[id] = s.error
+            if (s.latest.isNotBlank()) latest[id] = s.latest
+            s.info?.let { infos[id] = it }
+            commits[id] = s.commits; releases[id] = s.releases
+        }
+    }
+
+    private fun saveSnap(p: Project) {
+        SnapCache.save(snapDir, p.id, SnapCache.Snap(runs[p.id] ?: emptyList(), latest[p.id] ?: "", errors[p.id] ?: "",
+            infos[p.id], commits[p.id] ?: emptyList(), releases[p.id] ?: emptyList()))
+        snapped += p.id
+    }
+
     init {
+        loadSnaps()
         viewModelScope.launch {
             if (prefs.seeded) listOf("questblock", "bgbrowser", "apphub").forEach { prefs.setPresetSeen(it) }  // already offered before v12
             seedMissing(onlyNew = true); prefs.seeded = true
@@ -201,7 +226,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (ok) { delay(3_000); refresh(p) }
     }
 
-    fun setAutoInstall(v: Boolean) { autoInstall = v; prefs.autoInstall = v }
+    fun updateAutoInstall(v: Boolean) { autoInstall = v; prefs.autoInstall = v }
 
     fun skipZip(p: Project, f: File) { prefs.setZipSeen(p.id, Downloads.key(f)); zipFound.remove(p.id) }
 
@@ -263,7 +288,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             Intent(Intent.ACTION_VIEW, Uri.parse(j.getString("verification_uri"))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val ok = gh.pollToken(j.getString("device_code"), j.optInt("interval", 5))
         userCode = null
-        if (ok) { login = gh.user() ?: ""; prefs.login = login; toast("Logged in as $login"); fixOwners(); refreshAll() } else toast("Login failed")
+        if (ok) { login = gh.user() ?: ""; prefs.login = login; toast("Logged in as $login"); fixOwners(); refreshAll(true) } else toast("Login failed")
     }
 
     fun logout() { prefs.token = ""; prefs.login = ""; login = "" }
@@ -273,9 +298,13 @@ class HubVM(app: Application) : AndroidViewModel(app) {
      * Pulls build runs and keeps the version label in step automatically, however the build was triggered
      * (app push, GitHub website, re-run, Build button): a pushed "vNNN:" message sets the version, anything else bumps it by one.
      */
-    fun refresh(p: Project) = viewModelScope.launch {
+    fun refresh(p: Project, force: Boolean = true) = viewModelScope.launch {
         if (!p.repo.contains("/")) return@launch
-        val r = gh.runs(p.repo); runs[p.id] = r
+        // fresh local snapshot and no build in progress: nothing to fetch
+        if (!force && p.id in snapped && p.lastStatus != "running" && fresh(prefs.syncedAt(p.id))) return@launch
+        val r = gh.runs(p.repo)
+        if (r.isEmpty() && runs[p.id] != null) return@launch   // offline or API error: keep what is cached
+        runs[p.id] = r
         val last = r.firstOrNull()
         val status = when { last == null -> "none"; last.ok == null -> "running"; last.ok == true -> "passed"; else -> "failed" }
         val err = if (status == "failed") gh.errorOf(p.repo, last!!.id) else ""
@@ -302,21 +331,24 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 dao.save(cur.copy(version = label, lastStatus = status, lastError = err))
             }
         }
+        prefs.setSyncedAt(p.id, System.currentTimeMillis()); saveSnap(p)
     }
 
-    fun refreshAll() = viewModelScope.launch {
+    fun refreshAll(force: Boolean = false) = viewModelScope.launch {
         refreshing = true
-        projects.value.map { refresh(it) }.forEach { it.join() }
+        projects.value.map { refresh(it, force) }.forEach { it.join() }
         scanZips(getApplication())
         refreshing = false
     }
 
     /** Repo info, recent commits and releases, fetched inside the app. */
-    fun loadDetails(p: Project) = viewModelScope.launch {
+    fun loadDetails(p: Project, force: Boolean = true) = viewModelScope.launch {
         if (!p.repo.contains("/")) return@launch
+        if (!force && p.id in snapped && infos[p.id] != null && fresh(prefs.detailsAt(p.id))) return@launch
         gh.info(p.repo)?.let { infos[p.id] = it }
-        commits[p.id] = gh.commits(p.repo)
-        releases[p.id] = gh.releases(p.repo)
+        gh.commits(p.repo).let { if (it.isNotEmpty()) commits[p.id] = it }
+        gh.releases(p.repo).let { if (it.isNotEmpty()) releases[p.id] = it }
+        prefs.setDetailsAt(p.id, System.currentTimeMillis()); saveSnap(p)
     }
 
     fun openLog(p: Project, j: GitHub.Job) = viewModelScope.launch {
@@ -330,7 +362,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun loadJobs(p: Project, runId: Long) = viewModelScope.launch { jobs[runId] = gh.jobs(p.repo, runId) }
 
     fun update(p: Project) = viewModelScope.launch { dao.save(p) }
-    fun delete(p: Project) = viewModelScope.launch { dropCache(p); dao.delete(p) }
+    fun delete(p: Project) = viewModelScope.launch { dropCache(p); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
 
     fun build(p: Project) = viewModelScope.launch {
         toast(if (gh.dispatch(p.repo)) "Build triggered on GitHub" else "Trigger failed — push the workflow first")

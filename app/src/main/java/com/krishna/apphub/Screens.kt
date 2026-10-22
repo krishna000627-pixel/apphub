@@ -171,7 +171,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val ps by vm.projects.collectAsState()
     var f by remember { mutableStateOf("All") }
     var q by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { vm.refreshAll() }
+    LaunchedEffect(Unit) { vm.refreshAll() }   // cached data shows at once; syncs only when older than 10 min
     fun hit(p: Project, k: String) = when (k) {
         "Pinned" -> vm.isPinned(p.id); "To push" -> vm.pending(p); "Errors" -> p.lastStatus == "failed"; "Updates" -> vm.hasUpdate(p); else -> true
     }
@@ -179,7 +179,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         .sortedWith(compareByDescending<Project> { vm.isPinned(it.id) }.thenBy { it.name.lowercase() })
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header("App Hub") {
-            IconButton({ vm.refreshAll() }, Modifier.size(40.dp)) {
+            IconButton({ vm.refreshAll(true) }, Modifier.size(40.dp)) {
                 if (vm.refreshing) CircularProgressIndicator(Modifier.size(18.dp), color = Green, strokeWidth = 2.dp) else Icon(Icons.Default.Refresh, null)
             }
             IconButton({ nav.navigate("add") }, Modifier.size(40.dp)) { Icon(Icons.Default.Add, null, tint = Green) }
@@ -262,7 +262,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val err = vm.errors[id] ?: ""
     val upd = vm.hasUpdate(p)
     val pend = vm.pending(p)
-    LaunchedEffect(id) { vm.refresh(p); vm.loadDetails(p) }
+    LaunchedEffect(id) { vm.refresh(p, false); vm.loadDetails(p, false) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Header(p.name, nav) {
@@ -477,7 +477,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.pickZip(ctx, uri) }
     val pack = vm.zipPack
     val last = p?.let { vm.runs[it.id]?.firstOrNull() }
-    LaunchedEffect(p?.id) { p?.let { vm.refresh(it) } }
+    LaunchedEffect(p?.id) { p?.let { vm.refresh(it, false) } }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Deploy")
         Text("Pick your zip and App Hub pushes it to GitHub and builds it. Nothing else needed.", fontSize = 12.sp, color = Muted)
@@ -511,7 +511,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         }
         OutlinedTextField(note, { note = it }, label = { Text("Release note (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         if (pack != null && p != null) Mono("commit : ${pack.version.ifBlank { Commands.bump(p.version) }}: ${note.ifBlank { "update from App Hub" }}", color = Muted)
-        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.autoInstall, { vm.setAutoInstall(it) }); Text("  Open the installer when the build passes", fontSize = 12.sp) }
+        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.autoInstall, { vm.updateAutoInstall(it) }); Text("  Open the installer when the build passes", fontSize = 12.sp) }
         if (pack != null && p != null) OutlinedButton({ vm.preview(p, pack) }, Modifier.fillMaxWidth(), enabled = !vm.deploying) {
             Icon(Icons.Default.Compare, null, Modifier.size(16.dp)); Text(" Preview changes (nothing is pushed)", fontSize = 13.sp)
         }
