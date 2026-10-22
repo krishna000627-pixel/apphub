@@ -42,6 +42,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     val commits = mutableStateMapOf<Long, List<GitHub.Commit>>()
     val releases = mutableStateMapOf<Long, List<GitHub.Release>>()
     val jobs = mutableStateMapOf<Long, List<GitHub.Job>>()
+    val cached = mutableStateMapOf<Long, String>()    // release tag of the APK waiting in the cache, per app
     val zipFound = mutableStateMapOf<Long, File>()    // newest unpushed zip per app
     val zipLatest = mutableStateMapOf<Long, File>()   // newest zip per app, pushed or not
     val zipDismissed = mutableStateListOf<String>()   // "ask me later" for this session
@@ -90,6 +91,62 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val l = latest[p.id] ?: return false
         val i = installedTag(p.id)
         return i.isNotBlank() && i != l
+    }
+
+    // ---- APK cache: downloaded -> installed -> cleared ----
+    private val apkDir get() = File(getApplication<Application>().cacheDir, "apks")
+    fun apkFile(p: Project) = File(apkDir, "app_${p.id}.apk")
+    fun cachedTag(id: Long) = cached[id] ?: prefs.cachedTag(id)
+    fun hasCached(p: Project) = cachedTag(p.id).isNotBlank() && apkFile(p).exists()
+
+    /** Downloads the release APK into the cache (via a .part file so a broken download is never installed). */
+    suspend fun fetchApk(p: Project, r: GitHub.Rel, onProgress: (Long, Long) -> Unit): Boolean = withContext(Dispatchers.IO) {
+        val f = apkFile(p); val part = File(f.path + ".part")
+        f.parentFile?.mkdirs()
+        val ok = runCatching { gh.download(r.assetUrl, part, onProgress) }.isSuccess && part.length() > 0 && run { f.delete(); part.renameTo(f) }
+        if (!ok) { part.delete(); return@withContext false }
+        prefs.setCachedTag(p.id, r.tag); prefs.setInstallTry(p.id, 0L); cached[p.id] = r.tag
+        true
+    }
+
+    /** Opens the system installer for the cached APK. The app is marked installed only once Android confirms it (checkInstalls). */
+    fun installCached(ctx: Context, p: Project) {
+        if (!hasCached(p)) { dropCache(p); toast("Cached APK is gone, download again"); return }
+        prefs.setInstallTry(p.id, System.currentTimeMillis())
+        // Without a package name the install can't be verified, so trust the tap (the cache is still cleared on the next release).
+        if (p.packageName.isBlank()) markInstalled(p.id, cachedTag(p.id))
+        gh.install(ctx, apkFile(p))
+    }
+
+    fun dropCache(p: Project) {
+        apkFile(p).delete(); File(apkFile(p).path + ".part").delete()
+        prefs.setCachedTag(p.id, ""); prefs.setInstallTry(p.id, 0L); cached.remove(p.id)
+    }
+
+    /** Clears a cached APK that is no longer needed: a newer release passed, or this one is already installed. */
+    private fun pruneOne(p: Project) {
+        val tag = cachedTag(p.id); if (tag.isBlank()) return
+        val newer = latest[p.id]?.let { it != tag } == true
+        val installedNow = prefs.installTry(p.id) > 0L && installedTag(p.id) == tag
+        if (newer || installedNow || !apkFile(p).exists()) dropCache(p)
+    }
+
+    /** Confirms installs that finished (package updated after the installer was opened), then clears used or stale APKs. */
+    fun checkInstalls() = viewModelScope.launch(Dispatchers.IO) {
+        val list = dao.all().first()
+        val pm = getApplication<Application>().packageManager
+        list.forEach { p ->
+            val tag = cachedTag(p.id)
+            val tried = prefs.installTry(p.id)
+            if (tag.isNotBlank() && tried > 0L && p.packageName.isNotBlank()) {
+                val updated = runCatching { pm.getPackageInfo(p.packageName, 0).lastUpdateTime }.getOrNull()
+                if (updated != null && updated >= tried) markInstalled(p.id, tag)
+            }
+            pruneOne(p)
+        }
+        // leftovers from older versions or deleted apps (finished downloads only, never a .part in progress)
+        val keep = list.filter { cachedTag(it.id).isNotBlank() }.map { apkFile(it).name }.toSet()
+        apkDir.listFiles()?.filter { it.name !in keep && !it.name.endsWith(".part") }?.forEach { it.delete() }
     }
 
     /** True when the version label is ahead of what was last pushed (an update waiting to be pushed). */
@@ -197,6 +254,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val err = if (status == "failed") gh.errorOf(p.repo, last!!.id) else ""
         errors[p.id] = err
         gh.latest(p.repo)?.let { latest[p.id] = it.tag }
+        pruneOne(p)
         lock.withLock {
             val cur = projects.value.firstOrNull { it.id == p.id }
             if (cur != null) {
@@ -245,7 +303,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun loadJobs(p: Project, runId: Long) = viewModelScope.launch { jobs[runId] = gh.jobs(p.repo, runId) }
 
     fun update(p: Project) = viewModelScope.launch { dao.save(p) }
-    fun delete(p: Project) = viewModelScope.launch { dao.delete(p) }
+    fun delete(p: Project) = viewModelScope.launch { dropCache(p); dao.delete(p) }
 
     fun build(p: Project) = viewModelScope.launch {
         toast(if (gh.dispatch(p.repo)) "Build triggered on GitHub" else "Trigger failed — push the workflow first")

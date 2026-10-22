@@ -17,6 +17,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         hub.scanZips(this)
+        hub.checkInstalls()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

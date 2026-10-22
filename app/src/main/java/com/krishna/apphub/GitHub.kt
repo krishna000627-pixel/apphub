@@ -252,7 +252,8 @@ class GitHub(private val prefs: Prefs) {
     suspend fun download(url: String, dest: File, onProgress: (Long, Long) -> Unit) = withContext(Dispatchers.IO) {
         val r = rb(url).header("Accept", "application/octet-stream").build()
         http.newCall(r).execute().use { resp ->
-            val body = resp.body ?: return@use
+            if (!resp.isSuccessful) error("HTTP ${resp.code}")
+            val body = resp.body ?: error("empty response")
             val total = body.contentLength()
             body.byteStream().use { i -> dest.outputStream().use { o ->
                 val buf = ByteArray(16384); var done = 0L

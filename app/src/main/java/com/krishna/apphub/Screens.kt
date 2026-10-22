@@ -296,6 +296,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                         Spacer(Modifier.height(6.dp))
                         Mono("status   : ${p.lastStatus}", color = statusColor(p.lastStatus))
                         Mono("installed: ${vm.installedTag(id).ifBlank { "-" }}"); Mono("latest   : ${vm.latest[id] ?: "-"}")
+                        if (vm.hasCached(p)) Mono("cached   : ${vm.cachedTag(id)} (not installed yet)", color = Amber)
                     }
                 }
                 item { Text("Recent commits", color = Muted, fontSize = 12.sp) }
@@ -349,7 +350,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                             Text(r.tag, Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Cyan)
                             Text(ago(r.time), fontSize = 12.sp, color = Muted)
                         }
-                        if (r.notes.isNotBlank()) Mono(r.notes.take(300))
+                        Mono(notesOrDefault(r.notes).take(300))
                         if (r.sizeKb > 0) Mono("APK ${"%.1f".format(r.sizeKb / 1024.0)} MB", color = Muted)
                     }
                 }
@@ -614,18 +615,24 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 else -> {
                     Text(if (inst == r.tag) "Up to date" else if (inst.isBlank()) "Latest build available" else "Update available", color = Cyan, fontWeight = FontWeight.Bold)
                     Text("${inst.ifBlank { "not installed here" }} → ${r.tag}", fontSize = 18.sp, fontFamily = FontFamily.Monospace)
+                    if (vm.cachedTag(id) == r.tag && vm.hasCached(p) && inst != r.tag) Mono("Downloaded and waiting for install", color = Amber)
                 }
             }
         }
         if (prog > 0f) { LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green); Mono("${(prog * 100).toInt()}%") }
         rel?.let { r ->
-            if (r.body.isNotBlank()) Panel { Text("What's new", fontWeight = FontWeight.Bold); Mono(r.body) }
-            BigButton(if (vm.installedTag(id) == r.tag) "Reinstall" else "Download & Install", Icons.Default.Download) {
+            Panel { Text("What's new", fontWeight = FontWeight.Bold); Mono(notesOrDefault(r.body)) }
+            val inst = vm.installedTag(id)
+            val ready = vm.cachedTag(id) == r.tag && vm.hasCached(p)
+            BigButton(if (inst == r.tag) "Reinstall" else if (ready) "Install downloaded APK" else "Download & Install", Icons.Default.Download) {
                 scope.launch {
-                    val f = File(ctx.cacheDir, "apks").apply { mkdirs() }.resolve("${p.name}.apk")
-                    val ok = runCatching { vm.gh.download(r.assetUrl, f) { d, t -> if (t > 0) prog = d.toFloat() / t } }.isSuccess
-                    if (!ok) { vm.toast("Download failed"); return@launch }
-                    vm.markInstalled(id, r.tag); vm.gh.install(ctx, f)
+                    if (!ready) {
+                        prog = 0.01f
+                        val ok = vm.fetchApk(p, r) { d, t -> if (t > 0) prog = d.toFloat() / t }
+                        prog = 0f
+                        if (!ok) { vm.toast("Download failed"); return@launch }
+                    }
+                    vm.installCached(ctx, p)
                 }
             }
         }

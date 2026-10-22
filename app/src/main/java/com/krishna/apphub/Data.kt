@@ -63,6 +63,13 @@ class Prefs(ctx: Context) {
     fun pushedVer(id: Long) = s("pv_$id")
     fun setPushedVer(id: Long, v: String) = put("pv_$id", v)
 
+    /** Release tag of the APK sitting in the cache for this app ("" = nothing cached). */
+    fun cachedTag(id: Long) = s("ct_$id")
+    fun setCachedTag(id: Long, v: String) = put("ct_$id", v)
+    /** When the system installer was opened for the cached APK (0 = not opened yet). */
+    fun installTry(id: Long) = sp.getLong("it_$id", 0L)
+    fun setInstallTry(id: Long, v: Long) { sp.edit().putLong("it_$id", v).apply() }
+
     fun zipSeen(id: Long) = s("zs_$id")
     fun setZipSeen(id: Long, v: String) = put("zs_$id", v)
 
@@ -73,6 +80,10 @@ class Prefs(ctx: Context) {
     fun keys(repo: String) = s("ks_$repo")
 }
 
+/** Shown when a release has no notes, the way Google Play falls back to a generic line. */
+const val DEFAULT_NOTES = "Bug fixes and performance improvements."
+fun notesOrDefault(body: String): String = body.trim().ifBlank { DEFAULT_NOTES }
+
 /** Apps that are added automatically on first launch (owner is filled in once you log in). */
 data class Preset(val name: String, val repo: String, val pkg: String, val path: String,
                   val stack: String = "Kotlin • Compose", val version: String = "v1")
@@ -82,6 +93,6 @@ object Presets {
     val all = listOf(
         Preset("QuestBlock", "questblock", "", HOME + "QuestBlock", version = "v285"),
         Preset("BgBrowser", "bgbrowser", "com.bgbrowser", HOME + "BgBrowser"),
-        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v10")
+        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v11")
     )
 }
