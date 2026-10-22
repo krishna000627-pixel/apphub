@@ -12,6 +12,11 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v23
+- Version label = newest "vNNN:" commit among the last 15 runs (HubVM.refresh). Merge commits, cancelled runs, re-runs and dispatches no longer bump it (v22 push + merge showed v23 before). The label may only stay ahead of the pushed version when set by hand (Prefs.manualVer, set in HubVM.update / bump). Deploy sets pushedV right after a successful push, so no "+ Push vN" flash.
+- Cancelled runs (conclusion=cancelled) are kept out of the shown runs/status (GitHub.Run.cancelled), so a cancelled build is not "failed".
+- Device flow cannot redirect (GitHub only redirects the web flow, which needs the client secret; PKCE does not remove that). Instead: after approval is detected while App Hub is in the background (HubVM.inForeground), it tries startActivity(MainActivity) and posts a "Logged in - tap to return" notification (POST_NOTIFICATIONS asked once at start).
+
 ## v22
 - Login return: manifest has launchMode=singleTask + intent-filter for apphub://oauth. With a client secret (Settings -> GitHub, or -PAPPHUB_CLIENT_SECRET) login uses the web flow with PKCE: browser -> GitHub -> apphub://oauth -> App Hub exchanges the code (HubVM.handleCallback, GitHub.exchangeCode). The OAuth app's Callback URL must be apphub://oauth. Without a secret the device flow is used.
 - Device flow fixes: pending code stored in Prefs (pending*), polling restarts and checks at once on every onResume (HubVM.resumeLogin), expiry honored, readable errors (device_flow_disabled, access_denied, expired, wrong client id), no double polls, Cancel button, bad token cleared if /user fails.

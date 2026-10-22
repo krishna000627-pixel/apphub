@@ -5,6 +5,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import android.os.Build
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -21,8 +24,13 @@ class MainActivity : ComponentActivity() {
         hub.handleCallback(intent.data)
     }
 
+    private val askNotif = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    override fun onPause() { hub.inForeground = false; super.onPause() }
+
     override fun onResume() {
         super.onResume()
+        hub.inForeground = true
         hub.resumeLogin()
         hub.scanZips(this)
         hub.checkInstalls()
@@ -33,6 +41,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (savedInstanceState == null) hub.handleCallback(intent?.data)
         Sync.schedule(applicationContext, hub.prefs)
+        // one-time: lets the login notification ("tap to return") show after approving on GitHub
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            && !getSharedPreferences("hub_ui", MODE_PRIVATE).getBoolean("asked_notif", false)) {
+            getSharedPreferences("hub_ui", MODE_PRIVATE).edit().putBoolean("asked_notif", true).apply()
+            askNotif.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContent {
             HubTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {

@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit
 private fun JSONObject.s(k: String): String = if (isNull(k)) "" else optString(k, "")
 
 class GitHub(private val prefs: Prefs) {
-    data class Run(val id: Long, val number: Int, val ok: Boolean?, val time: String, val msg: String, val event: String = "")
+    data class Run(val id: Long, val number: Int, val ok: Boolean?, val time: String, val msg: String, val event: String = "", val cancelled: Boolean = false)
     data class Info(val desc: String, val lang: String, val branch: String, val sizeKb: Int, val issues: Int, val priv: Boolean, val pushed: String, val stars: Int)
     data class Commit(val sha: String, val msg: String, val author: String, val time: String)
     data class Release(val tag: String, val time: String, val notes: String, val sizeKb: Long)
@@ -126,7 +126,7 @@ class GitHub(private val prefs: Prefs) {
     suspend fun dispatch(repo: String) =
         send("POST", "/repos/$repo/actions/workflows/build.yml/dispatches", JSONObject().put("ref", "main")).first == 204
 
-    suspend fun runs(repo: String, n: Int = 8): List<Run> {
+    suspend fun runs(repo: String, n: Int = 15): List<Run> {
         val (c, b) = get("/repos/$repo/actions/runs?per_page=$n")
         if (c != 200) return emptyList()
         val a = JSONObject(b).getJSONArray("workflow_runs")
@@ -137,7 +137,8 @@ class GitHub(private val prefs: Prefs) {
                 if (o.isNull("conclusion")) null else o.getString("conclusion") == "success",
                 o.getString("created_at").replace("T", " ").take(16),
                 o.optJSONObject("head_commit")?.optString("message")?.lineSequence()?.first() ?: "",
-                o.optString("event")
+                o.optString("event"),
+                o.optString("conclusion") == "cancelled"
             )
         }
     }

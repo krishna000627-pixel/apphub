@@ -84,6 +84,9 @@ class Prefs(ctx: Context) {
 
     fun lastRun(id: Long) = sp.getLong("lr_$id", 0L)
     fun setLastRun(id: Long, v: Long) { sp.edit().putLong("lr_$id", v).apply() }
+    /** Version label the user set by hand (Settings / bump); only then may the label stay ahead of the last pushed "vNNN:" commit. */
+    fun manualVer(id: Long) = s("mv_$id")
+    fun setManualVer(id: Long, v: String) = put("mv_$id", v)
     fun pushedVer(id: Long) = s("pv_$id")
     fun setPushedVer(id: Long, v: String) = put("pv_$id", v)
 

@@ -1,11 +1,16 @@
 package com.krishna.apphub
 
+import android.Manifest
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.net.Uri
 import android.util.Base64
 import android.widget.Toast
@@ -39,6 +44,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     val pins = mutableStateMapOf<Long, Boolean>()
     val installed = mutableStateMapOf<Long, String>()
     val pushedV = mutableStateMapOf<Long, String>()
+    /** Set by MainActivity (onResume/onPause): true while App Hub is on screen. */
+    @Volatile var inForeground = false
     val autoV = mutableStateMapOf<Long, Boolean>()
     val infos = mutableStateMapOf<Long, GitHub.Info>()
     val commits = mutableStateMapOf<Long, List<GitHub.Commit>>()
@@ -442,6 +449,28 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (u == null) { prefs.token = ""; loginMsg = "GitHub rejected the token (could not read your user)"; toast(loginMsg); return }
         login = u; prefs.login = u; loginMsg = ""
         toast("Logged in as $u"); fixOwners(); refreshAll(true)
+        if (!inForeground) comeBack(u)
+    }
+
+    /**
+     * Device flow has no redirect (GitHub cannot call apphub://oauth), so when the approval is noticed while the
+     * browser is still on screen the app brings itself back: first a direct launch (works where Android allows it),
+     * and always a notification as the reliable fallback.
+     */
+    private fun comeBack(user: String) {
+        val app = getApplication<Application>()
+        val open = Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        runCatching { app.startActivity(open) }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 33 && app.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+            val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(NotificationChannel("login", "Login", NotificationManager.IMPORTANCE_HIGH))
+            val pi = PendingIntent.getActivity(app, 1, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val note = android.app.Notification.Builder(app, "login").setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("Logged in as $user").setContentText("Tap to return to App Hub")
+                .setContentIntent(pi).setAutoCancel(true).setTimeoutAfter(120_000).build()
+            nm.notify(7, note)
+        }
     }
 
     fun logout() { cancelLogin(); prefs.token = ""; prefs.login = ""; login = "" }
@@ -457,8 +486,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (!force && p.id in snapped && p.lastStatus != "running" && fresh(prefs.syncedAt(p.id))) return@launch
         val r = gh.runs(p.repo)
         if (r.isEmpty() && runs[p.id] != null) return@launch   // offline or API error: keep what is cached
-        runs[p.id] = r
-        val last = r.firstOrNull()
+        val real = r.filter { !it.cancelled }   // a run you cancelled is not a result: it never shows as failed
+        runs[p.id] = real
+        val last = real.firstOrNull()
         val status = when { last == null -> "none"; last.ok == null -> "running"; last.ok == true -> "passed"; else -> "failed" }
         val err = if (status == "failed") gh.errorOf(p.repo, last!!.id) else ""
         errors[p.id] = err
@@ -472,20 +502,15 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         lock.withLock {
             val cur = projects.value.firstOrNull { it.id == p.id }
             if (cur != null) {
-                val seen = prefs.lastRun(p.id)
-                var pushed = prefs.pushedVer(p.id).ifBlank { cur.version }
-                if (seen > 0L) {
-                    r.filter { it.id > seen }.sortedBy { it.id }.forEach { run ->
-                        val v = vOf(run.msg)
-                        pushed = if (v != null && run.event != "workflow_dispatch") v else Commands.bump(pushed)
-                    }
-                } else if (last != null) {
-                    val v = vOf(last.msg)
-                    if (v != null && last.event != "workflow_dispatch") pushed = v
-                }
+                // The label is the newest "vNNN:" commit that was pushed. Merge commits, cancelled runs, re-runs and
+                // manual dispatches never change it (they used to bump it by one, which gave v23 after a v22 push).
+                val pushed = r.sortedByDescending { it.id }.firstNotNullOfOrNull { vOf(it.msg) }
+                    ?: prefs.pushedVer(p.id).ifBlank { cur.version }
                 if (r.isNotEmpty()) prefs.setLastRun(p.id, r.maxOf { it.id })
                 prefs.setPushedVer(p.id, pushed); pushedV[p.id] = pushed
-                val label = if (!prefs.autoVer(p.id) || n(cur.version) > n(pushed)) cur.version else pushed
+                val manual = prefs.manualVer(p.id)
+                val keep = !prefs.autoVer(p.id) || (manual.isNotBlank() && manual == cur.version && n(cur.version) > n(pushed))
+                val label = if (keep) cur.version else pushed
                 dao.save(cur.copy(version = label, lastStatus = status, lastError = err))
             }
         }
@@ -520,7 +545,11 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     fun loadJobs(p: Project, runId: Long) = viewModelScope.launch { jobs[runId] = gh.jobs(p.repo, runId) }
 
-    fun update(p: Project) = viewModelScope.launch { dao.save(p) }
+    fun update(p: Project) = viewModelScope.launch {
+        val old = projects.value.firstOrNull { it.id == p.id }
+        if (old != null && old.version != p.version) prefs.setManualVer(p.id, p.version)
+        dao.save(p)
+    }
     fun delete(p: Project) = viewModelScope.launch { dropCache(p); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
 
     fun build(p: Project) = viewModelScope.launch {
@@ -568,6 +597,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                     ?.let { prefs.setZipSeen(p.id, Downloads.key(it)); zipFound.remove(p.id) }
                 if (res.committed) {
                     projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
+                    prefs.setPushedVer(p.id, ver); pushedV[p.id] = ver
                     deployLog += "✓ Pushed $ver (${res.added} new, ${res.changed} updated). Watching the build…"
                     watch(p, before, deployGen)
                 }
