@@ -498,6 +498,9 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     LaunchedEffect(p?.id) { vm.scanZips(ctx) }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.pickZip(ctx, uri) }
     val pack = vm.zipPack
+    var target by remember { mutableStateOf<Project?>(null) }   // set when the zip name does not match the selected project
+    // a chosen zip selects the project it is named after
+    LaunchedEffect(pack?.name) { pack?.let { pk -> vm.projectFor(pk.name)?.let { if (it.id != vm.selId) vm.selId = it.id } } }
     val last = p?.let { vm.runs[it.id]?.firstOrNull() }
     LaunchedEffect(p?.id) { p?.let { vm.refresh(it, false) } }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -524,7 +527,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 Mono("version : ${pack.version.ifBlank { "-" }}")
                 Mono("files   : ${pack.entries.size}  (skipped ${pack.skipped})")
                 Mono("size    : ${"%.1f".format(pack.bytes / 1048576.0)} MB")
-                if (p != null && !pack.name.startsWith(Commands.fileBase(p), true)) Text("⚠ This zip name doesn't match ${p.name}", color = Amber, fontSize = 12.sp)
+                if (p != null && !vm.nameMatches(p, pack.name)) Text("⚠ This zip name doesn't match ${p.name}", color = Amber, fontSize = 12.sp)
             }
             Spacer(Modifier.height(8.dp))
             OutlinedButton({ pick.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) }) {
@@ -538,7 +541,24 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             Icon(Icons.Default.Compare, null, Modifier.size(16.dp)); Text(" Preview changes (nothing is pushed)", fontSize = 13.sp)
         }
         BigButton(if (vm.deploying) "Working…" else "Push + build", Icons.Default.CloudUpload) {
-            if (pack != null && p != null) vm.deploy(ctx, p, pack, note) else vm.toast("Pick a project and a zip first")
+            if (pack != null && p != null) { if (vm.nameMatches(p, pack.name)) vm.deploy(ctx, p, pack, note) else target = p }
+            else vm.toast("Pick a project and a zip first")
+        }
+        target?.let { tp ->
+            val named = pack?.let { vm.projectFor(it.name) }
+            AlertDialog(onDismissRequest = { target = null },
+                title = { Text("Zip name does not match") },
+                text = { Text(if (named != null) "${pack?.name} is named after ${named.name} (${named.repo}), but ${tp.name} (${tp.repo}) is selected." else "${pack?.name} does not match any app name or repo name. It would go to ${tp.name} (${tp.repo}).") },
+                confirmButton = {
+                    if (named != null) TextButton({ target = null; vm.selId = named.id; if (pack != null) vm.deploy(ctx, named, pack, note) }) { Text("Push to ${named.name}", color = Green) }
+                    else TextButton({ target = null; if (pack != null) vm.deploy(ctx, tp, pack, note) }) { Text("Push to ${tp.name}", color = Green) }
+                },
+                dismissButton = {
+                    Row {
+                        if (named != null) TextButton({ target = null; if (pack != null) vm.deploy(ctx, tp, pack, note) }) { Text("Push to ${tp.name} anyway") }
+                        TextButton({ target = null }) { Text("Cancel") }
+                    }
+                })
         }
         if (vm.deployLog.isNotEmpty()) Panel {
             vm.deployLog.forEach { l ->

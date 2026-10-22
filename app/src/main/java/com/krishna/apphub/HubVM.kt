@@ -250,7 +250,24 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     /** What the + icon is waiting to push: the new zip's version, or the bumped label. */
     fun waitLabel(p: Project): String = zipFound[p.id]?.let { Zipper.versionOf(it.name).ifBlank { it.name } } ?: p.version
 
-    fun zipKey(id: Long, f: File) = "$id|${Downloads.key(f)}"
+    /** One key per zip file (not per project), so a zip is asked about only once. */
+    fun zipKey(id: Long, f: File) = Downloads.key(f)
+
+    private fun nn(s: String) = s.filter { it.isLetterOrDigit() }.lowercase()
+
+    /** The ONE project a zip belongs to, going by its file name: app name first, then repo name. */
+    fun projectFor(zipName: String): Project? {
+        val base = nn(Downloads.baseOf(zipName))
+        if (base.isBlank()) return null
+        val ps = projects.value
+        return ps.firstOrNull { nn(it.name) == base } ?: ps.firstOrNull { nn(it.repo.substringAfter("/")) == base }
+    }
+
+    /** True when the zip's name is this project's app name or repo name. */
+    fun nameMatches(p: Project, zipName: String): Boolean {
+        val base = nn(Downloads.baseOf(zipName))
+        return base.isNotBlank() && (nn(p.name) == base || nn(p.repo.substringAfter("/")) == base)
+    }
 
     /** Looks in Downloads for the newest zip named like each app (app name or repo name). */
     fun scanZips(ctx: Context) {
@@ -262,7 +279,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                     zipLatest[p.id] = f
                     val zv = Zipper.versionOf(f.name)
                     val pushed = (pushedV[p.id] ?: prefs.pushedVer(p.id)).ifBlank { p.version }
-                    val waiting = prefs.zipSeen(p.id) != Downloads.key(f) && (zv.isBlank() || n(zv) > n(pushed))
+                    val waiting = projectFor(f.name)?.id == p.id && prefs.zipSeen(p.id) != Downloads.key(f) && (zv.isBlank() || n(zv) > n(pushed))   // only the project the zip is named after is asked
                     if (waiting) zipFound[p.id] = f else zipFound.remove(p.id)
                 }
             }

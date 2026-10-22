@@ -29,7 +29,7 @@ object Downloads {
 
     /** Newest zip whose name matches the app name or the repo name. */
     fun latestFor(p: Project): File? {
-        val names = setOf(norm(p.name), norm(p.repo.substringAfter("/")))
+        val names = setOf(norm(p.name), norm(p.repo.substringAfter("/"))).filter { it.isNotEmpty() }.toSet()
         return dir.listFiles()?.filter { it.isFile && it.name.endsWith(".zip", true) && norm(baseOf(it.name)) in names }
             ?.maxWithOrNull(compareBy<File> { Commands.num(Zipper.versionOf(it.name)).toIntOrNull() ?: 0 }.thenBy { it.lastModified() })
     }

@@ -12,6 +12,10 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v24
+- Zip suggestion is by name and asked once: HubVM.projectFor(zipName) picks the ONE project a zip is named after (app name, then repo name; Downloads.baseOf strips _vN and " (1)"). scanZips only offers a zip to that project, and zipKey is per file, so duplicate/same-named projects no longer ask twice.
+- Deploy screen: choosing a zip (or the suggestion) selects the project it is named after. Push + build with a zip whose name does not match the selected project opens a dialog (push to the named project / push to the selected one anyway / cancel) instead of silently pushing to another repo.
+
 ## v23
 - Version label = newest "vNNN:" commit among the last 15 runs (HubVM.refresh). Merge commits, cancelled runs, re-runs and dispatches no longer bump it (v22 push + merge showed v23 before). The label may only stay ahead of the pushed version when set by hand (Prefs.manualVer, set in HubVM.update / bump). Deploy sets pushedV right after a successful push, so no "+ Push vN" flash.
 - Cancelled runs (conclusion=cancelled) are kept out of the shown runs/status (GitHub.Run.cancelled), so a cancelled build is not "failed".
