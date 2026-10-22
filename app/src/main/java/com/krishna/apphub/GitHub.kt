@@ -162,41 +162,78 @@ class GitHub(private val prefs: Prefs) {
 
     suspend fun exists(repo: String, path: String) = get("/repos/$repo/contents/$path").first == 200
 
-    // ---- push a whole set of files as ONE commit (Git Data API, no git or Termux needed) ----
-    suspend fun pushFiles(repo: String, files: List<Pair<String, ByteArray>>, message: String, log: (String) -> Unit): Boolean {
+    data class PushResult(val ok: Boolean, val committed: Boolean = false, val added: Int = 0, val changed: Int = 0, val same: Int = 0)
+
+    private fun gitSha(b: ByteArray): String {
+        val md = java.security.MessageDigest.getInstance("SHA-1")
+        md.update("blob ${b.size}\u0000".toByteArray()); md.update(b)
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Pushes only what changed: new files are created, changed files are updated, identical files are skipped
+     * (compared by git blob hash against the repo's current tree). Result is ONE commit, or none if nothing changed.
+     */
+    suspend fun pushFiles(repo: String, files: List<Pair<String, ByteArray>>, message: String, log: (String) -> Unit): PushResult {
         val (c0, b0) = get("/repos/$repo")
-        if (c0 != 200) { log("✗ Cannot open $repo ($c0). Check login and repo name."); return false }
+        if (c0 != 200) { log("✗ Cannot open $repo ($c0). Check login and repo name."); return PushResult(false) }
         val branch = JSONObject(b0).s("default_branch").ifBlank { "main" }
         var ref = get("/repos/$repo/git/ref/heads/$branch")
         if (ref.first != 200) {
             log("• empty repo, creating first commit")
             val init = send("PUT", "/repos/$repo/contents/.gitkeep", JSONObject().put("message", "init").put("content", "Cg=="))
-            if (init.first != 200 && init.first != 201) { log("✗ init failed (${init.first})"); return false }
+            if (init.first != 200 && init.first != 201) { log("✗ init failed (${init.first})"); return PushResult(false) }
             ref = get("/repos/$repo/git/ref/heads/$branch")
-            if (ref.first != 200) { log("✗ branch not found"); return false }
+            if (ref.first != 200) { log("✗ branch not found"); return PushResult(false) }
         }
         val parent = JSONObject(ref.second).getJSONObject("object").getString("sha")
         val (c2, b2) = get("/repos/$repo/git/commits/$parent")
-        if (c2 != 200) { log("✗ cannot read last commit ($c2)"); return false }
+        if (c2 != 200) { log("✗ cannot read last commit ($c2)"); return PushResult(false) }
         val baseTree = JSONObject(b2).getJSONObject("tree").getString("sha")
+
+        // what the repo has right now
+        val remote = HashMap<String, String>()
+        val (c6, b6) = get("/repos/$repo/git/trees/$baseTree?recursive=1")
+        var known = false
+        if (c6 == 200) {
+            val tj = JSONObject(b6)
+            known = !tj.optBoolean("truncated")
+            val arr = tj.optJSONArray("tree") ?: JSONArray()
+            for (k in 0 until arr.length()) { val o = arr.getJSONObject(k); if (o.s("type") == "blob") remote[o.s("path")] = o.s("sha") }
+        }
+        if (!known) { remote.clear(); log("• could not compare with the repo, uploading everything") }
+
+        val todo = ArrayList<Pair<String, ByteArray>>()
+        var added = 0; var changed = 0; var same = 0
+        for (f in files) {
+            val r = remote[f.first]
+            when {
+                r == null -> { added++; todo.add(f) }
+                r != gitSha(f.second) -> { changed++; todo.add(f) }
+                else -> same++
+            }
+        }
+        log("• $added new, $changed changed, $same unchanged (skipped)")
+        if (todo.isEmpty()) { log("✓ Nothing to push, the repo already has these files."); return PushResult(true, false, 0, 0, same) }
+
         val entries = JSONArray()
-        for ((i, f) in files.withIndex()) {
+        for ((i, f) in todo.withIndex()) {
             val (path, bytes) = f
             val (c, b) = send("POST", "/repos/$repo/git/blobs",
                 JSONObject().put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64"))
-            if (c != 201) { log("✗ upload failed: $path ($c)"); return false }
+            if (c != 201) { log("✗ upload failed: $path ($c)"); return PushResult(false) }
             entries.put(JSONObject().put("path", path).put("mode", if (path.endsWith(".sh") || path == "gradlew") "100755" else "100644")
                 .put("type", "blob").put("sha", JSONObject(b).getString("sha")))
-            if ((i + 1) % 10 == 0 || i + 1 == files.size) log("  uploaded ${i + 1}/${files.size}")
+            if ((i + 1) % 10 == 0 || i + 1 == todo.size) log("  uploaded ${i + 1}/${todo.size}")
         }
         val (c3, b3) = send("POST", "/repos/$repo/git/trees", JSONObject().put("base_tree", baseTree).put("tree", entries))
-        if (c3 != 201) { log("✗ tree failed ($c3)"); return false }
+        if (c3 != 201) { log("✗ tree failed ($c3)"); return PushResult(false) }
         val (c4, b4) = send("POST", "/repos/$repo/git/commits",
             JSONObject().put("message", message).put("tree", JSONObject(b3).getString("sha")).put("parents", JSONArray().put(parent)))
-        if (c4 != 201) { log("✗ commit failed ($c4)"); return false }
+        if (c4 != 201) { log("✗ commit failed ($c4)"); return PushResult(false) }
         val c5 = send("PATCH", "/repos/$repo/git/refs/heads/$branch", JSONObject().put("sha", JSONObject(b4).getString("sha"))).first
-        if (c5 != 200) { log("✗ branch update failed ($c5)"); return false }
-        return true
+        if (c5 != 200) { log("✗ branch update failed ($c5)"); return PushResult(false) }
+        return PushResult(true, true, added, changed, same)
     }
 
     // ---- install / update ----

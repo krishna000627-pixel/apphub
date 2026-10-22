@@ -1,7 +1,9 @@
 @file:OptIn(ExperimentalLayoutApi::class)
 package com.krishna.apphub
 
+import android.Manifest
 import android.content.Intent
+import android.os.Build
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -88,6 +90,11 @@ fun ago(t: String): String = runCatching {
     when { d < 60 -> "just now"; d < 3600 -> "${d / 60}m ago"; d < 86400 -> "${d / 3600}h ago"; else -> "${d / 86400}d ago" }
 }.getOrDefault(t)
 
+fun agoMs(ms: Long): String {
+    val d = (System.currentTimeMillis() - ms) / 1000
+    return when { d < 60 -> "just now"; d < 3600 -> "${d / 60}m ago"; d < 86400 -> "${d / 3600}h ago"; else -> "${d / 86400}d ago" }
+}
+
 fun openUrl(ctx: android.content.Context, url: String) = ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
 
 fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
@@ -103,6 +110,27 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         Triple("dash", "Dashboard", Icons.Default.Dashboard), Triple("prompt", "Prompt", Icons.Default.Description),
         Triple("deploy", "Deploy", Icons.Default.CloudUpload), Triple("settings", "Settings", Icons.Default.Settings)
     )
+    val ctx = LocalContext.current
+    val ps by vm.projects.collectAsState()
+    LaunchedEffect(ps.size) { vm.scanZips(ctx) }
+    val waiting = vm.zipFound.entries.firstOrNull { e -> vm.zipKey(e.key, e.value) !in vm.zipDismissed }
+    val waitProj = waiting?.let { w -> ps.firstOrNull { it.id == w.key } }
+    if (waiting != null && waitProj != null) {
+        val f = waiting.value
+        val key = vm.zipKey(waiting.key, f)
+        AlertDialog(onDismissRequest = { vm.zipDismissed.add(key) },
+            title = { Text("Push ${waitProj.name}?") },
+            text = {
+                Column {
+                    Text(f.name, fontWeight = FontWeight.Bold, color = Cyan)
+                    Mono("${Zipper.versionOf(f.name).ifBlank { "-" }} • ${"%.1f".format(f.length() / 1048576.0)} MB • ${agoMs(f.lastModified())}", color = Muted)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Newest zip in Downloads for this app. Only new and changed files are uploaded.", fontSize = 13.sp)
+                }
+            },
+            confirmButton = { TextButton({ vm.zipDismissed.add(key); vm.deployFile(ctx, waitProj, f); goDeploy(vm, nav, waitProj) }) { Text("Push now", color = Green) } },
+            dismissButton = { TextButton({ vm.skipZip(waitProj, f) }) { Text("Skip this zip") } })
+    }
     // contentWindowInsets = 0 so the status bar inset is applied exactly once (statusBarsPadding below)
     Scaffold(containerColor = Bg, contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
         NavigationBar(containerColor = Surf) {
@@ -196,7 +224,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (p.lastStatus != "none") Pill(if (p.lastStatus == "passed") "✓ Build passed" else if (p.lastStatus == "failed") "✕ Build failed" else "… Running", statusColor(p.lastStatus))
             else Pill("No builds yet", Muted)
-            if (pend) Pill("+ Push ${p.version}", Amber)
+            if (pend) Pill("+ Push ${vm.waitLabel(p)}", Amber)
             if (upd) Pill("Update ready", Amber)
         }
         Spacer(Modifier.height(8.dp))
@@ -217,18 +245,12 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
     val ctx = LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
-    var ver by remember(p.id) { mutableStateOf(p.version) }
-    var confirm by remember { mutableStateOf(false) }
     var openRun by remember { mutableStateOf<Long?>(null) }
     val runs = vm.runs[id] ?: emptyList()
     val err = vm.errors[id] ?: ""
     val upd = vm.hasUpdate(p)
     val pend = vm.pending(p)
     LaunchedEffect(id) { vm.refresh(p); vm.loadDetails(p) }
-    if (confirm) AlertDialog(onDismissRequest = { confirm = false },
-        confirmButton = { TextButton({ vm.delete(p); nav.popBackStack() }) { Text("Remove", color = Red) } },
-        dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },
-        title = { Text("Remove ${p.name}?") }, text = { Text("This only removes it from App Hub. Your repo and files stay untouched.") })
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Header(p.name, nav) {
@@ -248,7 +270,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (pend) Amber else Green, contentColor = Color.Black)) {
-                    Icon(if (pend) Icons.Default.AddCircle else Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Text(if (pend) " Push ${p.version}" else " Deploy zip", fontSize = 13.sp)
+                    Icon(if (pend) Icons.Default.AddCircle else Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Text(if (pend) " Push ${vm.waitLabel(p)}" else " Deploy zip", fontSize = 13.sp)
                 }
                 OutlinedButton({ nav.navigate("install/$id") }, Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(contentColor = if (upd) Amber else Cyan)) {
                     Text(if (upd) "Update ready" else "Install / Update", fontSize = 13.sp)
@@ -333,22 +355,88 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 }
                 if (rl.isEmpty()) item { Text("No releases yet.", color = Color.Gray) }
             }
-            else -> item {
-                Panel {
-                    OutlinedTextField(ver, { ver = it }, label = { Text("Version") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button({ vm.update(p.copy(version = ver)); vm.toast("Saved") }) { Text("Save version") }
-                        OutlinedButton({ ver = Commands.bump(ver) }) { Text("Bump → ${Commands.bump(ver)}") }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton({ vm.keyBackup(p).let { k -> if (k.isBlank()) vm.toast("No keystore stored") else vm.copy(k) } }) { Text("Copy keystore backup") }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton({ confirm = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Red)) { Text("Remove from App Hub") }
-                }
-            }
+            else -> item { AppSettings(vm, nav, p) }
         }
         item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+// ---------- per-app settings ----------
+@Composable fun SectionTitle(icon: ImageVector, t: String) =
+    Row(Modifier.padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, Modifier.size(16.dp), tint = Green); Spacer(Modifier.width(8.dp))
+        Text(t.uppercase(), fontSize = 11.sp, color = Green, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+    }
+
+@Composable fun SettingRow(icon: ImageVector, title: String, sub: String, tint: Color = Cyan, onClick: (() -> Unit)? = null, trailing: @Composable () -> Unit = {}) =
+    Row(Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable { onClick() } else Modifier).padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(36.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(18.dp), tint = tint) }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) { Text(title, fontSize = 14.sp); Text(sub, fontSize = 11.sp, color = Muted) }
+        trailing()
+    }
+
+@Composable fun AppSettings(vm: HubVM, nav: NavHostController, p: Project) {
+    val ctx = LocalContext.current
+    var name by remember(p.id) { mutableStateOf(p.name) }
+    var repo by remember(p.id) { mutableStateOf(p.repo) }
+    var pkg by remember(p.id) { mutableStateOf(p.packageName) }
+    var stack by remember(p.id) { mutableStateOf(p.stack) }
+    var ver by remember(p.id, p.version) { mutableStateOf(p.version) }
+    var confirm by remember { mutableStateOf(false) }
+    val dirty = name != p.name || repo != p.repo || pkg != p.packageName || stack != p.stack || ver != p.version
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false },
+        confirmButton = { TextButton({ vm.delete(p); nav.popBackStack() }) { Text("Remove", color = Red) } },
+        dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },
+        title = { Text("Remove ${p.name}?") }, text = { Text("This only removes it from App Hub. Your repo and files stay untouched.") })
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Panel {
+            SectionTitle(Icons.Default.Info, "App details")
+            OutlinedTextField(name, { name = it }, label = { Text("App name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(repo, { repo = it }, label = { Text("GitHub repo (owner/name)") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+            OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+            OutlinedTextField(stack, { stack = it }, label = { Text("Tech stack") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+        }
+        Panel {
+            SectionTitle(Icons.Default.Tag, "Version")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(ver, { ver = it }, Modifier.weight(1f), label = { Text("Version") }, singleLine = true)
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton({ ver = Commands.bump(ver) }) { Text("+1 → ${Commands.bump(ver)}", fontSize = 12.sp) }
+            }
+            Mono("last pushed: ${vm.pushedV[p.id] ?: "-"}", Modifier.padding(top = 4.dp), Muted)
+            SettingRow(Icons.Default.Sync, "Follow builds automatically", "Label updates on every new build, however it was started") {
+                Switch(vm.isAuto(p.id), { vm.setAuto(p.id, it) })
+            }
+        }
+        Button({
+            val r = repo.trim().let { if (it.contains("/") || vm.login.isBlank()) it else "${vm.login}/$it" }
+            vm.update(p.copy(name = name.trim().ifBlank { p.name }, repo = r, packageName = pkg.trim(), stack = stack.trim(), version = ver.trim().ifBlank { p.version }))
+            vm.toast("Saved")
+        }, Modifier.fillMaxWidth().height(46.dp), enabled = dirty, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+            Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(if (dirty) "Save changes" else "Saved", fontWeight = FontWeight.Bold)
+        }
+        Panel {
+            SectionTitle(Icons.Default.Build, "Build and signing")
+            SettingRow(Icons.Default.PlayArrow, "Trigger a build", "Runs the GitHub workflow on the latest code", Green, { vm.build(p) })
+            SettingRow(Icons.Default.Sync, "Re-send signing secrets", "Sets the 4 GitHub secrets again from the stored keystore", Cyan, { vm.resendSecrets(p) })
+            SettingRow(Icons.Default.Key, "Copy keystore backup", "Keep this safe. Updates must use the same key.", Amber, {
+                vm.keyBackup(p).let { k -> if (k.isBlank()) vm.toast("No keystore stored") else vm.copy(k) }
+            })
+        }
+        Panel {
+            SectionTitle(Icons.Default.Tune, "Shortcuts")
+            SettingRow(Icons.Default.Star, "Pin to top", "Pinned apps sort first on the dashboard", Amber) {
+                Switch(vm.isPinned(p.id), { vm.togglePin(p) })
+            }
+            SettingRow(Icons.Default.Restore, "Reset installed marker", "Now: ${vm.installedTag(p.id).ifBlank { "none" }}. Clears the update check.", Cyan, { vm.clearInstalled(p.id) })
+            SettingRow(Icons.Default.OpenInNew, "Open on GitHub", p.repo, Muted, { openUrl(ctx, "https://github.com/${p.repo}") })
+        }
+        Panel(border = Red.copy(alpha = 0.6f)) {
+            SectionTitle(Icons.Default.Warning, "Danger zone")
+            SettingRow(Icons.Default.Delete, "Remove from App Hub", "Your repo and files stay untouched", Red, { confirm = true })
+        }
     }
 }
 
@@ -358,6 +446,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val p = vm.sel()
     val ctx = LocalContext.current
     var note by remember { mutableStateOf("") }
+    val perm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.scanZips(ctx) }
+    LaunchedEffect(p?.id) { vm.scanZips(ctx) }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.pickZip(ctx, uri) }
     val pack = vm.zipPack
     val last = p?.let { vm.runs[it.id]?.firstOrNull() }
@@ -366,9 +456,31 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         Header("Deploy")
         Text("Pick your zip and App Hub pushes it to GitHub and builds it. Nothing else needed.", fontSize = 12.sp, color = Muted)
         ProjectPicker(ps, p) { vm.selId = it.id }
+        if (!Downloads.hasAccess(ctx)) Panel(border = Amber.copy(alpha = 0.6f)) {
+            Text("Find the newest zip automatically", fontWeight = FontWeight.Bold)
+            Text("Allow access to files so App Hub can spot the latest ${p?.name ?: "app"} zip in Downloads and ask to push it.", fontSize = 12.sp, color = Muted)
+            Spacer(Modifier.height(8.dp))
+            Button({ if (Build.VERSION.SDK_INT >= 30) Downloads.openAllFiles(ctx) else perm.launch(Manifest.permission.READ_EXTERNAL_STORAGE) },
+                colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) { Text("Allow") }
+        } else {
+            val lf = p?.let { vm.zipLatest[it.id] }
+            Panel {
+                Text("Latest zip in Downloads", fontWeight = FontWeight.Bold)
+                if (lf == null) Text("No zip named ${p?.name ?: "your app"} found (matches the app name or repo name).", fontSize = 12.sp, color = Muted)
+                else {
+                    Text(lf.name, color = Cyan, fontWeight = FontWeight.Bold)
+                    Mono("${"%.1f".format(lf.length() / 1048576.0)} MB • ${agoMs(lf.lastModified())}", color = Muted)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button({ vm.useFile(lf) }, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color.Black)) { Text("Use this zip") }
+                        OutlinedButton({ if (p != null) vm.deployFile(ctx, p, lf) }) { Text("Push now") }
+                    }
+                }
+            }
+        }
         Panel {
             if (pack == null) {
-                Text("Choose your Name_vN.zip", fontWeight = FontWeight.Bold)
+                Text("Or choose another zip", fontWeight = FontWeight.Bold)
                 Text("Pick it from Downloads. Build folders and keystores inside the zip are skipped.", fontSize = 12.sp, color = Muted)
             } else {
                 Text(pack.name, fontWeight = FontWeight.Bold, color = Cyan)
@@ -522,7 +634,6 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
 
 // ---------- settings ----------
 @Composable fun SettingsScreen(vm: HubVM) {
-    var cid by remember { mutableStateOf(vm.prefs.clientId) }
     val ctx = LocalContext.current
     val appVer = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?" }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -534,12 +645,6 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             Spacer(Modifier.height(8.dp))
             if (vm.login.isBlank()) BigButton("Login with GitHub", Icons.Default.Login) { vm.startLogin() }
             else OutlinedButton({ vm.logout() }) { Text("Log out") }
-        }
-        Panel {
-            Text("OAuth Client ID", fontWeight = FontWeight.Bold)
-            Text("Preset. Change only if you use a different GitHub OAuth App (Device Flow on).", fontSize = 12.sp, color = Color.Gray)
-            OutlinedTextField(cid, { cid = it.trim() }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Button({ vm.prefs.clientId = cid; vm.toast("Saved") }) { Text("Save") }
         }
         Panel {
             Text("Apps", fontWeight = FontWeight.Bold)

@@ -63,6 +63,12 @@ class Prefs(ctx: Context) {
     fun pushedVer(id: Long) = s("pv_$id")
     fun setPushedVer(id: Long, v: String) = put("pv_$id", v)
 
+    fun zipSeen(id: Long) = s("zs_$id")
+    fun setZipSeen(id: Long, v: String) = put("zs_$id", v)
+
+    fun autoVer(id: Long) = sp.getBoolean("auto_$id", true)
+    fun setAutoVer(id: Long, v: Boolean) { sp.edit().putBoolean("auto_$id", v).apply() }
+
     fun saveKeys(repo: String, v: String) = put("ks_$repo", v)
     fun keys(repo: String) = s("ks_$repo")
 }
@@ -76,6 +82,6 @@ object Presets {
     val all = listOf(
         Preset("QuestBlock", "questblock", "", HOME + "QuestBlock", version = "v285"),
         Preset("BgBrowser", "bgbrowser", "com.bgbrowser", HOME + "BgBrowser"),
-        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v8")
+        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v10")
     )
 }

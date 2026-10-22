@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class HubVM(app: Application) : AndroidViewModel(app) {
     val prefs = Prefs(app)
@@ -36,10 +37,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     val pins = mutableStateMapOf<Long, Boolean>()
     val installed = mutableStateMapOf<Long, String>()
     val pushedV = mutableStateMapOf<Long, String>()
+    val autoV = mutableStateMapOf<Long, Boolean>()
     val infos = mutableStateMapOf<Long, GitHub.Info>()
     val commits = mutableStateMapOf<Long, List<GitHub.Commit>>()
     val releases = mutableStateMapOf<Long, List<GitHub.Release>>()
     val jobs = mutableStateMapOf<Long, List<GitHub.Job>>()
+    val zipFound = mutableStateMapOf<Long, File>()    // newest unpushed zip per app
+    val zipLatest = mutableStateMapOf<Long, File>()   // newest zip per app, pushed or not
+    val zipDismissed = mutableStateListOf<String>()   // "ask me later" for this session
     var refreshing by mutableStateOf(false)
 
     var zipPack by mutableStateOf<Zipper.Pack?>(null)
@@ -75,6 +80,10 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     fun isPinned(id: Long) = pins[id] ?: prefs.pinned(id)
     fun togglePin(p: Project) { val v = !isPinned(p.id); pins[p.id] = v; prefs.setPinned(p.id, v) }
+    fun isAuto(id: Long) = autoV[id] ?: prefs.autoVer(id)
+    fun setAuto(id: Long, v: Boolean) { autoV[id] = v; prefs.setAutoVer(id, v) }
+    fun clearInstalled(id: Long) { installed[id] = ""; prefs.setInstalled(id, ""); toast("Installed marker cleared") }
+
     fun installedTag(id: Long) = installed[id] ?: prefs.installed(id)
     fun markInstalled(id: Long, tag: String) { installed[id] = tag; prefs.setInstalled(id, tag) }
     fun hasUpdate(p: Project): Boolean {
@@ -85,8 +94,47 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /** True when the version label is ahead of what was last pushed (an update waiting to be pushed). */
     fun pending(p: Project): Boolean {
+        if (zipFound.containsKey(p.id)) return true
         val pv = pushedV[p.id] ?: prefs.pushedVer(p.id)
         return pv.isNotBlank() && n(p.version) > n(pv)
+    }
+
+    /** What the + icon is waiting to push: the new zip's version, or the bumped label. */
+    fun waitLabel(p: Project): String = zipFound[p.id]?.let { Zipper.versionOf(it.name).ifBlank { it.name } } ?: p.version
+
+    fun zipKey(id: Long, f: File) = "$id|${Downloads.key(f)}"
+
+    /** Looks in Downloads for the newest zip named like each app (app name or repo name). */
+    fun scanZips(ctx: Context) {
+        if (!Downloads.hasAccess(ctx)) { zipFound.clear(); zipLatest.clear(); return }
+        viewModelScope.launch(Dispatchers.IO) {
+            projects.value.forEach { p ->
+                val f = Downloads.latestFor(p)
+                if (f == null) { zipLatest.remove(p.id); zipFound.remove(p.id) } else {
+                    zipLatest[p.id] = f
+                    val zv = Zipper.versionOf(f.name)
+                    val pushed = (pushedV[p.id] ?: prefs.pushedVer(p.id)).ifBlank { p.version }
+                    val waiting = prefs.zipSeen(p.id) != Downloads.key(f) && (zv.isBlank() || n(zv) > n(pushed))
+                    if (waiting) zipFound[p.id] = f else zipFound.remove(p.id)
+                }
+            }
+        }
+    }
+
+    fun skipZip(p: Project, f: File) { prefs.setZipSeen(p.id, Downloads.key(f)); zipFound.remove(p.id) }
+
+    /** Loads a zip found in Downloads into the Deploy screen. */
+    fun useFile(f: File) = viewModelScope.launch {
+        val pack = withContext(Dispatchers.IO) { runCatching { Zipper.read(f) }.getOrNull() }
+        if (pack == null || pack.entries.isEmpty()) toast("Could not read ${f.name}") else zipPack = pack
+    }
+
+    /** Pushes a zip from Downloads straight away. */
+    fun deployFile(ctx: Context, p: Project, f: File) = viewModelScope.launch {
+        val pack = withContext(Dispatchers.IO) { runCatching { Zipper.read(f) }.getOrNull() }
+        if (pack == null || pack.entries.isEmpty()) { toast("Could not read ${f.name}"); return@launch }
+        zipPack = pack
+        deploy(ctx, p, pack, "", f)
     }
 
     private suspend fun seedMissing(): Int {
@@ -165,7 +213,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 }
                 if (r.isNotEmpty()) prefs.setLastRun(p.id, r.maxOf { it.id })
                 prefs.setPushedVer(p.id, pushed); pushedV[p.id] = pushed
-                val label = if (n(cur.version) > n(pushed)) cur.version else pushed
+                val label = if (!prefs.autoVer(p.id) || n(cur.version) > n(pushed)) cur.version else pushed
                 dao.save(cur.copy(version = label, lastStatus = status, lastError = err))
             }
         }
@@ -174,6 +222,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun refreshAll() = viewModelScope.launch {
         refreshing = true
         projects.value.map { refresh(it) }.forEach { it.join() }
+        scanZips(getApplication())
         refreshing = false
     }
 
@@ -202,6 +251,16 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         toast(if (gh.dispatch(p.repo)) "Build triggered on GitHub" else "Trigger failed — push the workflow first")
     }
 
+    /** Sets the 4 signing secrets on GitHub again from the keystore stored in the app. */
+    fun resendSecrets(p: Project) = viewModelScope.launch {
+        val m = prefs.keys(p.repo).lines().filter { it.contains("=") }.associate { it.substringBefore("=") to it.substringAfter("=") }
+        val b64 = m["KEYSTORE_BASE64"]; val pass = m["PASSWORD"]; val alias = m["ALIAS"]
+        if (b64.isNullOrBlank() || pass.isNullOrBlank() || alias.isNullOrBlank()) { toast("No stored keystore for this repo"); return@launch }
+        val ok = listOf("KEYSTORE_BASE64" to b64, "KEYSTORE_PASSWORD" to pass, "KEY_ALIAS" to alias, "KEY_PASSWORD" to pass)
+            .all { gh.setSecret(p.repo, it.first, it.second) }
+        toast(if (ok) "Signing secrets set on GitHub" else "Setting secrets failed")
+    }
+
     fun keyBackup(p: Project) = prefs.keys(p.repo)
 
     // ---- deploy: zip -> GitHub commit -> CI build (no Termux) ----
@@ -213,7 +272,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         projects.value.firstOrNull { Commands.fileBase(it).equals(base, true) }?.let { selId = it.id }
     }
 
-    fun deploy(ctx: Context, p: Project, pack: Zipper.Pack, note: String) = viewModelScope.launch {
+    fun deploy(ctx: Context, p: Project, pack: Zipper.Pack, note: String, src: File? = null) = viewModelScope.launch {
         if (deploying) return@launch
         if (!p.repo.contains("/")) { toast("Log in with GitHub first (Settings)"); return@launch }
         deploying = true; deployLog.clear()
@@ -227,11 +286,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             val msg = "$ver: ${note.replace("\n", " ").trim().ifBlank { "update from App Hub" }}"
             val before = gh.runs(p.repo).firstOrNull()?.id ?: 0L
             deployLog += "Pushing ${files.size} files to ${p.repo}…"
-            val ok = gh.pushFiles(p.repo, files, msg) { deployLog += it }
-            if (ok) {
-                projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
-                deployLog += "✓ Pushed $ver. Watching the build…"
-                watch(p, before)
+            val res = gh.pushFiles(p.repo, files, msg) { deployLog += it }
+            if (res.ok) {
+                src?.let { prefs.setZipSeen(p.id, Downloads.key(it)); zipFound.remove(p.id) }
+                if (res.committed) {
+                    projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
+                    deployLog += "✓ Pushed $ver (${res.added} new, ${res.changed} updated). Watching the build…"
+                    watch(p, before)
+                }
             }
         } finally { deploying = false }
     }
