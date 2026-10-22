@@ -3,6 +3,8 @@ package com.krishna.apphub
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import java.io.File
+import java.io.InputStream
 import java.util.zip.ZipInputStream
 
 /** Reads a project zip chosen with the system file picker (no storage permission needed). */
@@ -19,8 +21,16 @@ object Zipper {
     fun read(ctx: Context, uri: Uri): Pack? {
         val name = ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
             ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "app.zip"
-        val raw = ArrayList<Pair<String, ByteArray>>()
         val ins = ctx.contentResolver.openInputStream(uri) ?: return null
+        return ins.use { parse(name, it) }
+    }
+
+    fun read(f: File): Pack? = f.inputStream().use { parse(f.name, it) }
+
+    fun versionOf(name: String): String = Regex("_(v\\d+)", RegexOption.IGNORE_CASE).find(name)?.groupValues?.get(1) ?: ""
+
+    private fun parse(name: String, ins: InputStream): Pack? {
+        val raw = ArrayList<Pair<String, ByteArray>>()
         ZipInputStream(ins).use { z ->
             var e = z.nextEntry
             while (e != null) {
@@ -38,7 +48,6 @@ object Zipper {
             if (skip(path, bytes.size)) { skipped++; continue }
             out.add(Entry(path, bytes))
         }
-        val ver = Regex("_(v\\d+)\\.zip$", RegexOption.IGNORE_CASE).find(name)?.groupValues?.get(1) ?: ""
-        return Pack(name, ver, out, skipped, out.sumOf { it.bytes.size.toLong() })
+        return Pack(name, versionOf(name), out, skipped, out.sumOf { it.bytes.size.toLong() })
     }
 }

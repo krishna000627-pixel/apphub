@@ -49,6 +49,30 @@ class Prefs(ctx: Context) {
         get() = s("client").ifBlank { BuildConfig.APPHUB_CLIENT_ID }
         set(v) = put("client", v)
 
+    var clientSecret: String
+        get() = s("client_secret").ifBlank { BuildConfig.APPHUB_CLIENT_SECRET }
+        set(v) = put("client_secret", v.trim())
+
+    // pending login (survives the app being killed while the browser is open)
+    var pendingState: String
+        get() = s("p_state")
+        set(v) = put("p_state", v)
+    var pendingVerifier: String
+        get() = s("p_verifier")
+        set(v) = put("p_verifier", v)
+    var pendingDevice: String
+        get() = s("p_device")
+        set(v) = put("p_device", v)
+    var pendingCode: String
+        get() = s("p_code")
+        set(v) = put("p_code", v)
+    var pendingInterval: Int
+        get() = sp.getInt("p_interval", 5)
+        set(v) { sp.edit().putInt("p_interval", v).apply() }
+    var pendingExpiry: Long
+        get() = sp.getLong("p_expiry", 0L)
+        set(v) { sp.edit().putLong("p_expiry", v).apply() }
+
     var seeded: Boolean
         get() = sp.getBoolean("seeded_v1", false)
         set(v) { sp.edit().putBoolean("seeded_v1", v).apply() }
@@ -63,9 +87,50 @@ class Prefs(ctx: Context) {
     fun pushedVer(id: Long) = s("pv_$id")
     fun setPushedVer(id: Long, v: String) = put("pv_$id", v)
 
+    /** Release tag of the APK sitting in the cache for this app ("" = nothing cached). */
+    fun cachedTag(id: Long) = s("ct_$id")
+    fun setCachedTag(id: Long, v: String) = put("ct_$id", v)
+    /** When the system installer was opened for the cached APK (0 = not opened yet). */
+    fun installTry(id: Long) = sp.getLong("it_$id", 0L)
+    fun setInstallTry(id: Long, v: Long) { sp.edit().putLong("it_$id", v).apply() }
+
+    /** Presets already offered once, so a preset you removed is not brought back by an update. */
+    fun presetSeen(repo: String) = sp.getBoolean("ps_$repo", false)
+    fun setPresetSeen(repo: String) { sp.edit().putBoolean("ps_$repo", true).apply() }
+
+    /** Open the installer by itself when a pushed build passes (what termux/release.sh does). */
+    var autoInstall: Boolean
+        get() = sp.getBoolean("auto_install", true)
+        set(v) { sp.edit().putBoolean("auto_install", v).apply() }
+
+    /** When build runs / details were last pulled from GitHub (millis), so screens can skip the sync while the cache is fresh. */
+    fun syncedAt(id: Long) = sp.getLong("sy_$id", 0L)
+    fun setSyncedAt(id: Long, v: Long) { sp.edit().putLong("sy_$id", v).apply() }
+    fun detailsAt(id: Long) = sp.getLong("dt_$id", 0L)
+    fun setDetailsAt(id: Long, v: Long) { sp.edit().putLong("dt_$id", v).apply() }
+
+    /** Save new APKs in the background (WorkManager), even when the app is closed. */
+    var autoDownload: Boolean
+        get() = sp.getBoolean("auto_dl", true)
+        set(v) { sp.edit().putBoolean("auto_dl", v).apply() }
+    /** Background downloads only on Wi-Fi / unmetered networks. */
+    var wifiOnly: Boolean
+        get() = sp.getBoolean("wifi_only", true)
+        set(v) { sp.edit().putBoolean("wifi_only", v).apply() }
+
+    fun zipSeen(id: Long) = s("zs_$id")
+    fun setZipSeen(id: Long, v: String) = put("zs_$id", v)
+
+    fun autoVer(id: Long) = sp.getBoolean("auto_$id", true)
+    fun setAutoVer(id: Long, v: Boolean) { sp.edit().putBoolean("auto_$id", v).apply() }
+
     fun saveKeys(repo: String, v: String) = put("ks_$repo", v)
     fun keys(repo: String) = s("ks_$repo")
 }
+
+/** Shown when a release has no notes, the way Google Play falls back to a generic line. */
+const val DEFAULT_NOTES = "Bug fixes and performance improvements."
+fun notesOrDefault(body: String): String = body.trim().ifBlank { DEFAULT_NOTES }
 
 /** Apps that are added automatically on first launch (owner is filled in once you log in). */
 data class Preset(val name: String, val repo: String, val pkg: String, val path: String,
@@ -76,6 +141,7 @@ object Presets {
     val all = listOf(
         Preset("QuestBlock", "questblock", "", HOME + "QuestBlock", version = "v285"),
         Preset("BgBrowser", "bgbrowser", "com.bgbrowser", HOME + "BgBrowser"),
-        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v7")
+        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v21"),
+        Preset("Videowall", "videowall", "", HOME + "Videowall")
     )
 }

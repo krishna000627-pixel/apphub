@@ -12,6 +12,75 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v22
+- Login return: manifest has launchMode=singleTask + intent-filter for apphub://oauth. With a client secret (Settings -> GitHub, or -PAPPHUB_CLIENT_SECRET) login uses the web flow with PKCE: browser -> GitHub -> apphub://oauth -> App Hub exchanges the code (HubVM.handleCallback, GitHub.exchangeCode). The OAuth app's Callback URL must be apphub://oauth. Without a secret the device flow is used.
+- Device flow fixes: pending code stored in Prefs (pending*), polling restarts and checks at once on every onResume (HubVM.resumeLogin), expiry honored, readable errors (device_flow_disabled, access_denied, expired, wrong client id), no double polls, Cancel button, bad token cleared if /user fails.
+- Never name a function setX next to a property x (use updateClientSecret).
+
+## v21
+- Fix: the installed check silently skipped every app with no package name (e.g. the QuestBlock preset, apps added without one), so nothing showed. checkInstalls now fills a missing package name from the saved APK (PackageManager.getPackageArchiveInfo), else from applicationId in the repo's app/build.gradle(.kts) (GitHub.packageOf, once per session per app), saves it on the project, then checks the phone. It also runs after every dashboard sync and when a project opens, with a guard against overlapping runs. Cards without a known package show "? Package unknown"; the package can still be set by hand in the app's Settings tab.
+
+## v20
+- True background download (ApkStore.kt): SyncWorker (WorkManager, ~hourly, runs with the app closed) checks each app's latest release and saves its APK in filesDir/apks when it is newer than the installed marker and not saved yet. Constraints: Wi-Fi (unmetered) by default, battery not low. Needs a GitHub login. Settings -> "Background download": Auto-download switch + Wi-Fi only switch (Prefs.autoDownload / wifiOnly, HubVM.updateAutoDownload / updateWifiOnly). Sync.schedule runs on every app start and when a switch changes.
+- ApkStore.fetch is shared by UI and worker (one download per app at a time). The worker writes only Prefs; checkInstalls copies the saved tag into HubVM.cached on resume. Installing is never automatic: the Dashboard banner / Install screen stays the way in.
+- Dependency: androidx.work:work-runtime-ktx:2.9.1.
+
+## v19
+- Latest APK is saved in the app's own storage (filesDir/apks, FileProvider files-path), one file per app, replaced by each newer release. It is no longer deleted after install (Reinstall needs no download); only a newer release or a missing file drops it. Old cacheDir/apks is wiped.
+- When a sync finds a release newer than the installed one, its APK is downloaded in the background (HubVM.refresh) so Update is one tap.
+- Follow-up: Dashboard banner for every saved APK that is not installed (installer ignored/skipped, or never opened), with an Install button. Detected via installedTag != cachedTag.
+- Installed check: checkInstalls (every resume) reads PackageManager per app with a package name -> HubVM.onPhone (versionName, "" = not installed). Card pill "On phone x / Not installed", Overview line "on phone", and an uninstalled app clears its installed marker. Apps without a package name stay "unknown".
+
+## v18
+- Fix build (the v17 fix did not work: a private setter still generates setAutoInstall(Boolean) on the JVM). The function is now HubVM.updateAutoInstall(v); autoInstall keeps its private set. Never name a function setX next to a property x.
+- Local snapshot (SnapCache.kt, cacheDir/snap/<id>.json): last build runs, latest release tag, repo info, commits, releases and error text per app. Loaded into the VM maps at start, so names, version labels, status and update flags show instantly. Version label/status/name were already stored in Room.
+- Sync only when stale (Prefs.syncedAt/detailsAt, 10 min), or while a build is running. Dashboard open, project open and Deploy open use the cache; the Refresh button, login, Build/Undo and the deploy watcher still force a sync. A failed/offline fetch never overwrites the cache.
+
+## v17
+- Fix build: HubVM.autoInstall now has a private setter, so its generated setAutoInstall(Boolean) no longer clashes with the setAutoInstall(v) function (Platform declaration clash). Screens still call vm.setAutoInstall(it).
+
+## v16
+- Build watch: polls every 4 s with one small runs call (full refresh only when the run ends), real elapsed seconds, up to ~9 min.
+- Push speed: UTF-8 text files go inline in the tree request (no blob call each); only binary/big files are uploaded as blobs, 8 at a time. First pushes are now a handful of calls.
+- Deploy: "Preview changes" lists new/changed files without pushing (GitHub.pushFiles dryRun). Settings tab: "Undo last push" (GitHub.revertLast) adds a commit restoring the previous tree, history kept; message reuses the previous "vNNN:" label so the version follows. Branches/merge are not in the app.
+
+## v15
+- Push parity with termux/release.sh: the Deploy log lists every file like git (+ new, ~ changed, up to 30), the commit sha and branch, uploads blobs 6 at a time, then follows the CI run live (elapsed time), prints compile errors on failure (Copy errors / AI prompt buttons on the Deploy screen) and, when the build passes, downloads the APK into the cache and opens the installer. Switch "Open the installer when the build passes" (Prefs.autoInstall, default on). Android may block the installer if App Hub is in the background; the Install this build button still works.
+- Project picker is a bottom sheet (ModalBottomSheet) instead of the small floating menu.
+- Prompt delivery rules also ask the AI to list every file it created or changed.
+
+## v14
+- Dashboard card and project header: action buttons (Build / Update / Deploy) use compact padding and single-line labels (BtnText), so three buttons in a row no longer wrap letter by letter.
+
+## v13
+- Deploy: a zip is only offered (card + "Push?" dialog) while it is new. Once pushed by any route (Push now, Use this zip + Push + build, picker) it is marked seen and the card disappears; with nothing new, only "Choose a zip" shows.
+- Preset renamed Anywall -> Videowall (repo videowall).
+
+## v12
+- Deploy screen: the "Allow" file-access card is gone (auto zip detection still works once All-files access is granted in system settings); the picker card reads "Choose a zip" when auto-detect is off.
+- HubSwitch: all toggles use a clear style (green track + dark thumb on, outlined grey off).
+- Videowall preset added (repo videowall; it was called Anywall by mistake before v13). Presets are now offered once each (Prefs.presetSeen), so existing installs get Videowall on update and removed apps stay removed; "Restore presets" still re-adds everything.
+
+## v11
+- "What's new" fallback: releases with no notes (CI releases have none) show "Bug fixes and performance improvements." like Google Play (DEFAULT_NOTES / notesOrDefault in Data.kt). Used on the Install screen and the Releases tab.
+- APK cache tracking (HubVM): download goes to cache/apks/app_<id>.apk via a .part file, prefs remember the cached release tag. Install is only marked done when Android confirms it (package lastUpdateTime >= time the installer was opened, checked in onResume via checkInstalls). Apps without a package name are marked installed on tap (cannot be verified).
+- Auto clear: cached APK is deleted when it is installed, when a newer release tag appears (checked on every refresh), when the file is missing, or when the app is deleted. Stray files in cache/apks are swept on resume.
+- Install screen: "Install downloaded APK" reuses the cached file without re-downloading; Overview shows "cached: <tag>" while waiting. GitHub.download now fails on HTTP errors instead of saving an error page.
+- Manifest: QUERY_ALL_PACKAGES so the install check can see the managed package on Android 11+.
+
+## v10
+- Auto zip detection (Downloads.kt): newest Name_vN.zip whose name matches the app name OR repo name (non-alphanumerics ignored). Needs All-files access (MANAGE_EXTERNAL_STORAGE) on Android 11+. A dialog names the zip and asks to push; "Skip this zip" remembers that file; the + icon also appears for a waiting zip. Re-scans on resume.
+- Push is now incremental (GitHub.pushFiles): compares git blob hashes with the repo tree, uploads only new/changed files, no commit if nothing changed.
+
+## v9
+- Per-app Settings tab rebuilt (AppSettings): edit name/repo/package/stack/version with one Save, auto-follow-builds switch, trigger build, re-send signing secrets, keystore backup, pin, reset installed marker, danger zone.
+- Global Settings: OAuth client id field removed (default stays in build config).
+
+## v8
+- Prompt Maker: new "New app" task. Ideas first (built-in idea cards per category + "ideas prompt" that makes the AI suggest 8 and wait for a pick), then a build prompt (plan first, CI, preview visuals first, zip + version rules). "Set up this app in App Hub" prefills the Add screen.
+- Full build-log viewer (Builds tab -> tap build -> View full log): search, Last 200, Errors only, Copy.
+- Deploy release note is now used in the commit message.
+
 ## v7
 - Termux removed from the app (no RUN_COMMAND, no Command tab, no Termux settings). repo's termux/ folder is left untouched.
 - Deploy tab: pick zip with the system picker (Zip.kt), push as ONE commit via Git Data API (GitHub.pushFiles), CI builds, app watches the run and offers Install.
