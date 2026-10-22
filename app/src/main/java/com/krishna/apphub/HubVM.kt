@@ -123,10 +123,22 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- APK cache: downloaded -> installed -> cleared ----
-    private val apkDir get() = File(getApplication<Application>().cacheDir, "apks")
+    // Saved in the app's own storage (not the system cache), so Android does not wipe the latest APK. One file per app, replaced by each newer release.
+    private val apkDir get() = File(getApplication<Application>().filesDir, "apks")
+    private val downloading = mutableSetOf<Long>()
+    val onPhone = mutableStateMapOf<Long, String>()   // versionName of the app on this phone, "" = not installed (apps without a package name are absent)
     fun apkFile(p: Project) = File(apkDir, "app_${p.id}.apk")
     fun cachedTag(id: Long) = cached[id] ?: prefs.cachedTag(id)
     fun hasCached(p: Project) = cachedTag(p.id).isNotBlank() && apkFile(p).exists()
+
+    /** true / false once checked against the phone, null when unknown (no package name or not checked yet). */
+    fun isInstalled(p: Project): Boolean? = onPhone[p.id]?.let { it.isNotEmpty() }
+    /** A saved APK that is not installed yet (downloaded but ignored, or the installer was skipped). */
+    fun waitingInstall(p: Project): Boolean {
+        val tag = cachedTag(p.id)
+        return tag.isNotBlank() && hasCached(p) && installedTag(p.id) != tag
+    }
+    fun installSkipped(p: Project) = prefs.installTry(p.id) > 0L
 
     /** Downloads the release APK into the cache (via a .part file so a broken download is never installed). */
     suspend fun fetchApk(p: Project, r: GitHub.Rel, onProgress: (Long, Long) -> Unit): Boolean = withContext(Dispatchers.IO) {
@@ -152,19 +164,25 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         prefs.setCachedTag(p.id, ""); prefs.setInstallTry(p.id, 0L); cached.remove(p.id)
     }
 
-    /** Clears a cached APK that is no longer needed: a newer release passed, or this one is already installed. */
+    /** Drops the saved APK only when a newer release exists or the file is gone. An installed one stays, so Reinstall needs no download. */
     private fun pruneOne(p: Project) {
         val tag = cachedTag(p.id); if (tag.isBlank()) return
         val newer = latest[p.id]?.let { it != tag } == true
-        val installedNow = prefs.installTry(p.id) > 0L && installedTag(p.id) == tag
-        if (newer || installedNow || !apkFile(p).exists()) dropCache(p)
+        if (newer || !apkFile(p).exists()) dropCache(p)
     }
 
     /** Confirms installs that finished (package updated after the installer was opened), then clears used or stale APKs. */
     fun checkInstalls() = viewModelScope.launch(Dispatchers.IO) {
         val list = dao.all().first()
         val pm = getApplication<Application>().packageManager
+        getApplication<Application>().cacheDir.let { File(it, "apks").deleteRecursively() }   // old location (before v19)
         list.forEach { p ->
+            // is the app on this phone? an uninstalled app also clears its installed marker
+            if (p.packageName.isNotBlank()) {
+                val ver = runCatching { pm.getPackageInfo(p.packageName, 0).versionName ?: "?" }.getOrNull()
+                onPhone[p.id] = ver ?: ""
+                if (ver == null && installedTag(p.id).isNotBlank()) markInstalled(p.id, "")
+            }
             val tag = cachedTag(p.id)
             val tried = prefs.installTry(p.id)
             if (tag.isNotBlank() && tried > 0L && p.packageName.isNotBlank()) {
@@ -309,8 +327,13 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val status = when { last == null -> "none"; last.ok == null -> "running"; last.ok == true -> "passed"; else -> "failed" }
         val err = if (status == "failed") gh.errorOf(p.repo, last!!.id) else ""
         errors[p.id] = err
-        gh.latest(p.repo)?.let { latest[p.id] = it.tag }
+        val rel = gh.latest(p.repo)
+        rel?.let { latest[p.id] = it.tag }
         pruneOne(p)
+        // a newer release than the installed one: save its APK in the app now, so Update is one tap
+        if (rel != null && hasUpdate(p) && cachedTag(p.id) != rel.tag && downloading.add(p.id)) {
+            viewModelScope.launch { try { fetchApk(p, rel) { _, _ -> } } finally { downloading.remove(p.id) } }
+        }
         lock.withLock {
             val cur = projects.value.firstOrNull { it.id == p.id }
             if (cur != null) {

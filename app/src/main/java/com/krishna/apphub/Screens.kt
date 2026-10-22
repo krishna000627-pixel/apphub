@@ -172,6 +172,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     var f by remember { mutableStateOf("All") }
     var q by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { vm.refreshAll() }   // cached data shows at once; syncs only when older than 10 min
+    val ctx = LocalContext.current
     fun hit(p: Project, k: String) = when (k) {
         "Pinned" -> vm.isPinned(p.id); "To push" -> vm.pending(p); "Errors" -> p.lastStatus == "failed"; "Updates" -> vm.hasUpdate(p); else -> true
     }
@@ -189,6 +190,18 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             Stat("Passing", ps.count { it.lastStatus == "passed" }, Green, Modifier.weight(1f))
             Stat("Failing", ps.count { it.lastStatus == "failed" }, Red, Modifier.weight(1f))
             Stat("To push", ps.count { vm.pending(it) }, Amber, Modifier.weight(1f))
+        }
+        // follow-up: a saved APK that was not installed (ignored or skipped installer)
+        ps.filter { vm.waitingInstall(it) }.forEach { w ->
+            Panel(Modifier.padding(top = 6.dp), border = Amber.copy(alpha = 0.6f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${w.name} ${vm.cachedTag(w.id)} is ready to install", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(if (vm.installSkipped(w)) "The installer was skipped. Tap Install to continue." else "Downloaded, not installed yet.", fontSize = 12.sp, color = Muted)
+                    }
+                    Button({ vm.installCached(ctx, w) }, contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) { BtnText("Install") }
+                }
+            }
         }
         Spacer(Modifier.height(6.dp))
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -238,6 +251,11 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             else Pill("No builds yet", Muted)
             if (pend) Pill("+ Push ${vm.waitLabel(p)}", Amber)
             if (upd) Pill("Update ready", Amber)
+            when (vm.isInstalled(p)) {
+                true -> Pill("● On phone ${vm.onPhone[p.id] ?: ""}".trim(), Green)
+                false -> Pill("○ Not installed", Muted)
+                null -> {}
+            }
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -308,7 +326,10 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                         Spacer(Modifier.height(6.dp))
                         Mono("status   : ${p.lastStatus}", color = statusColor(p.lastStatus))
                         Mono("installed: ${vm.installedTag(id).ifBlank { "-" }}"); Mono("latest   : ${vm.latest[id] ?: "-"}")
-                        if (vm.hasCached(p)) Mono("cached   : ${vm.cachedTag(id)} (not installed yet)", color = Amber)
+                        Mono("on phone : ${vm.isInstalled(p).let { if (it == null) "unknown" else if (it) (vm.onPhone[id] ?: "yes") else "not installed" }}",
+                            color = if (vm.isInstalled(p) == false) Amber else Color.Unspecified)
+                        if (vm.waitingInstall(p)) Mono("saved apk: ${vm.cachedTag(id)} (not installed yet)", color = Amber)
+                        else if (vm.hasCached(p)) Mono("saved apk: ${vm.cachedTag(id)}")
                     }
                 }
                 item { Text("Recent commits", color = Muted, fontSize = 12.sp) }
@@ -654,7 +675,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 r == null -> Text("No APK release found yet. Deploy a zip and wait for the build to pass.", color = Amber)
                 else -> {
                     Text(if (inst == r.tag) "Up to date" else if (inst.isBlank()) "Latest build available" else "Update available", color = Cyan, fontWeight = FontWeight.Bold)
-                    Text("${inst.ifBlank { "not installed here" }} → ${r.tag}", fontSize = 18.sp, fontFamily = FontFamily.Monospace)
+                    Text("${inst.ifBlank { if (vm.isInstalled(p) == true) "installed" else "not installed here" }} → ${r.tag}", fontSize = 18.sp, fontFamily = FontFamily.Monospace)
                     if (vm.cachedTag(id) == r.tag && vm.hasCached(p) && inst != r.tag) Mono("Downloaded and waiting for install", color = Amber)
                 }
             }
