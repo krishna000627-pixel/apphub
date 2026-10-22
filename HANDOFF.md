@@ -12,6 +12,15 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v13
+- Deploy: a zip is only offered (card + "Push?" dialog) while it is new. Once pushed by any route (Push now, Use this zip + Push + build, picker) it is marked seen and the card disappears; with nothing new, only "Choose a zip" shows.
+- Preset renamed Anywall -> Videowall (repo videowall).
+
+## v12
+- Deploy screen: the "Allow" file-access card is gone (auto zip detection still works once All-files access is granted in system settings); the picker card reads "Choose a zip" when auto-detect is off.
+- HubSwitch: all toggles use a clear style (green track + dark thumb on, outlined grey off).
+- Videowall preset added (repo videowall; it was called Anywall by mistake before v13). Presets are now offered once each (Prefs.presetSeen), so existing installs get Videowall on update and removed apps stay removed; "Restore presets" still re-adds everything.
+
 ## v11
 - "What's new" fallback: releases with no notes (CI releases have none) show "Bug fixes and performance improvements." like Google Play (DEFAULT_NOTES / notesOrDefault in Data.kt). Used on the Install screen and the Releases tab.
 - APK cache tracking (HubVM): download goes to cache/apks/app_<id>.apk via a .part file, prefs remember the cached release tag. Install is only marked done when Android confirms it (package lastUpdateTime >= time the installer was opened, checked in onResume via checkInstalls). Apps without a package name are marked installed on tap (cannot be verified).

@@ -71,7 +71,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
-            if (!prefs.seeded) { seedMissing(); prefs.seeded = true }
+            if (prefs.seeded) listOf("questblock", "bgbrowser", "apphub").forEach { prefs.setPresetSeen(it) }  // already offered before v12
+            seedMissing(onlyNew = true); prefs.seeded = true
             fixOwners()
         }
     }
@@ -194,10 +195,12 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         deploy(ctx, p, pack, "", f)
     }
 
-    private suspend fun seedMissing(): Int {
+    private suspend fun seedMissing(onlyNew: Boolean = false): Int {
         val have = dao.all().first()
         var c = 0
         Presets.all.forEach { pr ->
+            if (onlyNew && prefs.presetSeen(pr.repo)) return@forEach
+            prefs.setPresetSeen(pr.repo)
             if (have.none { it.name.equals(pr.name, true) || it.repo.substringAfter("/").equals(pr.repo, true) }) {
                 dao.save(Project(name = pr.name, repo = if (login.isBlank()) pr.repo else "$login/${pr.repo}",
                     packageName = pr.pkg, localPath = pr.path, version = pr.version, stack = pr.stack))
@@ -346,7 +349,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             deployLog += "Pushing ${files.size} files to ${p.repo}…"
             val res = gh.pushFiles(p.repo, files, msg) { deployLog += it }
             if (res.ok) {
-                src?.let { prefs.setZipSeen(p.id, Downloads.key(it)); zipFound.remove(p.id) }
+                (src ?: zipFound[p.id]?.takeIf { it.name == pack.name } ?: zipLatest[p.id]?.takeIf { it.name == pack.name })
+                    ?.let { prefs.setZipSeen(p.id, Downloads.key(it)); zipFound.remove(p.id) }
                 if (res.committed) {
                     projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
                     deployLog += "✓ Pushed $ver (${res.added} new, ${res.changed} updated). Watching the build…"

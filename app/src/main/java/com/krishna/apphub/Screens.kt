@@ -1,9 +1,7 @@
 @file:OptIn(ExperimentalLayoutApi::class)
 package com.krishna.apphub
 
-import android.Manifest
 import android.content.Intent
-import android.os.Build
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -369,6 +367,13 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         Text(t.uppercase(), fontSize = 11.sp, color = Green, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
     }
 
+/** Clear on/off look: green track + dark thumb when on, outlined track + grey thumb when off. */
+@Composable fun HubSwitch(checked: Boolean, onChange: (Boolean) -> Unit) = Switch(checked, onChange,
+    colors = SwitchDefaults.colors(
+        checkedThumbColor = Color.Black, checkedTrackColor = Green, checkedBorderColor = Green,
+        uncheckedThumbColor = Muted, uncheckedTrackColor = Color.Transparent, uncheckedBorderColor = Muted
+    ))
+
 @Composable fun SettingRow(icon: ImageVector, title: String, sub: String, tint: Color = Cyan, onClick: (() -> Unit)? = null, trailing: @Composable () -> Unit = {}) =
     Row(Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable { onClick() } else Modifier).padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
@@ -408,7 +413,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
             Mono("last pushed: ${vm.pushedV[p.id] ?: "-"}", Modifier.padding(top = 4.dp), Muted)
             SettingRow(Icons.Default.Sync, "Follow builds automatically", "Label updates on every new build, however it was started") {
-                Switch(vm.isAuto(p.id), { vm.setAuto(p.id, it) })
+                HubSwitch(vm.isAuto(p.id), { vm.setAuto(p.id, it) })
             }
         }
         Button({
@@ -429,7 +434,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         Panel {
             SectionTitle(Icons.Default.Tune, "Shortcuts")
             SettingRow(Icons.Default.Star, "Pin to top", "Pinned apps sort first on the dashboard", Amber) {
-                Switch(vm.isPinned(p.id), { vm.togglePin(p) })
+                HubSwitch(vm.isPinned(p.id), { vm.togglePin(p) })
             }
             SettingRow(Icons.Default.Restore, "Reset installed marker", "Now: ${vm.installedTag(p.id).ifBlank { "none" }}. Clears the update check.", Cyan, { vm.clearInstalled(p.id) })
             SettingRow(Icons.Default.OpenInNew, "Open on GitHub", p.repo, Muted, { openUrl(ctx, "https://github.com/${p.repo}") })
@@ -447,7 +452,6 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val p = vm.sel()
     val ctx = LocalContext.current
     var note by remember { mutableStateOf("") }
-    val perm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.scanZips(ctx) }
     LaunchedEffect(p?.id) { vm.scanZips(ctx) }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.pickZip(ctx, uri) }
     val pack = vm.zipPack
@@ -457,31 +461,20 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         Header("Deploy")
         Text("Pick your zip and App Hub pushes it to GitHub and builds it. Nothing else needed.", fontSize = 12.sp, color = Muted)
         ProjectPicker(ps, p) { vm.selId = it.id }
-        if (!Downloads.hasAccess(ctx)) Panel(border = Amber.copy(alpha = 0.6f)) {
-            Text("Find the newest zip automatically", fontWeight = FontWeight.Bold)
-            Text("Allow access to files so App Hub can spot the latest ${p?.name ?: "app"} zip in Downloads and ask to push it.", fontSize = 12.sp, color = Muted)
+        val lf = p?.let { vm.zipFound[it.id] }   // newest zip not pushed yet (empty once pushed or skipped)
+        if (lf != null) Panel {
+            Text("New zip in Downloads", fontWeight = FontWeight.Bold)
+            Text(lf.name, color = Cyan, fontWeight = FontWeight.Bold)
+            Mono("${"%.1f".format(lf.length() / 1048576.0)} MB • ${agoMs(lf.lastModified())}", color = Muted)
             Spacer(Modifier.height(8.dp))
-            Button({ if (Build.VERSION.SDK_INT >= 30) Downloads.openAllFiles(ctx) else perm.launch(Manifest.permission.READ_EXTERNAL_STORAGE) },
-                colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) { Text("Allow") }
-        } else {
-            val lf = p?.let { vm.zipLatest[it.id] }
-            Panel {
-                Text("Latest zip in Downloads", fontWeight = FontWeight.Bold)
-                if (lf == null) Text("No zip named ${p?.name ?: "your app"} found (matches the app name or repo name).", fontSize = 12.sp, color = Muted)
-                else {
-                    Text(lf.name, color = Cyan, fontWeight = FontWeight.Bold)
-                    Mono("${"%.1f".format(lf.length() / 1048576.0)} MB • ${agoMs(lf.lastModified())}", color = Muted)
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button({ vm.useFile(lf) }, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color.Black)) { Text("Use this zip") }
-                        OutlinedButton({ if (p != null) vm.deployFile(ctx, p, lf) }) { Text("Push now") }
-                    }
-                }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button({ vm.useFile(lf) }, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color.Black)) { Text("Use this zip") }
+                OutlinedButton({ if (p != null) vm.deployFile(ctx, p, lf) }) { Text("Push now") }
             }
         }
         Panel {
             if (pack == null) {
-                Text("Or choose another zip", fontWeight = FontWeight.Bold)
+                Text(if (lf != null) "Or choose another zip" else "Choose a zip", fontWeight = FontWeight.Bold)
                 Text("Pick it from Downloads. Build folders and keystores inside the zip are skipped.", fontSize = 12.sp, color = Muted)
             } else {
                 Text(pack.name, fontWeight = FontWeight.Bold, color = Cyan)
@@ -531,7 +524,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         if (isNew) NewAppSection(vm, nav) else {
             Text("3. Tech Stack", color = Color.Gray)
             OutlinedTextField(stack, { stack = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Row(verticalAlignment = Alignment.CenterVertically) { Switch(deliver, { deliver = it }); Text("  Add zip name + version bump rules", fontSize = 12.sp) }
+            Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(deliver, { deliver = it }); Text("  Add zip name + version bump rules", fontSize = 12.sp) }
             Text("4. Generated Prompt", color = Color.Gray)
             Panel { Mono(text.ifBlank { "Add a project first." }) }
             BigButton("Copy prompt", Icons.Default.ContentCopy) { if (text.isNotBlank()) vm.copy(text) }
@@ -655,7 +648,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         }
         Panel {
             Text("Apps", fontWeight = FontWeight.Bold)
-            Text("QuestBlock, BgBrowser and App Hub are added on first launch. Bring back any you removed.", fontSize = 12.sp, color = Muted)
+            Text("QuestBlock, BgBrowser, App Hub and Videowall are added automatically. Bring back any you removed.", fontSize = 12.sp, color = Muted)
             Spacer(Modifier.height(8.dp))
             OutlinedButton({ vm.restorePresets() }) { Icon(Icons.Default.Restore, null, Modifier.size(16.dp)); Text(" Restore presets", fontSize = 12.sp) }
         }
@@ -686,8 +679,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         OutlinedTextField(repo, { repo = it }, label = { Text("Repo name (or owner/name)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(ver, { ver = it }, label = { Text("Version") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Row(verticalAlignment = Alignment.CenterVertically) { Switch(create, { create = it }); Text("  Create GitHub repo (private)") }
-        Row(verticalAlignment = Alignment.CenterVertically) { Switch(keys, { keys = it }); Text("  Generate signing keys + set secrets") }
+        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(create, { create = it }); Text("  Create GitHub repo (private)") }
+        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it }); Text("  Generate signing keys + set secrets") }
         BigButton("Create project", Icons.Default.PlayArrow) {
             if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim(), create, keys) else vm.toast("Name and repo required")
         }

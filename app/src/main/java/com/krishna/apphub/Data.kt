@@ -70,6 +70,10 @@ class Prefs(ctx: Context) {
     fun installTry(id: Long) = sp.getLong("it_$id", 0L)
     fun setInstallTry(id: Long, v: Long) { sp.edit().putLong("it_$id", v).apply() }
 
+    /** Presets already offered once, so a preset you removed is not brought back by an update. */
+    fun presetSeen(repo: String) = sp.getBoolean("ps_$repo", false)
+    fun setPresetSeen(repo: String) { sp.edit().putBoolean("ps_$repo", true).apply() }
+
     fun zipSeen(id: Long) = s("zs_$id")
     fun setZipSeen(id: Long, v: String) = put("zs_$id", v)
 
@@ -93,6 +97,7 @@ object Presets {
     val all = listOf(
         Preset("QuestBlock", "questblock", "", HOME + "QuestBlock", version = "v285"),
         Preset("BgBrowser", "bgbrowser", "com.bgbrowser", HOME + "BgBrowser"),
-        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v11")
+        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v13"),
+        Preset("Videowall", "videowall", "", HOME + "Videowall")
     )
 }
