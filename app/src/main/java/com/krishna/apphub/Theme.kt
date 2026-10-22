@@ -12,6 +12,7 @@ val Green = Color(0xFF19E68C)
 val Cyan = Color(0xFF22D3EE)
 val Red = Color(0xFFFF5252)
 val Amber = Color(0xFFFFB74D)
+val Muted = Color(0xFF8AA39B)
 
 private val scheme = darkColorScheme(
     primary = Green, onPrimary = Color.Black, secondary = Cyan, background = Bg, surface = Surf,

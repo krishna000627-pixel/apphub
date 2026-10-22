@@ -9,6 +9,38 @@ object Commands {
     private fun rd(ctx: Context, n: String) = ctx.assets.open(n).bufferedReader().readText().trimEnd()
     fun files(ctx: Context) = Files(rd(ctx, "build.yml"), rd(ctx, "release.sh"), rd(ctx, "setup.sh"))
 
+    fun num(v: String): String = Regex("(\\d+)$").find(v)?.value ?: ""
+    fun fileBase(p: Project) = p.name.filter { it.isLetterOrDigit() }
+    private fun initials(name: String): String {
+        val caps = name.filter { it.isUpperCase() }.lowercase()
+        return if (caps.length >= 2) caps.take(3) else name.filter { it.isLetterOrDigit() }.take(2).lowercase()
+    }
+
+    /** unzip ~/storage/downloads/Name_vN.zip into the project folder, then release (same shape as the QuestBlock command). */
+    fun deploy(p: Project, version: String, msg: String): String {
+        val base = fileBase(p)
+        val z = "${base}_$version"
+        val tmp = initials(p.name) + num(version)
+        val dir = p.localPath.trimEnd('/').substringAfterLast('/').ifBlank { base }
+        val m = msg.filterNot { it in "\"`\\\$" }
+        return "cd ~ && unzip -oq ~/storage/downloads/$z.zip -d ~/$tmp && cp -r ~/$tmp/$z/. ~/$dir/ && " +
+            "rm -rf ~/$tmp && cd ~/$dir && bash termux/release.sh \"$version: $m\""
+    }
+
+    /** Picks the newest Name_v*.zip in Downloads, unzips it over the project and releases it. No typing needed. */
+    fun deployLatest(p: Project): String {
+        val base = fileBase(p)
+        val dir = p.localPath.trimEnd('/').substringAfterLast('/').ifBlank { base }
+        return listOf(
+            "Z=\$(ls -t ~/storage/downloads/${base}_v*.zip 2>/dev/null | head -1)",
+            "[ -n \"\$Z\" ] || { echo 'No ${base}_v*.zip in Downloads'; exit 1; }",
+            "B=\$(basename \"\$Z\" .zip)",
+            "V=\${B##*_}",
+            "rm -rf ~/ahtmp && unzip -oq \"\$Z\" -d ~/ahtmp && cp -r ~/ahtmp/\$B/. ~/$dir/ && rm -rf ~/ahtmp",
+            "cd ~/$dir && bash termux/release.sh \"\$V: update from App Hub\""
+        ).joinToString("\n")
+    }
+
     fun bump(v: String): String = Regex("(\\d+)$").find(v)?.let { v.substring(0, it.range.first) + (it.value.toInt() + 1) } ?: v
 
     private fun put(path: String, body: String, tag: String) =
@@ -53,11 +85,24 @@ object Commands {
 }
 
 object Prompts {
-    val tasks = listOf("Fix error", "Add feature", "Refactor", "Release notes", "Other")
+    val tasks = listOf("Fix error", "Add feature", "Improve UI", "Refactor", "Release notes", "Other")
 
-    fun make(task: String, p: Project, stack: String, error: String): String {
+    fun delivery(p: Project): String {
+        val next = Commands.bump(p.version)
+        val base = Commands.fileBase(p)
+        return "\n\nDelivery rules: zip the whole project as ${base}_$next.zip with a top-level folder ${base}_$next/. " +
+            "Always bump the version to $next (versionCode and versionName), even for a string-only change. " +
+            "Then give me this deploy command, with the summary filled in:\n" + Commands.deploy(p, next, "<summary>")
+    }
+
+    fun make(task: String, p: Project, stack: String, error: String, deliver: Boolean = false): String =
+        body(task, p, stack, error) + if (deliver) delivery(p) else ""
+
+    private fun body(task: String, p: Project, stack: String, error: String): String {
         val tail = "Please keep the solution simple and production ready."
         return when (task) {
+            "Improve UI" -> "Improve the UI and UX of my Android project ${p.name} (${p.version}).\n\nFocus:\n<screens or problems to improve>\n\n" +
+                "Project stack: $stack.\n\nKeep the existing dark green/cyan style, reduce wasted padding, and show a preview before large visual changes. $tail"
             "Fix error" -> "Fix the following build error in my Android project ${p.name} (${p.version}).\n\nError:\n" +
                 "${error.ifBlank { "<paste error here>" }}\n\nProject stack: $stack.\n\nPlease analyze the error, explain the cause, " +
                 "and provide the exact code changes with updated files. $tail"

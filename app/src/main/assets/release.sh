@@ -24,7 +24,7 @@ done
 [ -n "$RUN_ID" ] || { echo "No CI run found. Check the Actions tab."; exit 1; }
 if ! gh run watch "$RUN_ID" --exit-status; then
   echo "==> BUILD FAILED. Compile errors:"
-  gh run view "$RUN_ID" --log-failed 2>/dev/null | grep -o "e: file.*" | sed 's#file:///home/runner/work/[^/]*/[^/]*/app/src/main/java/com/bgbrowser/##' | sort -u | head -15 | tee "$HOME/build_errors.txt"
+  gh run view "$RUN_ID" --log-failed 2>/dev/null | grep -o "e: file.*" | sed 's#file:///home/runner/work/[^/]*/[^/]*/app/src/main/java/[^ ]*/\([^/]*\.kt\)#\1#' | sort -u | head -15 | tee "$HOME/build_errors.txt"
   echo "==> Paste these lines to Claude (also saved in ~/build_errors.txt)"
   exit 1
 fi

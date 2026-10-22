@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -44,14 +45,23 @@ import java.io.File
     Column(mod.fillMaxWidth().background(Surf, RoundedCornerShape(12.dp)).border(1.dp, border, RoundedCornerShape(12.dp)).padding(12.dp), content = content)
 
 @Composable fun BigButton(t: String, icon: ImageVector, onClick: () -> Unit) =
-    Button(onClick, Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+    Button(onClick, Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
         Icon(icon, null); Spacer(Modifier.width(8.dp)); Text(t, fontWeight = FontWeight.Bold)
     }
 
-@Composable fun Header(t: String, nav: NavHostController? = null) =
-    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (nav != null) IconButton({ nav.popBackStack() }) { Icon(Icons.Default.ArrowBack, null) }
-        Text(t, style = MaterialTheme.typography.titleLarge, color = Green)
+@Composable fun Stat(label: String, value: Int, c: Color, mod: Modifier) =
+    Column(mod.background(Surf, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp)).padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("$value", color = c, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Text(label, fontSize = 10.sp, color = Muted)
+    }
+
+/** Compact screen header: small vertical padding, optional back arrow, optional trailing actions. */
+@Composable fun Header(t: String, nav: NavHostController? = null, actions: @Composable RowScope.() -> Unit = {}) =
+    Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (nav != null) IconButton({ nav.popBackStack() }, Modifier.size(40.dp)) { Icon(Icons.Default.ArrowBack, null) }
+        Text(t, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Green, maxLines = 1)
+        actions()
     }
 
 @Composable fun ProjectPicker(ps: List<Project>, sel: Project?, onSel: (Project) -> Unit) {
@@ -68,6 +78,14 @@ import java.io.File
 
 fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "running" -> Amber; else -> Color.Gray }
 
+fun ago(t: String): String = runCatching {
+    val then = java.time.LocalDateTime.parse(t.replace(" ", "T")).toEpochSecond(java.time.ZoneOffset.UTC)
+    val d = System.currentTimeMillis() / 1000 - then
+    when { d < 60 -> "just now"; d < 3600 -> "${d / 60}m ago"; d < 86400 -> "${d / 3600}h ago"; else -> "${d / 86400}d ago" }
+}.getOrDefault(t)
+
+fun openUrl(ctx: android.content.Context, url: String) = ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+
 // ---------- app shell ----------
 @Composable fun App(vm: HubVM) {
     val nav = rememberNavController()
@@ -76,7 +94,8 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
         Triple("dash", "Dashboard", Icons.Default.Dashboard), Triple("prompt", "Prompt", Icons.Default.Description),
         Triple("command", "Command", Icons.Default.Terminal), Triple("settings", "Settings", Icons.Default.Settings)
     )
-    Scaffold(containerColor = Bg, bottomBar = {
+    // contentWindowInsets = 0 so the status bar inset is applied exactly once (statusBarsPadding below)
+    Scaffold(containerColor = Bg, contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
         NavigationBar(containerColor = Surf) {
             tabs.forEach { (r, l, i) ->
                 NavigationBarItem(selected = route == r, onClick = { nav.navigate(r) { popUpTo("dash"); launchSingleTop = true } },
@@ -101,22 +120,45 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
 @Composable fun Dashboard(vm: HubVM, nav: NavHostController) {
     val ps by vm.projects.collectAsState()
     var f by remember { mutableStateOf("All") }
+    var q by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { vm.refreshAll() }
-    val shown = ps.filter { when (f) { "Active" -> it.lastStatus != "none"; "Errors" -> it.lastStatus == "failed"; else -> true } }
+    fun hit(p: Project, k: String) = when (k) {
+        "Pinned" -> vm.isPinned(p.id); "Errors" -> p.lastStatus == "failed"; "Updates" -> vm.hasUpdate(p); else -> true
+    }
+    val shown = ps.filter { hit(it, f) && (q.isBlank() || it.name.contains(q, true) || it.repo.contains(q, true)) }
+        .sortedWith(compareByDescending<Project> { vm.isPinned(it.id) }.thenBy { it.name.lowercase() })
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("App Hub", style = MaterialTheme.typography.headlineMedium, color = Green)
-                Text("Manage • Build • Deploy", style = MaterialTheme.typography.bodySmall)
+        Header("App Hub") {
+            IconButton({ vm.refreshAll() }, Modifier.size(40.dp)) {
+                if (vm.refreshing) CircularProgressIndicator(Modifier.size(18.dp), color = Green, strokeWidth = 2.dp) else Icon(Icons.Default.Refresh, null)
             }
-            IconButton({ vm.refreshAll() }) { Icon(Icons.Default.Refresh, null) }
-            IconButton({ nav.navigate("add") }) { Icon(Icons.Default.Add, null, tint = Green) }
+            IconButton({ nav.navigate("add") }, Modifier.size(40.dp)) { Icon(Icons.Default.Add, null, tint = Green) }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("All", "Active", "Errors").forEach { FilterChip(f == it, { f = it }, { Text("$it (${ps.count { p -> when (it) { "Active" -> p.lastStatus != "none"; "Errors" -> p.lastStatus == "failed"; else -> true } }})") }) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Stat("Apps", ps.size, Cyan, Modifier.weight(1f))
+            Stat("Passing", ps.count { it.lastStatus == "passed" }, Green, Modifier.weight(1f))
+            Stat("Failing", ps.count { it.lastStatus == "failed" }, Red, Modifier.weight(1f))
+            Stat("Updates", ps.count { vm.hasUpdate(it) }, Amber, Modifier.weight(1f))
         }
-        if (ps.isEmpty()) Text("No projects yet. Tap + to add one.", Modifier.padding(24.dp), color = Color.Gray)
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("All", "Pinned", "Errors", "Updates").forEach { k ->
+                FilterChip(f == k, { f = k }, { Text("$k (${ps.count { hit(it, k) }})", fontSize = 12.sp) })
+            }
+        }
+        if (ps.size > 5) OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(top = 6.dp), singleLine = true,
+            placeholder = { Text("Search apps") }, leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = { if (q.isNotEmpty()) IconButton({ q = "" }) { Icon(Icons.Default.Close, null) } })
+        if (ps.isEmpty()) Panel(Modifier.padding(top = 12.dp)) {
+            Text("No apps yet", fontWeight = FontWeight.Bold)
+            Text("Add your own, or bring back the preset apps.", fontSize = 12.sp, color = Muted)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button({ vm.restorePresets() }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { Text("Add presets") }
+                OutlinedButton({ nav.navigate("add") }) { Text("Add app") }
+            }
+        } else if (shown.isEmpty()) Text("Nothing matches this filter.", Modifier.padding(24.dp), color = Muted)
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp)) {
             items(shown, key = { it.id }) { p -> ProjectCard(vm, nav, p) }
         }
     }
@@ -124,20 +166,33 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
 
 @Composable fun ProjectCard(vm: HubVM, nav: NavHostController, p: Project) {
     val ctx = LocalContext.current
-    Panel(Modifier.clickable { nav.navigate("detail/${p.id}") }) {
+    val last = vm.runs[p.id]?.firstOrNull()
+    val pinned = vm.isPinned(p.id)
+    val upd = vm.hasUpdate(p)
+    Panel(Modifier.clickable { nav.navigate("detail/${p.id}") }, border = if (p.lastStatus == "failed") Red.copy(alpha = 0.6f) else Line) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(44.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Apps, null, tint = Cyan) }
+            Box(Modifier.size(40.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Apps, null, tint = Cyan) }
             Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) { Text(p.name, fontWeight = FontWeight.Bold); Text(p.version, fontSize = 12.sp, color = Color.Gray) }
+            Column(Modifier.weight(1f)) {
+                Text(p.name, fontWeight = FontWeight.Bold)
+                Text(listOfNotNull(p.version, last?.let { ago(it.time) }).joinToString(" • "), fontSize = 12.sp, color = Muted)
+            }
+            IconButton({ vm.togglePin(p) }, Modifier.size(36.dp)) {
+                Icon(if (pinned) Icons.Default.Star else Icons.Default.StarBorder, null, tint = if (pinned) Amber else Muted)
+            }
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Pill("Active", Green)
-            if (p.lastStatus != "none") Pill(if (p.lastStatus == "passed") "✓ Build Passed" else if (p.lastStatus == "failed") "✕ Build Failed" else "… Running", statusColor(p.lastStatus))
+            if (p.lastStatus != "none") Pill(if (p.lastStatus == "passed") "✓ Build passed" else if (p.lastStatus == "failed") "✕ Build failed" else "… Running", statusColor(p.lastStatus))
+            else Pill("No builds yet", Muted)
+            if (upd) Pill("Update ready", Amber)
         }
-        Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton({ vm.build(p) }, Modifier.weight(1f)) { Icon(Icons.Default.Build, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Build") }
+            if (upd) Button({ nav.navigate("install/${p.id}") }, Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) {
+                Icon(Icons.Default.Download, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Update")
+            }
             Button({ vm.push(ctx, p) }, Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
                 Icon(Icons.Default.Send, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Push")
             }
@@ -151,19 +206,36 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
     val ctx = LocalContext.current
     var tab by remember { mutableIntStateOf(1) }
     var ver by remember(p.id) { mutableStateOf(p.version) }
+    var confirm by remember { mutableStateOf(false) }
     val runs = vm.runs[id] ?: emptyList()
     val err = vm.errors[id] ?: ""
+    val upd = vm.hasUpdate(p)
     LaunchedEffect(id) { vm.refresh(p) }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Header(p.name, nav) }
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false },
+        confirmButton = { TextButton({ vm.delete(p); nav.popBackStack() }) { Text("Remove", color = Red) } },
+        dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },
+        title = { Text("Remove ${p.name}?") }, text = { Text("This only removes it from App Hub. Your repo and files stay untouched.") })
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            Text(p.version, fontSize = 40.sp, color = Cyan, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-            Text(p.stack, fontSize = 12.sp, color = Color.Gray); Text(p.repo, fontSize = 12.sp, color = Color.Gray)
+            Header(p.name, nav) {
+                IconButton({ vm.togglePin(p) }, Modifier.size(40.dp)) {
+                    Icon(if (vm.isPinned(id)) Icons.Default.Star else Icons.Default.StarBorder, null, tint = if (vm.isPinned(id)) Amber else Muted)
+                }
+            }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton({ ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/${p.repo}"))) }) { Text("View on GitHub") }
-                Button({ nav.navigate("install/$id") }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { Text("Install / Update") }
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(p.version, fontSize = 36.sp, color = Cyan, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.padding(bottom = 6.dp)) { Text(p.stack, fontSize = 12.sp, color = Muted); Text(p.repo, fontSize = 12.sp, color = Muted) }
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton({ openUrl(ctx, "https://github.com/${p.repo}") }, Modifier.weight(1f)) { Icon(Icons.Default.OpenInNew, null, Modifier.size(16.dp)); Text(" GitHub", fontSize = 13.sp) }
+                Button({ nav.navigate("install/$id") }, Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (upd) Amber else Green, contentColor = Color.Black)) {
+                    Text(if (upd) "Update ready" else "Install / Update", fontSize = 13.sp)
+                }
             }
         }
         item {
@@ -176,15 +248,26 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
                 Panel {
                     Mono("package : ${p.packageName.ifBlank { "-" }}"); Mono("path    : ${p.localPath.ifBlank { "-" }}")
                     Mono("status  : ${p.lastStatus}", color = statusColor(p.lastStatus))
+                    Mono("installed: ${vm.installedTag(id).ifBlank { "-" }}"); Mono("latest  : ${vm.latest[id] ?: "-"}")
+                    Spacer(Modifier.height(10.dp))
+                    Button({ vm.deployLatest(ctx, p) }, Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color.Black)) {
+                        Icon(Icons.Default.Terminal, null, Modifier.size(16.dp)); Text(" Deploy newest zip from Downloads", fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton({ vm.copy(Commands.deploy(p, Commands.bump(p.version), "update")) }, Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.ContentCopy, null, Modifier.size(16.dp)); Text(" Copy deploy command for ${Commands.bump(p.version)}", fontSize = 12.sp)
+                    }
                 }
             }
             1 -> {
                 items(runs) { r ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(10.dp).background(statusColor(when (r.ok) { true -> "passed"; false -> "failed"; else -> "running" }), CircleShape))
+                    val st = when (r.ok) { true -> "passed"; false -> "failed"; else -> "running" }
+                    Row(Modifier.fillMaxWidth().clickable { openUrl(ctx, "https://github.com/${p.repo}/actions/runs/${r.id}") }.padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(10.dp).background(statusColor(st), CircleShape))
                         Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) { Mono("#${r.number}  ${r.msg.take(34)}"); Mono(r.time, color = Color.Gray) }
-                        Text(when (r.ok) { true -> "passed"; false -> "failed"; else -> "running" }, color = statusColor(when (r.ok) { true -> "passed"; false -> "failed"; else -> "running" }), fontSize = 12.sp)
+                        Column(Modifier.weight(1f)) { Mono("#${r.number}  ${r.msg.take(34)}"); Mono(ago(r.time), color = Color.Gray) }
+                        Text(st, color = statusColor(st), fontSize = 12.sp)
                     }
                 }
                 if (runs.isEmpty()) item { Text("No runs yet. Push to trigger the first build.", color = Color.Gray) }
@@ -203,7 +286,10 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
                 Panel {
                     OutlinedTextField(ver, { ver = it }, label = { Text("Version") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
-                    Button({ vm.update(p.copy(version = ver)); vm.toast("Saved") }) { Text("Save version") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button({ vm.update(p.copy(version = ver)); vm.toast("Saved") }) { Text("Save version") }
+                        OutlinedButton({ ver = Commands.bump(ver) }) { Text("Bump → ${Commands.bump(ver)}") }
+                    }
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton({ vm.termuxSetup(ctx, p) }) { Text("Create repo + signing (Termux)") }
                     Spacer(Modifier.height(8.dp))
@@ -211,7 +297,7 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton({ vm.keyBackup(p).let { k -> if (k.isBlank()) vm.toast("No keystore stored") else vm.copy(k) } }) { Text("Copy keystore backup") }
                     Spacer(Modifier.height(8.dp))
-                    OutlinedButton({ vm.delete(p); nav.popBackStack() }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Red)) { Text("Remove from App Hub") }
+                    OutlinedButton({ confirm = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Red)) { Text("Remove from App Hub") }
                 }
             }
         }
@@ -224,14 +310,16 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
     val ps by vm.projects.collectAsState()
     val p = vm.sel()
     var stack by remember(p?.id) { mutableStateOf(p?.stack ?: "") }
-    val text = if (p == null) "" else Prompts.make(vm.task, p, stack, vm.errors[p.id] ?: p.lastError)
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    var deliver by remember { mutableStateOf(true) }
+    val text = if (p == null) "" else Prompts.make(vm.task, p, stack, vm.errors[p.id] ?: p.lastError, deliver)
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Prompt Maker")
         Text("1. Select Project", color = Color.Gray); ProjectPicker(ps, p) { vm.selId = it.id }
         Text("2. What do you want to do?", color = Color.Gray)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Prompts.tasks.forEach { FilterChip(vm.task == it, { vm.task = it }, { Text(it) }) } }
         Text("3. Tech Stack", color = Color.Gray)
         OutlinedTextField(stack, { stack = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Row(verticalAlignment = Alignment.CenterVertically) { Switch(deliver, { deliver = it }); Text("  Add zip + version bump + deploy command rules", fontSize = 12.sp) }
         Text("4. Generated Prompt", color = Color.Gray)
         Panel { Mono(text.ifBlank { "Add a project first." }) }
         BigButton("Copy prompt", Icons.Default.ContentCopy) { if (text.isNotBlank()) vm.copy(text) }
@@ -245,21 +333,35 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
     val p = vm.sel()
     val ctx = LocalContext.current
     var ver by remember(p?.id) { mutableStateOf(p?.let { Commands.bump(it.version) } ?: "") }
+    var msg by remember(p?.id) { mutableStateOf("") }
     var su by remember { mutableStateOf(false) }; var b by remember { mutableStateOf(false) }; var pu by remember { mutableStateOf(true) }
     var r by remember { mutableStateOf(false) }; var z by remember { mutableStateOf(false) }
+    val deploy = if (p == null) "" else Commands.deploy(p, ver, msg.ifBlank { "update" })
     val script = if (p == null) "" else Commands.script(p, ver, su, b, pu, r, z)
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Command Maker")
         Text("Project", color = Color.Gray); ProjectPicker(ps, p) { vm.selId = it.id }
         OutlinedTextField(ver, { ver = it }, label = { Text("Version") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Text("Actions", color = Color.Gray)
+        Panel {
+            Text("Deploy from zip", fontWeight = FontWeight.Bold)
+            Text("Unzips Downloads/Name_vN.zip over the project, then runs release.sh.", fontSize = 12.sp, color = Muted)
+            OutlinedTextField(msg, { msg = it }, label = { Text("Release message") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+            Mono(deploy.ifBlank { "Add a project first." })
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton({ if (deploy.isNotBlank()) vm.copy(deploy) }, Modifier.weight(1f)) { Icon(Icons.Default.ContentCopy, null, Modifier.size(16.dp)); Text(" Copy") }
+                Button({ if (p != null && deploy.isNotBlank()) { if (!Commands.runInTermux(ctx, deploy)) vm.toast("Termux not available — see Settings") else vm.update(p.copy(version = ver)) } },
+                    Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color.Black)) { Icon(Icons.Default.Terminal, null, Modifier.size(16.dp)); Text(" Run") }
+            }
+        }
+        Button({ if (p != null) vm.deployLatest(ctx, p) else vm.toast("Add a project first") }, Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+            Icon(Icons.Default.Terminal, null, Modifier.size(16.dp)); Text(" Deploy newest zip from Downloads", fontSize = 12.sp)
+        }
+        Text("Or build a script", color = Color.Gray)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(su, { su = !su }, { Text("Setup repo+sign") }); FilterChip(b, { b = !b }, { Text("Build") })
             FilterChip(pu, { pu = !pu }, { Text("Push+Release") }); FilterChip(r, { r = !r }, { Text("Tag") }); FilterChip(z, { z = !z }, { Text("Zip") })
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Generated Command", Modifier.weight(1f), color = Color.Gray)
-            TextButton({ if (script.isNotBlank()) vm.copy(script) }) { Text("Copy all", color = Cyan) }
         }
         Panel { Mono(script.ifBlank { "Add a project first." }) }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -279,28 +381,30 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
     var rel by remember { mutableStateOf<GitHub.Rel?>(null) }
     var loaded by remember { mutableStateOf(false) }
     var prog by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(id) { rel = vm.gh.latest(p.repo); loaded = true }
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LaunchedEffect(id) { val x = vm.gh.latest(p.repo); rel = x; if (x != null) vm.latest[id] = x.tag; loaded = true }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header(p.name, nav)
         Panel {
             val r = rel
+            val inst = vm.installedTag(id)
             when {
                 !loaded -> Text("Checking GitHub releases…")
                 r == null -> Text("No APK release found. Run Command Maker with Release ticked to publish one.", color = Amber)
                 else -> {
-                    Text(if (r.tag == p.version) "Up to date" else "Update available", color = Cyan, fontWeight = FontWeight.Bold)
-                    Text("${p.version} → ${r.tag}", fontSize = 22.sp, fontFamily = FontFamily.Monospace)
+                    Text(if (inst == r.tag) "Up to date" else if (inst.isBlank()) "Latest build available" else "Update available", color = Cyan, fontWeight = FontWeight.Bold)
+                    Text("${inst.ifBlank { "not installed here" }} → ${r.tag}", fontSize = 18.sp, fontFamily = FontFamily.Monospace)
                 }
             }
         }
         if (prog > 0f) { LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green); Mono("${(prog * 100).toInt()}%") }
         rel?.let { r ->
             if (r.body.isNotBlank()) Panel { Text("What's new", fontWeight = FontWeight.Bold); Mono(r.body) }
-            BigButton("Download & Install", Icons.Default.Download) {
+            BigButton(if (vm.installedTag(id) == r.tag) "Reinstall" else "Download & Install", Icons.Default.Download) {
                 scope.launch {
                     val f = File(ctx.cacheDir, "apks").apply { mkdirs() }.resolve("${p.name}.apk")
-                    vm.gh.download(r.assetUrl, f) { d, t -> if (t > 0) prog = d.toFloat() / t }
-                    vm.update(p.copy(version = r.tag)); vm.gh.install(ctx, f)
+                    val ok = runCatching { vm.gh.download(r.assetUrl, f) { d, t -> if (t > 0) prog = d.toFloat() / t } }.isSuccess
+                    if (!ok) { vm.toast("Download failed"); return@launch }
+                    vm.markInstalled(id, r.tag); vm.gh.install(ctx, f)
                 }
             }
         }
@@ -310,7 +414,9 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
 // ---------- settings ----------
 @Composable fun SettingsScreen(vm: HubVM) {
     var cid by remember { mutableStateOf(vm.prefs.clientId) }
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val ctx = LocalContext.current
+    val appVer = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?" }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Settings")
         Panel {
             Text("GitHub", fontWeight = FontWeight.Bold)
@@ -327,9 +433,19 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
             Button({ vm.prefs.clientId = cid; vm.toast("Saved") }) { Text("Save") }
         }
         Panel {
-            Text("Termux setup", fontWeight = FontWeight.Bold)
-            Mono("1. Install Termux from F-Droid/GitHub\n2. In Termux run:\n   mkdir -p ~/.termux\n   echo 'allow-external-apps=true' >> ~/.termux/termux.properties\n   termux-reload-settings\n   pkg install git openjdk-17 zip\n3. Android Settings → Apps → App Hub → Permissions → enable 'Run commands in Termux'")
+            Text("Apps", fontWeight = FontWeight.Bold)
+            Text("QuestBlock, BgBrowser and App Hub are added on first launch. Bring back any you removed.", fontSize = 12.sp, color = Muted)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton({ vm.restorePresets() }) { Icon(Icons.Default.Restore, null, Modifier.size(16.dp)); Text(" Restore presets", fontSize = 12.sp) }
+                OutlinedButton({ ctx.packageManager.getLaunchIntentForPackage("com.termux")?.let { ctx.startActivity(it) } ?: vm.toast("Termux not found") }) { Text("Open Termux", fontSize = 12.sp) }
+            }
         }
+        Panel {
+            Text("Termux setup", fontWeight = FontWeight.Bold)
+            Mono("1. Install Termux from F-Droid/GitHub\n2. In Termux run:\n   mkdir -p ~/.termux\n   echo 'allow-external-apps=true' >> ~/.termux/termux.properties\n   termux-reload-settings\n   pkg install git openjdk-17 zip\n   termux-setup-storage\n3. Android Settings → Apps → App Hub → Permissions → enable 'Run commands in Termux'")
+        }
+        Text("App Hub $appVer", Modifier.fillMaxWidth().padding(vertical = 8.dp), color = Muted, fontSize = 12.sp)
     }
 }
 
@@ -342,6 +458,12 @@ fun statusColor(s: String) = when (s) { "passed" -> Green; "failed" -> Red; "run
     val ctx = LocalContext.current
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
+        Text("Quick fill", color = Color.Gray)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Presets.all.forEach { pr ->
+                AssistChip({ name = pr.name; repo = pr.repo; path = pr.path; pkg = pr.pkg; ver = pr.version; create = false; keys = false }, { Text(pr.name) })
+            }
+        }
         OutlinedTextField(name, { name = it; if (repo.isBlank() || repo == name.dropLast(1)) repo = it }, label = { Text("App name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(repo, { repo = it }, label = { Text("Repo name (or owner/name)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(path, { path = it }, label = { Text("Local path (Termux)") }, singleLine = true, modifier = Modifier.fillMaxWidth())

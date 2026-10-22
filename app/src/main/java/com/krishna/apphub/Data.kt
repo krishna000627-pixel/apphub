@@ -49,6 +49,28 @@ class Prefs(ctx: Context) {
         get() = s("client", BuildConfig.APPHUB_CLIENT_ID)
         set(v) = put("client", v)
 
+    var seeded: Boolean
+        get() = sp.getBoolean("seeded_v1", false)
+        set(v) { sp.edit().putBoolean("seeded_v1", v).apply() }
+
+    fun pinned(id: Long) = sp.getBoolean("pin_$id", false)
+    fun setPinned(id: Long, v: Boolean) { sp.edit().putBoolean("pin_$id", v).apply() }
+    fun installed(id: Long) = s("inst_$id")
+    fun setInstalled(id: Long, v: String) = put("inst_$id", v)
+
     fun saveKeys(repo: String, v: String) = put("ks_$repo", v)
     fun keys(repo: String) = s("ks_$repo")
+}
+
+/** Apps that are added automatically on first launch (owner is filled in once you log in). */
+data class Preset(val name: String, val repo: String, val pkg: String, val path: String,
+                  val stack: String = "Kotlin • Compose", val version: String = "v1")
+
+object Presets {
+    private const val HOME = "/data/data/com.termux/files/home/"
+    val all = listOf(
+        Preset("QuestBlock", "questblock", "", HOME + "QuestBlock"),
+        Preset("BgBrowser", "bgbrowser", "com.bgbrowser", HOME + "BgBrowser"),
+        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v5")
+    )
 }

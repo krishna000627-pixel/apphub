@@ -13,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -25,11 +26,59 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     val runs = mutableStateMapOf<Long, List<GitHub.Run>>()
     val errors = mutableStateMapOf<Long, String>()
     val log = mutableStateListOf<String>()
+    val latest = mutableStateMapOf<Long, String>()
+    val pins = mutableStateMapOf<Long, Boolean>()
+    val installed = mutableStateMapOf<Long, String>()
+    var refreshing by mutableStateOf(false)
 
     var login by mutableStateOf(prefs.login)
     var userCode by mutableStateOf<String?>(null)
     var selId by mutableLongStateOf(0L)
     var task by mutableStateOf("Fix error")
+
+    init {
+        viewModelScope.launch {
+            if (!prefs.seeded) { seedMissing(); prefs.seeded = true }
+            fixOwners()
+        }
+    }
+
+    fun isPinned(id: Long) = pins[id] ?: prefs.pinned(id)
+    fun togglePin(p: Project) { val v = !isPinned(p.id); pins[p.id] = v; prefs.setPinned(p.id, v) }
+    fun installedTag(id: Long) = installed[id] ?: prefs.installed(id)
+    fun markInstalled(id: Long, tag: String) { installed[id] = tag; prefs.setInstalled(id, tag) }
+    fun hasUpdate(p: Project): Boolean {
+        val l = latest[p.id] ?: return false
+        val i = installedTag(p.id)
+        return i.isNotBlank() && i != l
+    }
+
+    /** Adds the preset apps that are not in the list yet. */
+    private suspend fun seedMissing(): Int {
+        val have = dao.all().first()
+        var n = 0
+        Presets.all.forEach { pr ->
+            if (have.none { it.name.equals(pr.name, true) || it.repo.substringAfter("/").equals(pr.repo, true) }) {
+                dao.save(Project(name = pr.name, repo = if (login.isBlank()) pr.repo else "$login/${pr.repo}",
+                    packageName = pr.pkg, localPath = pr.path, version = pr.version, stack = pr.stack))
+                n++
+            }
+        }
+        return n
+    }
+
+    /** Projects saved without an owner get "login/" once you are logged in. */
+    private suspend fun fixOwners() {
+        if (login.isBlank()) return
+        dao.all().first().filter { !it.repo.contains("/") }.forEach { dao.save(it.copy(repo = "$login/${it.repo}")) }
+    }
+
+    fun restorePresets() = viewModelScope.launch {
+        val n = seedMissing(); fixOwners()
+        toast(if (n > 0) "Added $n preset app(s)" else "All preset apps are already added")
+    }
+
+    fun bumpVersion(p: Project) = update(p.copy(version = Commands.bump(p.version)))
 
     fun sel(): Project? = projects.value.firstOrNull { it.id == selId } ?: projects.value.firstOrNull()
     fun toast(s: String) = Toast.makeText(getApplication(), s, Toast.LENGTH_SHORT).show()
@@ -48,22 +97,32 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             Intent(Intent.ACTION_VIEW, Uri.parse(j.getString("verification_uri"))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val ok = gh.pollToken(j.getString("device_code"), j.optInt("interval", 5))
         userCode = null
-        if (ok) { login = gh.user() ?: ""; prefs.login = login; toast("Logged in as $login"); refreshAll() } else toast("Login failed")
+        if (ok) { login = gh.user() ?: ""; prefs.login = login; toast("Logged in as $login"); fixOwners(); refreshAll() } else toast("Login failed")
     }
 
     fun logout() { prefs.token = ""; prefs.login = ""; login = "" }
 
     // ---- projects ----
     fun refresh(p: Project) = viewModelScope.launch {
+        if (!p.repo.contains("/")) return@launch
         val r = gh.runs(p.repo); runs[p.id] = r
         val last = r.firstOrNull()
         val status = when { last == null -> "none"; last.ok == null -> "running"; last.ok == true -> "passed"; else -> "failed" }
         val err = if (status == "failed") gh.errorOf(p.repo, last!!.id) else ""
         errors[p.id] = err
-        dao.save(p.copy(lastStatus = status, lastError = err))
+        gh.latest(p.repo)?.let { latest[p.id] = it.tag }
+        // keep the version label in step with the last pushed "vNNN: ..." commit (only ever upwards)
+        val pushed = last?.msg?.let { Regex("^v\\d+").find(it)?.value }
+        val cur = projects.value.firstOrNull { it.id == p.id } ?: return@launch
+        val newer = pushed != null && (Commands.num(pushed).toIntOrNull() ?: 0) > (Commands.num(cur.version).toIntOrNull() ?: 0)
+        dao.save(cur.copy(version = if (newer) pushed!! else cur.version, lastStatus = status, lastError = err))
     }
 
-    fun refreshAll() = projects.value.forEach { refresh(it) }
+    fun refreshAll() = viewModelScope.launch {
+        refreshing = true
+        projects.value.map { refresh(it) }.forEach { it.join() }
+        refreshing = false
+    }
     fun update(p: Project) = viewModelScope.launch { dao.save(p) }
     fun delete(p: Project) = viewModelScope.launch { dao.delete(p) }
 
@@ -77,6 +136,10 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun runScript(ctx: Context, p: Project, v: String, su: Boolean, b: Boolean, pu: Boolean, r: Boolean, z: Boolean) {
         val ok = Commands.runInTermux(ctx, Commands.script(p, v, su, b, pu, r, z, true, prefs.token, Commands.files(ctx)))
         if (!ok) toast("Termux not available — enable RUN_COMMAND (see Settings)")
+    }
+
+    fun deployLatest(ctx: Context, p: Project) {
+        if (!Commands.runInTermux(ctx, Commands.deployLatest(p))) toast("Termux not available — enable RUN_COMMAND (see Settings)")
     }
 
     fun keyBackup(p: Project) = prefs.keys(p.repo)
