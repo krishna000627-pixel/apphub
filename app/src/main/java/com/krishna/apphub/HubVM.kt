@@ -51,6 +51,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var zipPack by mutableStateOf<Zipper.Pack?>(null)
     var deploying by mutableStateOf(false)
     var autoInstall by mutableStateOf(prefs.autoInstall)
+        private set
     private var deployGen = 0
     val deployLog = mutableStateListOf<String>()
 
