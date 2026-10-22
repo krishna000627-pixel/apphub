@@ -51,6 +51,18 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var selId by mutableLongStateOf(0L)
     var task by mutableStateOf("Fix error")
 
+    // new-app prompt maker (kept here so it survives switching tabs)
+    var ideaCat by mutableStateOf("Productivity")
+    var ideaName by mutableStateOf("")
+    var ideaPitch by mutableStateOf("")
+    var ideaNotes by mutableStateOf("")
+    var draftName by mutableStateOf("")
+
+    // full build-log viewer
+    var logTitle by mutableStateOf("")
+    var logLines by mutableStateOf<List<String>>(emptyList())
+    var logLoading by mutableStateOf(false)
+
     init {
         viewModelScope.launch {
             if (!prefs.seeded) { seedMissing(); prefs.seeded = true }
@@ -173,6 +185,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         releases[p.id] = gh.releases(p.repo)
     }
 
+    fun openLog(p: Project, j: GitHub.Job) = viewModelScope.launch {
+        logTitle = "${p.name} • ${j.name}"; logLines = emptyList(); logLoading = true
+        val t = gh.jobLog(p.repo, j.id)
+        val ts = Regex("^\\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z ")
+        logLines = if (t.isBlank()) listOf("No log available (the job may still be running).") else t.lines().map { it.replaceFirst(ts, "") }
+        logLoading = false
+    }
+
     fun loadJobs(p: Project, runId: Long) = viewModelScope.launch { jobs[runId] = gh.jobs(p.repo, runId) }
 
     fun update(p: Project) = viewModelScope.launch { dao.save(p) }
@@ -204,7 +224,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 deployLog += "• added the standard build workflow"
             }
             val ver = pack.version.ifBlank { Commands.bump(p.version) }
-            val msg = "$ver: update from App Hub"
+            val msg = "$ver: ${note.replace("\n", " ").trim().ifBlank { "update from App Hub" }}"
             val before = gh.runs(p.repo).firstOrNull()?.id ?: 0L
             deployLog += "Pushing ${files.size} files to ${p.repo}…"
             val ok = gh.pushFiles(p.repo, files, msg) { deployLog += it }

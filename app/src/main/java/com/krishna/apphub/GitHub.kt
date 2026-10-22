@@ -23,7 +23,7 @@ class GitHub(private val prefs: Prefs) {
     data class Commit(val sha: String, val msg: String, val author: String, val time: String)
     data class Release(val tag: String, val time: String, val notes: String, val sizeKb: Long)
     data class Step(val name: String, val ok: Boolean?)
-    data class Job(val name: String, val ok: Boolean?, val steps: List<Step>)
+    data class Job(val id: Long, val name: String, val ok: Boolean?, val steps: List<Step>)
     data class Rel(val tag: String, val body: String, val assetUrl: String)
 
     private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS).build()
@@ -151,8 +151,13 @@ class GitHub(private val prefs: Prefs) {
         return (0 until a.length()).map {
             val o = a.getJSONObject(it)
             val st = o.optJSONArray("steps") ?: JSONArray()
-            Job(o.s("name"), ok(o.s("conclusion")), (0 until st.length()).map { i -> st.getJSONObject(i).let { s -> Step(s.s("name"), ok(s.s("conclusion"))) } })
+            Job(o.optLong("id"), o.s("name"), ok(o.s("conclusion")), (0 until st.length()).map { i -> st.getJSONObject(i).let { s -> Step(s.s("name"), ok(s.s("conclusion"))) } })
         }
+    }
+
+    suspend fun jobLog(repo: String, jobId: Long): String {
+        val (c, b) = exec(rb("$api/repos/$repo/actions/jobs/$jobId/logs").build())
+        return if (c == 200) b else ""
     }
 
     suspend fun exists(repo: String, path: String) = get("/repos/$repo/contents/$path").first == 200

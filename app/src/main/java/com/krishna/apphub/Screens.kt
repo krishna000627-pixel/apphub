@@ -115,7 +115,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     }) { pad ->
         NavHost(nav, "dash", Modifier.padding(pad).statusBarsPadding()) {
             composable("dash") { Dashboard(vm, nav) }
-            composable("prompt") { PromptScreen(vm) }
+            composable("prompt") { PromptScreen(vm, nav) }
+            composable("log") { LogScreen(vm, nav) }
             composable("deploy") { DeployScreen(vm, nav) }
             composable("settings") { SettingsScreen(vm) }
             composable("add") { AddScreen(vm, nav) }
@@ -300,6 +301,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                             if (js == null) Mono("  loading steps…", color = Muted) else js.forEach { j ->
                                 Mono("  ${mark(j.ok)} ${j.name}", color = okColor(j.ok))
                                 j.steps.forEach { s -> Mono("     ${mark(s.ok)} ${s.name}", color = if (s.ok == false) Red else Muted) }
+                                TextButton({ vm.openLog(p, j); nav.navigate("log") }) { Text("View full log", fontSize = 12.sp, color = Cyan) }
                             }
                         }
                     }
@@ -308,6 +310,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 if (err.isNotBlank()) item {
                     Panel(border = Red) {
                         Text("Build Error", color = Red, fontWeight = FontWeight.Bold); Mono(err)
+                        Text("Tap the build above, then View full log.", fontSize = 11.sp, color = Muted)
                         Spacer(Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton({ vm.copy(err) }, Modifier.weight(1f)) { Icon(Icons.Default.ContentCopy, null, Modifier.size(16.dp)); Text(" Copy log", fontSize = 12.sp) }
@@ -379,7 +382,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 Icon(Icons.Default.FolderOpen, null, Modifier.size(16.dp)); Text(if (pack == null) " Choose zip" else " Change zip")
             }
         }
-        if (pack != null && p != null) Mono("commit : ${pack.version.ifBlank { Commands.bump(p.version) }}: update from App Hub", color = Muted)
+        OutlinedTextField(note, { note = it }, label = { Text("Release note (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        if (pack != null && p != null) Mono("commit : ${pack.version.ifBlank { Commands.bump(p.version) }}: ${note.ifBlank { "update from App Hub" }}", color = Muted)
         BigButton(if (vm.deploying) "Working…" else "Push + build", Icons.Default.CloudUpload) {
             if (pack != null && p != null) vm.deploy(ctx, p, pack, note) else vm.toast("Pick a project and a zip first")
         }
@@ -399,24 +403,82 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
 }
 
 // ---------- prompt maker ----------
-@Composable fun PromptScreen(vm: HubVM) {
+@Composable fun PromptScreen(vm: HubVM, nav: NavHostController) {
     val ps by vm.projects.collectAsState()
     val p = vm.sel()
     var stack by remember(p?.id) { mutableStateOf(p?.stack ?: "") }
     var deliver by remember { mutableStateOf(true) }
-    val text = if (p == null) "" else Prompts.make(vm.task, p, stack, vm.errors[p.id] ?: p.lastError, deliver)
+    val isNew = vm.task == "New app"
+    val text = if (p == null || isNew) "" else Prompts.make(vm.task, p, stack, vm.errors[p.id] ?: p.lastError, deliver)
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Prompt Maker")
-        Text("1. Select Project", color = Color.Gray); ProjectPicker(ps, p) { vm.selId = it.id }
-        Text("2. What do you want to do?", color = Color.Gray)
+        if (!isNew) { Text("1. Select Project", color = Color.Gray); ProjectPicker(ps, p) { vm.selId = it.id } }
+        Text(if (isNew) "What do you want to do?" else "2. What do you want to do?", color = Color.Gray)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Prompts.tasks.forEach { FilterChip(vm.task == it, { vm.task = it }, { Text(it) }) } }
-        Text("3. Tech Stack", color = Color.Gray)
-        OutlinedTextField(stack, { stack = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Row(verticalAlignment = Alignment.CenterVertically) { Switch(deliver, { deliver = it }); Text("  Add zip name + version bump rules", fontSize = 12.sp) }
-        Text("4. Generated Prompt", color = Color.Gray)
-        Panel { Mono(text.ifBlank { "Add a project first." }) }
-        BigButton("Copy prompt", Icons.Default.ContentCopy) { if (text.isNotBlank()) vm.copy(text) }
+        if (isNew) NewAppSection(vm, nav) else {
+            Text("3. Tech Stack", color = Color.Gray)
+            OutlinedTextField(stack, { stack = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Row(verticalAlignment = Alignment.CenterVertically) { Switch(deliver, { deliver = it }); Text("  Add zip name + version bump rules", fontSize = 12.sp) }
+            Text("4. Generated Prompt", color = Color.Gray)
+            Panel { Mono(text.ifBlank { "Add a project first." }) }
+            BigButton("Copy prompt", Icons.Default.ContentCopy) { if (text.isNotBlank()) vm.copy(text) }
+        }
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+/** New app: ideas first, then the build prompt. */
+@Composable fun NewAppSection(vm: HubVM, nav: NavHostController) {
+    val ideas = Ideas.list[vm.ideaCat] ?: emptyList()
+    Text("1. Pick a direction", color = Color.Gray)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Ideas.cats.forEach { c -> FilterChip(vm.ideaCat == c, { vm.ideaCat = c }, { Text(c) }) } }
+    Text("2. Ideas first. Tap one, or ask the AI for more.", color = Color.Gray)
+    ideas.forEach { (n, d) ->
+        val on = vm.ideaName == n
+        Panel(Modifier.clickable { vm.ideaName = n; vm.ideaPitch = d }, border = if (on) Green else Line) {
+            Text(n, fontWeight = FontWeight.Bold, color = if (on) Green else Color.Unspecified)
+            Text(d, fontSize = 12.sp, color = Muted)
+        }
+    }
+    OutlinedTextField(vm.ideaNotes, { vm.ideaNotes = it }, label = { Text("Your interests / must-haves (optional)") }, modifier = Modifier.fillMaxWidth())
+    OutlinedButton({ vm.copy(Prompts.ideasPrompt(vm.ideaCat, vm.ideaNotes)) }, Modifier.fillMaxWidth()) {
+        Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp), tint = Cyan); Text(" Copy ideas prompt (AI suggests, you pick)", fontSize = 12.sp)
+    }
+    Text("3. Your pick", color = Color.Gray)
+    OutlinedTextField(vm.ideaName, { vm.ideaName = it }, label = { Text("App name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(vm.ideaPitch, { vm.ideaPitch = it }, label = { Text("One-line pitch") }, modifier = Modifier.fillMaxWidth())
+    Text("4. Build prompt", color = Color.Gray)
+    val text = Prompts.buildPrompt(vm.ideaName, vm.ideaPitch)
+    Panel { Mono(if (vm.ideaName.isBlank()) "Pick or type an app name first." else text) }
+    BigButton("Copy build prompt", Icons.Default.ContentCopy) { if (vm.ideaName.isNotBlank()) vm.copy(text) else vm.toast("Pick an idea first") }
+    OutlinedButton({ if (vm.ideaName.isNotBlank()) { vm.draftName = vm.ideaName; nav.navigate("add") } else vm.toast("Pick an idea first") }, Modifier.fillMaxWidth()) {
+        Text("Set up this app in App Hub")
+    }
+}
+
+// ---------- full build log ----------
+@Composable fun LogScreen(vm: HubVM, nav: NavHostController) {
+    var q by remember { mutableStateOf("") }
+    var tail by remember { mutableStateOf(false) }
+    var errOnly by remember { mutableStateOf(false) }
+    fun isErr(l: String) = l.startsWith("e: ") || l.contains("error", true) || l.contains("FAILED") || l.contains("What went wrong")
+    val shown = remember(vm.logLines, q, tail, errOnly) {
+        val base = if (tail) vm.logLines.takeLast(200) else vm.logLines
+        base.filter { (!errOnly || isErr(it)) && (q.isBlank() || it.contains(q, true)) }
+    }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Header(vm.logTitle, nav) {
+            IconButton({ vm.copy(shown.joinToString("\n")) }, Modifier.size(40.dp)) { Icon(Icons.Default.ContentCopy, null) }
+        }
+        OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Search log") },
+            leadingIcon = { Icon(Icons.Default.Search, null) })
+        Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            FilterChip(tail, { tail = !tail }, { Text("Last 200", fontSize = 12.sp) })
+            FilterChip(errOnly, { errOnly = !errOnly }, { Text("Errors only", fontSize = 12.sp) })
+            Mono("${shown.size} lines", color = Muted)
+        }
+        if (vm.logLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Green)
+        LazyColumn(Modifier.weight(1f)) { items(shown) { l -> Mono(l, color = if (isErr(l)) Red else Color.Unspecified) } }
     }
 }
 
@@ -495,8 +557,10 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
 
 // ---------- add project ----------
 @Composable fun AddScreen(vm: HubVM, nav: NavHostController) {
-    var name by remember { mutableStateOf("") }; var repo by remember { mutableStateOf("") }
-    var pkg by remember { mutableStateOf("") }; var ver by remember { mutableStateOf("v1") }
+    val slug = vm.draftName.lowercase().filter { it.isLetterOrDigit() }
+    var name by remember { mutableStateOf(vm.draftName) }; var repo by remember { mutableStateOf(slug) }
+    var pkg by remember { mutableStateOf(if (slug.isBlank()) "" else "com.krishna.$slug") }; var ver by remember { mutableStateOf("v1") }
+    LaunchedEffect(Unit) { vm.draftName = "" }
     var create by remember { mutableStateOf(true) }; var keys by remember { mutableStateOf(true) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
