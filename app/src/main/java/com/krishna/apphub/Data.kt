@@ -71,6 +71,6 @@ object Presets {
     val all = listOf(
         Preset("QuestBlock", "questblock", "", HOME + "QuestBlock"),
         Preset("BgBrowser", "bgbrowser", "com.bgbrowser", HOME + "BgBrowser"),
-        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v5")
+        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v6")
     )
 }

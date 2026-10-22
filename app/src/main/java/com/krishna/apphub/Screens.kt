@@ -454,7 +454,7 @@ fun openUrl(ctx: android.content.Context, url: String) = ctx.startActivity(Inten
     var name by remember { mutableStateOf("") }; var repo by remember { mutableStateOf("") }
     var path by remember { mutableStateOf("/data/data/com.termux/files/home/") }
     var pkg by remember { mutableStateOf("") }; var ver by remember { mutableStateOf("v1") }
-    var create by remember { mutableStateOf(true) }; var keys by remember { mutableStateOf(true) }; var tx by remember { mutableStateOf(false) }
+    var create by remember { mutableStateOf(true) }; var keys by remember { mutableStateOf(true) }; var tx by remember { mutableStateOf(false) }; var zip by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
@@ -472,7 +472,9 @@ fun openUrl(ctx: android.content.Context, url: String) = ctx.startActivity(Inten
         Row(verticalAlignment = Alignment.CenterVertically) { Switch(create, { create = it }); Text("  Create GitHub repo (private)") }
         Row(verticalAlignment = Alignment.CenterVertically) { Switch(keys, { keys = it }); Text("  Generate signing keys + set secrets") }
         Row(verticalAlignment = Alignment.CenterVertically) { Switch(tx, { tx = it }); Text("  Do it via Termux (gh + keytool)") }
-        BigButton("Run setup", Icons.Default.PlayArrow) { if (name.isNotBlank() && repo.isNotBlank()) vm.setup(ctx, name.trim(), repo.trim(), path.trim(), pkg.trim(), ver.trim(), create, keys, tx) else vm.toast("Name and repo required") }
+        Row(verticalAlignment = Alignment.CenterVertically) { Switch(zip, { zip = it }); Text("  New app from newest Name_v*.zip in Downloads", fontSize = 13.sp) }
+        if (zip) Text("Unzips into ~/AppName, creates the repo + keys, pushes, builds and installs. App name must match the zip name (Name_vN.zip).", fontSize = 12.sp, color = Muted)
+        BigButton(if (zip) "Unzip + setup + build" else "Run setup", Icons.Default.PlayArrow) { if (name.isNotBlank() && repo.isNotBlank() && zip) vm.setupFromZip(ctx, name.trim(), repo.trim(), path.trim(), pkg.trim(), ver.trim()) else if (name.isNotBlank() && repo.isNotBlank()) vm.setup(ctx, name.trim(), repo.trim(), path.trim(), pkg.trim(), ver.trim(), create, keys, tx) else vm.toast("Name and repo required") }
         if (vm.log.isNotEmpty()) Panel { vm.log.forEach { Mono(it) } }
         Spacer(Modifier.height(16.dp))
     }

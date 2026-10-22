@@ -25,7 +25,7 @@ android {
     defaultConfig {
         applicationId = "com.krishna.apphub"
         minSdk = 26; targetSdk = 35
-        versionCode = 5; versionName = "5.0"
+        versionCode = 6; versionName = "6.0"
         buildConfigField("String", "APPHUB_CLIENT_ID", "\"${project.findProperty("APPHUB_CLIENT_ID") ?: ""}\"")
     }
     signingConfigs {

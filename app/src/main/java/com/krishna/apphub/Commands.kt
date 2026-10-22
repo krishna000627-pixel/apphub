@@ -41,6 +41,23 @@ object Commands {
         ).joinToString("\n")
     }
 
+    /** New app from a zip: unzip newest Name_v*.zip into ~/Name, then create repo + keys, push, build, install. */
+    fun setupFromZip(p: Project, token: String, f: Files): String {
+        val base = fileBase(p)
+        val dir = p.localPath.trimEnd('/').substringAfterLast('/').ifBlank { base }
+        return listOf(
+            if (token.isNotBlank()) "export GH_TOKEN='$token'" else "# export GH_TOKEN=<your GitHub token>",
+            "Z=\$(ls -t ~/storage/downloads/${base}_v*.zip 2>/dev/null | head -1)",
+            "[ -n \"\$Z\" ] || { echo 'No ${base}_v*.zip in Downloads'; exit 1; }",
+            "rm -rf ~/ahtmp && unzip -oq \"\$Z\" -d ~/ahtmp",
+            "S=\$(ls -d ~/ahtmp/*/ 2>/dev/null | head -1); [ -n \"\$S\" ] || S=~/ahtmp/",
+            "mkdir -p ~/$dir && cp -r \"\$S.\" ~/$dir/ && rm -rf ~/ahtmp",
+            "cd ~/$dir",
+            bootstrap(f),
+            "bash termux/setup.sh ${p.repo.substringAfter("/")}"
+        ).joinToString("\n")
+    }
+
     fun bump(v: String): String = Regex("(\\d+)$").find(v)?.let { v.substring(0, it.range.first) + (it.value.toInt() + 1) } ?: v
 
     private fun put(path: String, body: String, tag: String) =

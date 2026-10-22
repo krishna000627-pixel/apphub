@@ -138,6 +138,20 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (!ok) toast("Termux not available — enable RUN_COMMAND (see Settings)")
     }
 
+    /** New app from a zip in Downloads: add project, unzip, create repo + keys, push, build, install (all in Termux). */
+    fun setupFromZip(ctx: Context, name: String, repoName: String, path: String, pkg: String, version: String) = viewModelScope.launch {
+        log.clear()
+        if (login.isBlank() && !repoName.contains("/")) { log += "✗ Log in with GitHub (Settings) or enter owner/name"; return@launch }
+        val repo = if (repoName.contains("/")) repoName else "$login/$repoName"
+        val home = "/data/data/com.termux/files/home/"
+        val dir = if (path.trimEnd('/') == home.trimEnd('/')) home + name.filter { it.isLetterOrDigit() } else path
+        val p = Project(name = name, repo = repo, packageName = pkg, localPath = dir, version = version)
+        dao.save(p)
+        val ok = Commands.runInTermux(ctx, Commands.setupFromZip(p, prefs.token, Commands.files(ctx)))
+        log += if (ok) "✓ Project added. Termux is unzipping ${Commands.fileBase(p)}_v*.zip, creating repo + keys, pushing and building…"
+               else "✗ Termux not available — enable RUN_COMMAND (see Settings)"
+    }
+
     fun deployLatest(ctx: Context, p: Project) {
         if (!Commands.runInTermux(ctx, Commands.deployLatest(p))) toast("Termux not available — enable RUN_COMMAND (see Settings)")
     }
