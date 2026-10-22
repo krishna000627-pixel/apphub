@@ -70,14 +70,24 @@ private val BtnPad = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
         actions()
     }
 
+/** Project chooser: a bottom sheet with a clean list instead of a small floating menu. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable fun ProjectPicker(ps: List<Project>, sel: Project?, onSel: (Project) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Box {
-        OutlinedButton({ open = true }, Modifier.fillMaxWidth()) {
-            Text(sel?.name ?: "Select project", Modifier.weight(1f)); Text(sel?.version ?: ""); Icon(Icons.Default.ArrowDropDown, null)
-        }
-        DropdownMenu(open, { open = false }) {
-            ps.forEach { DropdownMenuItem({ Text("${it.name}  ${it.version}") }, { onSel(it); open = false }) }
+    OutlinedButton({ open = true }, Modifier.fillMaxWidth()) {
+        Text(sel?.name ?: "Select project", Modifier.weight(1f)); Text(sel?.version ?: ""); Icon(Icons.Default.ArrowDropDown, null)
+    }
+    if (open) ModalBottomSheet({ open = false }, containerColor = Surf) {
+        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
+            Text("Choose project", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
+            ps.forEach { p ->
+                val on = p.id == sel?.id
+                Row(Modifier.fillMaxWidth().clickable { onSel(p); open = false }.padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(p.name, Modifier.weight(1f), color = if (on) Green else Color.Unspecified, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
+                    Text(p.version, color = Muted, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                    if (on) { Spacer(Modifier.width(8.dp)); Icon(Icons.Default.Check, null, tint = Green, modifier = Modifier.size(18.dp)) }
+                }
+            }
         }
     }
 }
@@ -395,11 +405,17 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     var stack by remember(p.id) { mutableStateOf(p.stack) }
     var ver by remember(p.id, p.version) { mutableStateOf(p.version) }
     var confirm by remember { mutableStateOf(false) }
+    var confirmUndo by remember { mutableStateOf(false) }
     val dirty = name != p.name || repo != p.repo || pkg != p.packageName || stack != p.stack || ver != p.version
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         confirmButton = { TextButton({ vm.delete(p); nav.popBackStack() }) { Text("Remove", color = Red) } },
         dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },
         title = { Text("Remove ${p.name}?") }, text = { Text("This only removes it from App Hub. Your repo and files stay untouched.") })
+    if (confirmUndo) AlertDialog(onDismissRequest = { confirmUndo = false },
+        confirmButton = { TextButton({ confirmUndo = false; vm.undoLastPush(p) }) { Text("Undo push", color = Amber) } },
+        dismissButton = { TextButton({ confirmUndo = false }) { Text("Cancel") } },
+        title = { Text("Undo the last push?") },
+        text = { Text("Adds a new commit that puts the previous code back and starts a build. History is kept. Android will not install an older versionCode over a newer one, so bump the version on your next push.") })
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Panel {
             SectionTitle(Icons.Default.Info, "App details")
@@ -430,6 +446,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         Panel {
             SectionTitle(Icons.Default.Build, "Build and signing")
             SettingRow(Icons.Default.PlayArrow, "Trigger a build", "Runs the GitHub workflow on the latest code", Green, { vm.build(p) })
+            SettingRow(Icons.Default.Undo, "Undo last push", "Puts the previous code back as a new commit", Amber, { confirmUndo = true })
             SettingRow(Icons.Default.Sync, "Re-send signing secrets", "Sets the 4 GitHub secrets again from the stored keystore", Cyan, { vm.resendSecrets(p) })
             SettingRow(Icons.Default.Key, "Copy keystore backup", "Keep this safe. Updates must use the same key.", Amber, {
                 vm.keyBackup(p).let { k -> if (k.isBlank()) vm.toast("No keystore stored") else vm.copy(k) }
@@ -494,13 +511,39 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         }
         OutlinedTextField(note, { note = it }, label = { Text("Release note (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         if (pack != null && p != null) Mono("commit : ${pack.version.ifBlank { Commands.bump(p.version) }}: ${note.ifBlank { "update from App Hub" }}", color = Muted)
+        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.autoInstall, { vm.setAutoInstall(it) }); Text("  Open the installer when the build passes", fontSize = 12.sp) }
+        if (pack != null && p != null) OutlinedButton({ vm.preview(p, pack) }, Modifier.fillMaxWidth(), enabled = !vm.deploying) {
+            Icon(Icons.Default.Compare, null, Modifier.size(16.dp)); Text(" Preview changes (nothing is pushed)", fontSize = 13.sp)
+        }
         BigButton(if (vm.deploying) "Working…" else "Push + build", Icons.Default.CloudUpload) {
             if (pack != null && p != null) vm.deploy(ctx, p, pack, note) else vm.toast("Pick a project and a zip first")
         }
-        if (vm.deployLog.isNotEmpty()) Panel { vm.deployLog.forEach { Mono(it) } }
+        if (vm.deployLog.isNotEmpty()) Panel {
+            vm.deployLog.forEach { l ->
+                val t = l.trimStart()
+                Mono(l, color = when {
+                    t.startsWith("✗") -> Red
+                    t.startsWith("✓") || t.startsWith("+ ") -> Green
+                    t.startsWith("~ ") -> Amber
+                    else -> Color.Unspecified
+                })
+            }
+        }
         if (p != null && last != null) Panel(border = okColor(last.ok)) {
             Text("Latest build #${last.number}", fontWeight = FontWeight.Bold)
             Mono("${mark(last.ok)} ${when (last.ok) { true -> "passed"; false -> "failed"; else -> "running…" }}  ${ago(last.time)}", color = okColor(last.ok))
+            if (last.ok == false) {
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton({
+                        val e = vm.errors[p.id].orEmpty().ifBlank { p.lastError }
+                        if (e.isNotBlank()) vm.copy(e) else vm.toast("No error text yet")
+                    }) { Icon(Icons.Default.ContentCopy, null, Modifier.size(16.dp)); Text(" Copy errors", fontSize = 12.sp) }
+                    OutlinedButton({ vm.selId = p.id; vm.task = "Fix error"; nav.navigate("prompt") }) {
+                        Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp), tint = Cyan); Text(" AI prompt", fontSize = 12.sp)
+                    }
+                }
+            }
             if (last.ok == true) {
                 Spacer(Modifier.height(8.dp))
                 Button({ nav.navigate("install/${p.id}") }, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color.Black)) {

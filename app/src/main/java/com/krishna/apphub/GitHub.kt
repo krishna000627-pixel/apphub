@@ -4,7 +4,12 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -13,6 +18,9 @@ import org.json.JSONObject
 import android.util.Base64
 import org.json.JSONArray
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import java.util.concurrent.TimeUnit
 
 private fun JSONObject.s(k: String): String = if (isNull(k)) "" else optString(k, "")
@@ -84,8 +92,8 @@ class GitHub(private val prefs: Prefs) {
     suspend fun dispatch(repo: String) =
         send("POST", "/repos/$repo/actions/workflows/build.yml/dispatches", JSONObject().put("ref", "main")).first == 204
 
-    suspend fun runs(repo: String): List<Run> {
-        val (c, b) = get("/repos/$repo/actions/runs?per_page=8")
+    suspend fun runs(repo: String, n: Int = 8): List<Run> {
+        val (c, b) = get("/repos/$repo/actions/runs?per_page=$n")
         if (c != 200) return emptyList()
         val a = JSONObject(b).getJSONArray("workflow_runs")
         return (0 until a.length()).map {
@@ -162,7 +170,43 @@ class GitHub(private val prefs: Prefs) {
 
     suspend fun exists(repo: String, path: String) = get("/repos/$repo/contents/$path").first == 200
 
-    data class PushResult(val ok: Boolean, val committed: Boolean = false, val added: Int = 0, val changed: Int = 0, val same: Int = 0)
+    data class PushResult(val ok: Boolean, val committed: Boolean = false, val added: Int = 0, val changed: Int = 0, val same: Int = 0, val sha: String = "", val branch: String = "")
+
+    /** The file as text if it is valid UTF-8 (so it can travel inline), else null. */
+    private fun textOf(b: ByteArray): String? {
+        if (b.isEmpty() || b.size > 1_000_000 || b.any { it == 0.toByte() }) return null
+        return try {
+            val t = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(b)).toString()
+            if (t.toByteArray(Charsets.UTF_8).contentEquals(b)) t else null
+        } catch (e: CharacterCodingException) { null }
+    }
+
+    /**
+     * Undo the last push safely: adds a NEW commit that restores the previous tree (history is kept, CI builds it).
+     * Returns (ok, message).
+     */
+    suspend fun revertLast(repo: String): Pair<Boolean, String> {
+        val (c0, b0) = get("/repos/$repo"); if (c0 != 200) return false to "Cannot open $repo ($c0)"
+        val branch = JSONObject(b0).s("default_branch").ifBlank { "main" }
+        val ref = get("/repos/$repo/git/ref/heads/$branch"); if (ref.first != 200) return false to "Branch not found"
+        val head = JSONObject(ref.second).getJSONObject("object").getString("sha")
+        val (c1, b1) = get("/repos/$repo/git/commits/$head"); if (c1 != 200) return false to "Cannot read the last commit ($c1)"
+        val hj = JSONObject(b1)
+        val parents = hj.optJSONArray("parents") ?: JSONArray()
+        if (parents.length() == 0) return false to "This is the first commit, nothing to go back to"
+        val parent = parents.getJSONObject(0).getString("sha")
+        val (c2, b2) = get("/repos/$repo/git/commits/$parent"); if (c2 != 200) return false to "Cannot read the previous commit ($c2)"
+        val pj = JSONObject(b2)
+        val pv = Regex("^v\\d+").find(pj.s("message"))?.value
+        val first = hj.s("message").lineSequence().firstOrNull().orEmpty()
+        val msg = if (pv != null) "$pv: revert \"$first\"" else "Revert \"$first\""
+        val (c3, b3) = send("POST", "/repos/$repo/git/commits",
+            JSONObject().put("message", msg).put("tree", pj.getJSONObject("tree").getString("sha")).put("parents", JSONArray().put(head)))
+        if (c3 != 201) return false to "Revert commit failed ($c3)"
+        val c4 = send("PATCH", "/repos/$repo/git/refs/heads/$branch", JSONObject().put("sha", JSONObject(b3).getString("sha"))).first
+        return if (c4 == 200) true to msg else false to "Branch update failed ($c4)"
+    }
 
     private fun gitSha(b: ByteArray): String {
         val md = java.security.MessageDigest.getInstance("SHA-1")
@@ -174,11 +218,12 @@ class GitHub(private val prefs: Prefs) {
      * Pushes only what changed: new files are created, changed files are updated, identical files are skipped
      * (compared by git blob hash against the repo's current tree). Result is ONE commit, or none if nothing changed.
      */
-    suspend fun pushFiles(repo: String, files: List<Pair<String, ByteArray>>, message: String, log: (String) -> Unit): PushResult {
+    suspend fun pushFiles(repo: String, files: List<Pair<String, ByteArray>>, message: String, dryRun: Boolean = false, log: (String) -> Unit): PushResult {
         val (c0, b0) = get("/repos/$repo")
         if (c0 != 200) { log("✗ Cannot open $repo ($c0). Check login and repo name."); return PushResult(false) }
         val branch = JSONObject(b0).s("default_branch").ifBlank { "main" }
         var ref = get("/repos/$repo/git/ref/heads/$branch")
+        if (ref.first != 200 && dryRun) { log("• empty repo: all ${files.size} files would be new"); return PushResult(true, false, files.size, 0, 0) }
         if (ref.first != 200) {
             log("• empty repo, creating first commit")
             val init = send("PUT", "/repos/$repo/contents/.gitkeep", JSONObject().put("message", "init").put("content", "Cg=="))
@@ -204,36 +249,70 @@ class GitHub(private val prefs: Prefs) {
         if (!known) { remote.clear(); log("• could not compare with the repo, uploading everything") }
 
         val todo = ArrayList<Pair<String, ByteArray>>()
+        val marks = ArrayList<String>()
         var added = 0; var changed = 0; var same = 0
-        for (f in files) {
+        for (f in files.sortedBy { it.first }) {
             val r = remote[f.first]
             when {
-                r == null -> { added++; todo.add(f) }
-                r != gitSha(f.second) -> { changed++; todo.add(f) }
+                r == null -> { added++; todo.add(f); marks.add("  + ${f.first}") }
+                r != gitSha(f.second) -> { changed++; todo.add(f); marks.add("  ~ ${f.first}") }
                 else -> same++
             }
         }
         log("• $added new, $changed changed, $same unchanged (skipped)")
+        marks.take(30).forEach { log(it) }
+        if (marks.size > 30) log("  … and ${marks.size - 30} more")
         if (todo.isEmpty()) { log("✓ Nothing to push, the repo already has these files."); return PushResult(true, false, 0, 0, same) }
+        if (dryRun) { log("• Preview only, nothing was pushed."); return PushResult(true, false, added, changed, same) }
 
+        // Text files go inline in the tree request (no extra call each). Only binary or big files need a blob upload.
+        var inlineBytes = 0
+        val inline = HashMap<String, String>()
+        for ((path, bytes) in todo) {
+            val t = textOf(bytes)
+            if (t != null && inlineBytes + bytes.size <= 6_000_000) { inline[path] = t; inlineBytes += bytes.size }
+        }
+        val blobFiles = todo.filter { it.first !in inline }
+        val shas = HashMap<String, String>()
+        if (blobFiles.isNotEmpty()) {
+            val gate = Semaphore(8)
+            var done = 0
+            val res = coroutineScope {
+                blobFiles.map { (path, bytes) ->
+                    async {
+                        gate.withPermit {
+                            val (c, b) = send("POST", "/repos/$repo/git/blobs",
+                                JSONObject().put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64"))
+                            if (c == 201) {
+                                done++
+                                if (done % 10 == 0 || done == blobFiles.size) log("  uploaded $done/${blobFiles.size}")
+                                path to JSONObject(b).getString("sha")
+                            } else path to null
+                        }
+                    }
+                }.awaitAll()
+            }
+            val bad = res.firstOrNull { it.second == null }
+            if (bad != null) { log("✗ upload failed: ${bad.first}"); return PushResult(false) }
+            res.forEach { shas[it.first] = it.second!! }
+        }
+        log("• ${inline.size} text files sent inline, ${blobFiles.size} uploaded")
         val entries = JSONArray()
-        for ((i, f) in todo.withIndex()) {
-            val (path, bytes) = f
-            val (c, b) = send("POST", "/repos/$repo/git/blobs",
-                JSONObject().put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64"))
-            if (c != 201) { log("✗ upload failed: $path ($c)"); return PushResult(false) }
-            entries.put(JSONObject().put("path", path).put("mode", if (path.endsWith(".sh") || path == "gradlew") "100755" else "100644")
-                .put("type", "blob").put("sha", JSONObject(b).getString("sha")))
-            if ((i + 1) % 10 == 0 || i + 1 == todo.size) log("  uploaded ${i + 1}/${todo.size}")
+        for ((path, _) in todo) {
+            val e = JSONObject().put("path", path).put("mode", if (path.endsWith(".sh") || path == "gradlew") "100755" else "100644").put("type", "blob")
+            if (path in inline) e.put("content", inline[path]) else e.put("sha", shas[path])
+            entries.put(e)
         }
         val (c3, b3) = send("POST", "/repos/$repo/git/trees", JSONObject().put("base_tree", baseTree).put("tree", entries))
         if (c3 != 201) { log("✗ tree failed ($c3)"); return PushResult(false) }
         val (c4, b4) = send("POST", "/repos/$repo/git/commits",
             JSONObject().put("message", message).put("tree", JSONObject(b3).getString("sha")).put("parents", JSONArray().put(parent)))
         if (c4 != 201) { log("✗ commit failed ($c4)"); return PushResult(false) }
-        val c5 = send("PATCH", "/repos/$repo/git/refs/heads/$branch", JSONObject().put("sha", JSONObject(b4).getString("sha"))).first
+        val newSha = JSONObject(b4).getString("sha")
+        val c5 = send("PATCH", "/repos/$repo/git/refs/heads/$branch", JSONObject().put("sha", newSha)).first
         if (c5 != 200) { log("✗ branch update failed ($c5)"); return PushResult(false) }
-        return PushResult(true, true, added, changed, same)
+        log("• commit ${newSha.take(7)} on $branch")
+        return PushResult(true, true, added, changed, same, newSha, branch)
     }
 
     // ---- install / update ----

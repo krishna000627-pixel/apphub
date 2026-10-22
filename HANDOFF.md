@@ -12,6 +12,16 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v16
+- Build watch: polls every 4 s with one small runs call (full refresh only when the run ends), real elapsed seconds, up to ~9 min.
+- Push speed: UTF-8 text files go inline in the tree request (no blob call each); only binary/big files are uploaded as blobs, 8 at a time. First pushes are now a handful of calls.
+- Deploy: "Preview changes" lists new/changed files without pushing (GitHub.pushFiles dryRun). Settings tab: "Undo last push" (GitHub.revertLast) adds a commit restoring the previous tree, history kept; message reuses the previous "vNNN:" label so the version follows. Branches/merge are not in the app.
+
+## v15
+- Push parity with termux/release.sh: the Deploy log lists every file like git (+ new, ~ changed, up to 30), the commit sha and branch, uploads blobs 6 at a time, then follows the CI run live (elapsed time), prints compile errors on failure (Copy errors / AI prompt buttons on the Deploy screen) and, when the build passes, downloads the APK into the cache and opens the installer. Switch "Open the installer when the build passes" (Prefs.autoInstall, default on). Android may block the installer if App Hub is in the background; the Install this build button still works.
+- Project picker is a bottom sheet (ModalBottomSheet) instead of the small floating menu.
+- Prompt delivery rules also ask the AI to list every file it created or changed.
+
 ## v14
 - Dashboard card and project header: action buttons (Build / Update / Deploy) use compact padding and single-line labels (BtnText), so three buttons in a row no longer wrap letter by letter.
 

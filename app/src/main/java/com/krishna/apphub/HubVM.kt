@@ -50,6 +50,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     var zipPack by mutableStateOf<Zipper.Pack?>(null)
     var deploying by mutableStateOf(false)
+    var autoInstall by mutableStateOf(prefs.autoInstall)
+    private var deployGen = 0
     val deployLog = mutableStateListOf<String>()
 
     var login by mutableStateOf(prefs.login)
@@ -178,6 +180,27 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    /** Shows what a push would change (new / changed files) without pushing anything. */
+    fun preview(p: Project, pack: Zipper.Pack) = viewModelScope.launch {
+        if (deploying) return@launch
+        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Settings)"); return@launch }
+        deploying = true; deployLog.clear(); deployGen++
+        try {
+            deployLog += "Comparing ${pack.entries.size} files with ${p.repo}…"
+            gh.pushFiles(p.repo, pack.entries.map { it.path to it.bytes }, "preview", dryRun = true) { deployLog += it }
+        } finally { deploying = false }
+    }
+
+    /** Adds a commit that restores the previous version of the code (history is kept). */
+    fun undoLastPush(p: Project) = viewModelScope.launch {
+        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Settings)"); return@launch }
+        val (ok, m) = gh.revertLast(p.repo)
+        toast(if (ok) "Undone: $m. A new build starts." else m)
+        if (ok) { delay(3_000); refresh(p) }
+    }
+
+    fun setAutoInstall(v: Boolean) { autoInstall = v; prefs.autoInstall = v }
 
     fun skipZip(p: Project, f: File) { prefs.setZipSeen(p.id, Downloads.key(f)); zipFound.remove(p.id) }
 
@@ -336,7 +359,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun deploy(ctx: Context, p: Project, pack: Zipper.Pack, note: String, src: File? = null) = viewModelScope.launch {
         if (deploying) return@launch
         if (!p.repo.contains("/")) { toast("Log in with GitHub first (Settings)"); return@launch }
-        deploying = true; deployLog.clear()
+        deploying = true; deployLog.clear(); deployGen++
         try {
             val files = pack.entries.map { it.path to it.bytes }.toMutableList()
             if (files.none { it.first.startsWith(".github/workflows/") } && !gh.exists(p.repo, ".github/workflows/build.yml")) {
@@ -354,23 +377,59 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 if (res.committed) {
                     projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
                     deployLog += "✓ Pushed $ver (${res.added} new, ${res.changed} updated). Watching the build…"
-                    watch(p, before)
+                    watch(p, before, deployGen)
                 }
             }
         } finally { deploying = false }
     }
 
-    /** Polls until the new build finishes, then tells you. */
-    private fun watch(p: Project, before: Long) = viewModelScope.launch {
-        repeat(48) {
-            delay(10_000)
+    /** Follows the CI run like termux/release.sh: live status, compile errors on failure, installer on success. */
+    private fun watch(p: Project, before: Long, gen: Int) = viewModelScope.launch {
+        deployLog += "Waiting for the CI run…"
+        var liveIdx = -1
+        fun setLive(t: String) { if (liveIdx in deployLog.indices) deployLog[liveIdx] = t else { deployLog += t; liveIdx = deployLog.lastIndex } }
+        val t0 = System.currentTimeMillis()
+        repeat(135) {
+            delay(4_000)
+            if (gen != deployGen) return@launch   // a newer deploy took over the log
+            val l = gh.runs(p.repo, 3).firstOrNull() ?: return@repeat   // one small call per check; full refresh only when it ends
+            if (l.id == before) return@repeat
+            if (l.ok == null) { setLive("… Build #${l.number} running  ${(System.currentTimeMillis() - t0) / 1000}s"); return@repeat }
             refresh(p).join()
-            val l = runs[p.id]?.firstOrNull()
-            if (l != null && l.id != before && l.ok != null) {
-                toast(if (l.ok == true) "${p.name} build passed — tap Install" else "${p.name} build failed")
-                return@launch
+            if (l.ok == true) {
+                setLive("✓ Build #${l.number} passed  ${(System.currentTimeMillis() - t0) / 1000}s")
+                toast("${p.name} build passed")
+                if (autoInstall) autoInstallLatest(p, gen) else deployLog += "Tap Install this build below."
+            } else {
+                setLive("✗ Build #${l.number} failed")
+                (errors[p.id] ?: "").lines().filter { it.isNotBlank() }.take(8).forEach { deployLog += "  $it" }
+                deployLog += "Copy the errors below and paste them to the AI."
+                toast("${p.name} build failed")
+            }
+            return@launch
+        }
+        if (gen == deployGen) deployLog += "• Still building. Check the Dashboard later."
+    }
+
+    /** Downloads the release APK and opens the installer. If Android blocks it (app in background), the Install button still works. */
+    private suspend fun autoInstallLatest(p: Project, gen: Int) {
+        val rel = gh.latest(p.repo)
+        if (rel == null) { deployLog += "• No APK release found yet. Tap Install this build below."; return }
+        deployLog += "Downloading ${rel.tag}…"
+        val idx = deployLog.lastIndex
+        var last = 0
+        val ok = fetchApk(p, rel) { d, t ->
+            if (t > 0 && gen == deployGen) {
+                val pc = (d * 100 / t).toInt()
+                if (pc >= last + 10) { last = pc; if (idx in deployLog.indices) deployLog[idx] = "Downloading ${rel.tag}… $pc%" }
             }
         }
+        if (gen != deployGen) return
+        if (!ok) { deployLog += "✗ Download failed. Tap Install this build below."; return }
+        latest[p.id] = rel.tag
+        if (idx in deployLog.indices) deployLog[idx] = "✓ ${rel.tag} downloaded"
+        deployLog += "Opening the installer…"
+        installCached(getApplication<Application>(), p)
     }
 
     /** Setup wizard: repo -> keystore -> secrets -> save project, all in-app via OAuth. */

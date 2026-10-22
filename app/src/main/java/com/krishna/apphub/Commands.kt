@@ -31,7 +31,8 @@ object Prompts {
         val next = Commands.bump(p.version)
         val base = Commands.fileBase(p)
         return "\n\nDelivery rules: zip the whole project as ${base}_$next.zip with a top-level folder ${base}_$next/. " +
-            "Always bump the version to $next (versionCode and versionName), even for a string-only change."
+            "Always bump the version to $next (versionCode and versionName), even for a string-only change. " +
+            "After the zip, list every file you created or changed (path + one short note)."
     }
 
     fun make(task: String, p: Project, stack: String, error: String, deliver: Boolean = false): String =
