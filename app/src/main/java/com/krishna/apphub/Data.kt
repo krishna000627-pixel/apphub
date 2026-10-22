@@ -46,7 +46,7 @@ class Prefs(ctx: Context) {
         get() = s("login")
         set(v) = put("login", v)
     var clientId: String
-        get() = s("client", BuildConfig.APPHUB_CLIENT_ID)
+        get() = s("client").ifBlank { BuildConfig.APPHUB_CLIENT_ID }
         set(v) = put("client", v)
 
     var seeded: Boolean
@@ -57,6 +57,11 @@ class Prefs(ctx: Context) {
     fun setPinned(id: Long, v: Boolean) { sp.edit().putBoolean("pin_$id", v).apply() }
     fun installed(id: Long) = s("inst_$id")
     fun setInstalled(id: Long, v: String) = put("inst_$id", v)
+
+    fun lastRun(id: Long) = sp.getLong("lr_$id", 0L)
+    fun setLastRun(id: Long, v: Long) { sp.edit().putLong("lr_$id", v).apply() }
+    fun pushedVer(id: Long) = s("pv_$id")
+    fun setPushedVer(id: Long, v: String) = put("pv_$id", v)
 
     fun saveKeys(repo: String, v: String) = put("ks_$repo", v)
     fun keys(repo: String) = s("ks_$repo")
@@ -69,8 +74,8 @@ data class Preset(val name: String, val repo: String, val pkg: String, val path:
 object Presets {
     private const val HOME = "/data/data/com.termux/files/home/"
     val all = listOf(
-        Preset("QuestBlock", "questblock", "", HOME + "QuestBlock"),
+        Preset("QuestBlock", "questblock", "", HOME + "QuestBlock", version = "v285"),
         Preset("BgBrowser", "bgbrowser", "com.bgbrowser", HOME + "BgBrowser"),
-        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v6")
+        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v7")
     )
 }
