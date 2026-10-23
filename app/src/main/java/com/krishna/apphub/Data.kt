@@ -172,6 +172,20 @@ class Prefs(ctx: Context) {
 
     fun saveKeys(repo: String, v: String) = put("ks_$repo", v)
     fun keys(repo: String) = s("ks_$repo")
+
+    // ---- v39 Vercel: personal access token, account name, optional team id; project id is kept per repo ----
+    var vercelToken: String
+        get() = s("vc_token")
+        set(v) = put("vc_token", v.trim())
+    var vercelUser: String
+        get() = s("vc_user")
+        set(v) = put("vc_user", v)
+    var vercelTeam: String
+        get() = s("vc_team")
+        set(v) = put("vc_team", v.trim())
+    /** Vercel project id this repo deploys to ("" = not on Vercel). */
+    fun vercelId(repo: String) = s("vp_$repo")
+    fun setVercelId(repo: String, v: String) = put("vp_$repo", v)
 }
 
 /** Shown when a release has no notes, the way Google Play falls back to a generic line. */

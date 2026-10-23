@@ -559,6 +559,18 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
             OutlinedTextField(stack, { stack = it }, label = { Text("Tech stack") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
         }
+        if (p.kind != ProjectType.APP) Panel {
+            SectionTitle(Icons.Default.Cloud, "Vercel")
+            if (vm.isVercel(p)) {
+                Text("Linked. Every push deploys by itself and the status follows the Vercel deployment.", fontSize = 11.sp, color = Muted)
+                SettingRow(Icons.Default.OpenInNew, "Open on Vercel", "Dashboard", Muted, { openUrl(ctx, "https://vercel.com/dashboard") })
+                SettingRow(Icons.Default.LinkOff, "Unlink", "Only forgets the link, the Vercel project stays", Amber, { vm.unlinkVercel(p) })
+            } else {
+                Text(if (vm.vercelUser.isBlank()) "Log in to Vercel in Settings first." else "Not linked. Link creates the Vercel project from ${p.repo}.", fontSize = 11.sp, color = Muted)
+                SettingRow(Icons.Default.Link, if (vm.vercelBusy) "Linking…" else "Link to Vercel", "Deploy this ${p.kind.label.lowercase()} on Vercel", Green, { if (!vm.vercelBusy) vm.linkVercel(p) })
+            }
+            if (vm.vercelMsg.isNotBlank()) Text(vm.vercelMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
+        }
         Panel {
             SectionTitle(Icons.Default.Tag, "Version")
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -715,20 +727,25 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val p = vm.sel()
     var stack by remember(p?.id) { mutableStateOf(p?.stack ?: "") }
     var deliver by remember { mutableStateOf(true) }
-    val isNew = vm.task == "New app"
+    val isNew = Prompts.isNew(vm.task)
+    val selKind = p?.kind ?: ProjectType.APP
     val err = if (p == null) "" else (vm.errors[p.id] ?: p.lastError)
-    val text = if (p == null || isNew) "" else Prompts.make(vm.task, p, stack, err, deliver, vm.promptNote)
+    val text = if (p == null || isNew) "" else Prompts.make(vm.task, p, stack, err, deliver, vm.promptNote, vm.isVercel(p))
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Prompt Maker")
         if (!isNew) { Text("1. Select Project", color = Color.Gray); ProjectPicker(ps, p) { vm.selId = it.id } }
         Text(if (isNew) "What do you want to do?" else "2. What do you want to do?", color = Color.Gray)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Prompts.tasks.forEach { FilterChip(vm.task == it, { vm.task = it }, { Text(it) }) } }
-        if (isNew) NewAppSection(vm, nav) else {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Prompts.tasks.forEach { FilterChip(vm.task == it, { vm.task = it }, { Text(Prompts.label(it, if (Prompts.isNew(it)) ProjectType.APP else selKind)) }) } }
+        if (isNew) when (vm.task) {
+            "New website" -> NewWebSection(vm, nav, ProjectType.WEBSITE)
+            "New server" -> NewWebSection(vm, nav, ProjectType.SERVER)
+            else -> NewAppSection(vm, nav)
+        } else {
             Text("3. Tech Stack", color = Color.Gray)
             OutlinedTextField(stack, { stack = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(deliver, { deliver = it }); Text("  Add zip name + version bump rules", fontSize = 12.sp) }
             Text("4. What do you want changed?", color = Color.Gray)
-            OutlinedTextField(vm.promptNote, { vm.promptNote = it }, Modifier.fillMaxWidth(), minLines = 4, label = { Text(Prompts.hint(vm.task)) })
+            OutlinedTextField(vm.promptNote, { vm.promptNote = it }, Modifier.fillMaxWidth(), minLines = 4, label = { Text(Prompts.hint(vm.task, selKind)) })
             if (vm.task == "Fix error") Mono(if (err.isBlank()) "No build error on record for ${p?.name ?: "this app"}." else "Build error included (${err.lines().count { it.isNotBlank() }} lines)", color = Muted)
             if (p != null) Mono("${vm.task} • ${p.name} ${p.version}${if (deliver) " • delivery rules" else ""}", color = Muted)
             BigButton("Copy prompt", Icons.Default.ContentCopy) {
@@ -742,6 +759,33 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         }
         Spacer(Modifier.height(12.dp))
     }
+}
+
+/** v39: New website / New server. Name, idea, stack, then the prompt is copied (never shown), like the other tasks. */
+@Composable fun NewWebSection(vm: HubVM, nav: NavHostController, kind: ProjectType) {
+    val site = kind == ProjectType.WEBSITE
+    val stacks = if (site) Prompts.webStacks else Prompts.serverStacks
+    val stack = if (vm.webStack in stacks) vm.webStack else stacks.first()
+    val what = kind.label.lowercase()
+    Text("1. Name and idea", color = Color.Gray)
+    OutlinedTextField(vm.webName, { vm.webName = it }, label = { Text("${kind.label} name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(vm.webPitch, { vm.webPitch = it }, Modifier.fillMaxWidth(), minLines = 3,
+        label = { Text(if (site) "What is it for? (pages, audience)" else "What should it do? (endpoints, data)") })
+    Text("2. Tech stack", color = Color.Gray)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { stacks.forEach { st -> FilterChip(stack == st, { vm.webStack = st }, { Text(st) }) } }
+    Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.webVercel, { vm.webVercel = it }); Text("  Host on Vercel (adds deploy rules)", fontSize = 12.sp) }
+    Text("3. Copy", color = Color.Gray)
+    BigButton("Copy prompt", Icons.Default.ContentCopy) {
+        when {
+            vm.webName.isBlank() -> vm.toast("Enter a name first")
+            vm.webPitch.isBlank() -> vm.toast("Say what it should do")
+            else -> vm.copy(Prompts.buildWeb(kind, vm.webName.trim(), vm.webPitch.trim(), stack, vm.webVercel))
+        }
+    }
+    OutlinedButton({ if (vm.webName.isNotBlank()) { vm.draftName = vm.webName.trim(); vm.draftType = kind; nav.navigate("add") } else vm.toast("Enter a name first") }, Modifier.fillMaxWidth()) {
+        Text("Set up this $what in App Hub")
+    }
+    Text("The full prompt is not shown here. Copy it and check it in Claude.", fontSize = 11.sp, color = Muted)
 }
 
 /** New app: ideas first, then the build prompt. */
@@ -911,6 +955,7 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
     var storage by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) { while (true) { storage = withContext(Dispatchers.IO) { vm.apkBytes() }; delay(3_000) } }
     var confirmClear by remember { mutableStateOf(false) }
+    var vTok by remember { mutableStateOf("") }; var vTeam by remember { mutableStateOf("") }   // v39: Vercel login fields
     // v27 feature 2: backup
     var warnExport by remember { mutableStateOf(false) }
     val exportFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if (uri != null) vm.exportBackup(ctx, uri) }
@@ -962,6 +1007,27 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
                     visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                 Text("With a secret, GitHub sends you straight back to App Hub (set the OAuth app Callback URL to apphub://oauth) and the web login is used by default. Without it, a code is used and you switch back yourself.", fontSize = 11.sp, color = Muted)
             } else OutlinedButton({ vm.logout() }) { Text("Log out") }
+        }
+        // ---- v39: Vercel login (token) for websites and servers ----
+        Panel {
+            Text("Vercel", fontWeight = FontWeight.Bold)
+            if (vm.vercelUser.isBlank()) {
+                Text("Not logged in", color = Amber)
+                Text("Websites and servers can deploy on Vercel from their GitHub repo. Create a token at vercel.com/account/tokens and paste it here.", fontSize = 12.sp, color = Muted)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(vTok, { vTok = it }, label = { Text("Vercel token") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(vTeam, { vTeam = it }, label = { Text("Team ID (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+                if (vm.vercelMsg.isNotBlank()) Text(vm.vercelMsg, Modifier.padding(top = 6.dp), fontSize = 12.sp, color = Amber)
+                Spacer(Modifier.height(8.dp))
+                BigButton(if (vm.vercelBusy) "Checking…" else "Log in to Vercel", Icons.Default.Login) { if (!vm.vercelBusy) vm.vercelLogin(vTok, vTeam) }
+                TextButton({ openUrl(ctx, "https://vercel.com/account/tokens") }) { Text("Open token page") }
+            } else {
+                Text("Logged in as ${vm.vercelUser}", color = Green)
+                if (vm.vercelTeam.isNotBlank()) Text("Team ${vm.vercelTeam}", fontSize = 12.sp, color = Muted)
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton({ vm.vercelLogout() }) { Text("Log out") }
+            }
         }
         // ---- v27 feature 3: notifications ----
         Panel {
@@ -1040,9 +1106,10 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     // Nothing is filled in for you. Only an app name you carried over from the idea picker is kept.
     var name by remember { mutableStateOf(vm.draftName) }; var repo by remember { mutableStateOf("") }
     var pkg by remember { mutableStateOf("") }; var ver by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf(ProjectType.APP) }; var url by remember { mutableStateOf("") }   // v38: what kind of project
-    LaunchedEffect(Unit) { vm.draftName = "" }
+    var type by remember { mutableStateOf(vm.draftType) }; var url by remember { mutableStateOf("") }   // v38: what kind of project (v39: may come from the Prompt Maker)
+    LaunchedEffect(Unit) { vm.draftName = ""; vm.draftType = ProjectType.APP }
     var create by remember { mutableStateOf(true) }; var keys by remember { mutableStateOf(true) }
+    var vercelOn by remember { mutableStateOf(vm.vercelUser.isNotBlank()) }   // v39: on by default once you are logged in to Vercel
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
         TypePicker(type) { type = it }
@@ -1050,14 +1117,20 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         OutlinedTextField(repo, { repo = it }, label = { Text("Repo name (or owner/name)") }, placeholder = { Text("e.g. myapp") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         if (type == ProjectType.APP) OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name (optional)") }, placeholder = { Text("found automatically if left empty") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         else OutlinedTextField(url, { url = it }, label = { Text(if (type == ProjectType.WEBSITE) "Live URL (optional)" else "Endpoint URL (optional)") },
-            placeholder = { Text(if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            placeholder = { Text(if (vercelOn) "set from Vercel automatically" else if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text("v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        // v39: Deploy on Vercel sits above Create GitHub repo (websites and servers)
+        if (type != ProjectType.APP) {
+            Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vercelOn, { vercelOn = it }); Text("  Deploy on Vercel") }
+            if (vercelOn && vm.vercelUser.isBlank()) Text("Log in to Vercel in Settings first, or the project is added without Vercel.", fontSize = 12.sp, color = Amber)
+        }
         Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(create, { create = it }); Text("  Create GitHub repo (private)") }
         if (type == ProjectType.APP) Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it }); Text("  Generate signing keys + set secrets") }
-        else Text(if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
+        else Text(if (vercelOn) "Vercel builds every push by itself, no workflow needed. The status follows the Vercel deployment."
+            else if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
             else "Your zip needs its own .github/workflows deploy. The status shows Running once the endpoint answers.", fontSize = 12.sp, color = Muted)
         BigButton("Create project", Icons.Default.PlayArrow) {
-            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, create, keys && type == ProjectType.APP, type, url) else vm.toast("Name and repo required")
+            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, create, keys && type == ProjectType.APP, type, url, vercelOn && type != ProjectType.APP) else vm.toast("Name and repo required")
         }
         if (vm.log.isNotEmpty()) {
             Panel { vm.log.forEach { Mono(it) } }

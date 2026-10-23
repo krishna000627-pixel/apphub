@@ -18,6 +18,11 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v39" to listOf(
+            "Vercel login in Settings (paste a token). Websites and servers get a Deploy on Vercel switch in Setup, above Create GitHub repo.",
+            "A Vercel project follows the Vercel deployment: Building, Deployed or Running, build errors included. Push zips as before, no workflow needed.",
+            "Prompt Maker: New website and New server, and web or server wording for existing projects."
+        ),
         "v38" to listOf(
             "New project types: App, Website and Server. Pick one in Setup, change it in Settings.",
             "Status per type: App Building / Passed / Installed, Website Building / Deployed, Server Building / Running.",

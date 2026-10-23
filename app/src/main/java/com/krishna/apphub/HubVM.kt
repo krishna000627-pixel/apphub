@@ -94,12 +94,30 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var selId by mutableLongStateOf(0L)
     var task by mutableStateOf("Fix error")
 
+    // ---- v39: Vercel ----
+    val vercel = Vercel(prefs)
+    var vercelUser by mutableStateOf(prefs.vercelUser)
+    var vercelTeam by mutableStateOf(prefs.vercelTeam)
+    var vercelBusy by mutableStateOf(false)
+    var vercelMsg by mutableStateOf("")
+    private var vercelRev by mutableIntStateOf(0)            // bumped when a link changes, so screens reading isVercel redraw
+    private val vercelAt = mutableMapOf<Long, Long>()
+    private val vercelLast = mutableMapOf<Long, Pair<String, String>>()   // last (status, error) per project
+    private val vercelErrFor = mutableMapOf<Long, String>()   // deployment whose error text is in vercelLast
+    private val vercelVer = mutableMapOf<Long, String>()      // newest "vNNN" seen in a Vercel commit message
+
     // new-app prompt maker (kept here so it survives switching tabs)
     var ideaCat by mutableStateOf("Productivity")
     var ideaName by mutableStateOf("")
     var ideaPitch by mutableStateOf("")
     var ideaNotes by mutableStateOf("")
     var draftName by mutableStateOf("")
+    var draftType by mutableStateOf(ProjectType.APP)   // v39: type carried from the Prompt Maker to Setup
+    // v39: new website / server prompt maker
+    var webName by mutableStateOf("")
+    var webPitch by mutableStateOf("")
+    var webStack by mutableStateOf("")
+    var webVercel by mutableStateOf(true)
     var promptNote by mutableStateOf("")   // "what do you want changed" text of the Prompt Maker, kept across tabs
 
     // full build-log viewer
@@ -481,6 +499,113 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun bumpVersion(p: Project) = update(p.copy(version = Commands.bump(p.version)))
 
     fun sel(): Project? = projects.value.firstOrNull { it.id == selId } ?: projects.value.firstOrNull()
+
+    // =====================================================================================
+    // v39: Vercel (websites and servers)
+    // =====================================================================================
+    /** True for a website / server that deploys on Vercel (linked in Setup or in its Settings). */
+    fun isVercel(p: Project): Boolean = vercelRev >= 0 && p.kind != ProjectType.APP && prefs.vercelId(p.repo).isNotBlank()
+
+    fun vercelLogin(token: String, team: String) = viewModelScope.launch {
+        if (token.isBlank()) { vercelMsg = "Paste a Vercel token first"; return@launch }
+        vercelBusy = true; vercelMsg = ""
+        val (user, err) = vercel.verify(token.trim(), team.trim())
+        vercelBusy = false
+        if (user == null) { vercelMsg = "Vercel: $err"; return@launch }
+        prefs.vercelToken = token; prefs.vercelTeam = team; prefs.vercelUser = user
+        vercelUser = user; vercelTeam = team.trim()
+        toast("Logged in to Vercel as $user")
+    }
+
+    fun vercelLogout() {
+        prefs.vercelToken = ""; prefs.vercelUser = ""; prefs.vercelTeam = ""
+        vercelUser = ""; vercelTeam = ""; vercelMsg = ""
+    }
+
+    /** Creates (or reuses) the Vercel project for an existing website / server and remembers the link. */
+    fun linkVercel(p: Project) = viewModelScope.launch {
+        if (vercelUser.isBlank()) { vercelMsg = "Log in to Vercel first (Settings)"; return@launch }
+        if (!p.repo.contains("/")) { vercelMsg = "Log in with GitHub first (Settings)"; return@launch }
+        vercelBusy = true; vercelMsg = ""
+        val (lk, err) = vercel.link(p.repo)
+        vercelBusy = false
+        if (lk == null) { vercelMsg = "Vercel: $err"; return@launch }
+        prefs.setVercelId(p.repo, lk.id); vercelRev++
+        projects.value.firstOrNull { it.id == p.id }?.let { if (it.liveUrl.isBlank()) dao.save(it.copy(liveUrl = lk.url)) }
+        toast("Linked to Vercel")
+    }
+
+    /** Only forgets the link here; the project on Vercel stays. */
+    fun unlinkVercel(p: Project) {
+        prefs.setVercelId(p.repo, ""); vercelLast.remove(p.id); vercelVer.remove(p.id); vercelRev++
+    }
+
+    /**
+     * Status of the newest production deployment of a Vercel website / server, in the words of Project.lastStatus
+     * (none / running / passed / failed) plus its error text. null = not on Vercel (the GitHub run decides).
+     * Asked at most every 4 s; when Vercel cannot be reached the last answer stays.
+     */
+    private suspend fun vercelState(p: Project): Pair<String, String>? {
+        val vid = prefs.vercelId(p.repo)
+        if (p.kind == ProjectType.APP || vid.isBlank()) return null
+        val old = vercelLast[p.id]
+        if (prefs.vercelToken.isBlank()) return old ?: ("none" to "")
+        if (old != null && System.currentTimeMillis() - (vercelAt[p.id] ?: 0L) < 4_000L) return old
+        vercelAt[p.id] = System.currentTimeMillis()
+        val l = vercel.latest(vid)
+        val dep = l.dep
+        val res: Pair<String, String> = when {
+            !l.ok -> old ?: ("none" to "")
+            dep == null -> "none" to ""
+            else -> {
+                vOf(dep.msg)?.let { vercelVer[p.id] = it }
+                when (val st = Vercel.statusOf(dep.state)) {
+                    null -> old ?: ("none" to "")   // cancelled: not a result
+                    "failed" -> "failed" to (if (old?.first == "failed" && vercelErrFor[p.id] == dep.id) old.second
+                        else vercel.errorText(dep.id).also { vercelErrFor[p.id] = dep.id })
+                    else -> st to ""
+                }
+            }
+        }
+        vercelLast[p.id] = res
+        return res
+    }
+
+    /** Follows the Vercel deployment started by a push, like [watch] follows a CI run. [since] = when the push started (phone clock). */
+    private fun watchVercel(p: Project, since: Long, gen: Int) = viewModelScope.launch {
+        deployLog += "Waiting for Vercel…"
+        var liveIdx = -1
+        fun setLive(t: String) { if (liveIdx in deployLog.indices) deployLog[liveIdx] = t else { deployLog += t; liveIdx = deployLog.lastIndex } }
+        val vid = prefs.vercelId(p.repo)
+        val t0 = System.currentTimeMillis()
+        repeat(135) {
+            delay(4_000)
+            if (gen != deployGen) return@launch
+            val d = vercel.latest(vid).dep ?: return@repeat
+            if (d.created < since - 30_000L) return@repeat   // still the deployment from before this push
+            val secs = (System.currentTimeMillis() - t0) / 1000
+            when (Vercel.statusOf(d.state)) {
+                "passed" -> {
+                    vercelAt.remove(p.id); refresh(p).join()
+                    setLive("✓ Vercel deployed  ${secs}s")
+                    toast("${p.name} deployed")
+                    projects.value.firstOrNull { it.id == p.id }?.liveUrl?.takeIf { it.isNotBlank() }?.let { deployLog += "✓ Live at $it" }
+                    return@launch
+                }
+                "failed" -> {
+                    vercelAt.remove(p.id); refresh(p).join()
+                    setLive("✗ Vercel build failed")
+                    (errors[p.id] ?: "").lines().filter { it.isNotBlank() }.take(8).forEach { deployLog += "  $it" }
+                    deployLog += "Copy the errors below and paste them to the AI."
+                    toast("${p.name} build failed")
+                    return@launch
+                }
+                "running" -> setLive("… Vercel building  ${secs}s")
+                else -> {}
+            }
+        }
+        if (gen == deployGen) deployLog += "• Still building. Check the Dashboard later."
+    }
     fun toast(s: String) = Toast.makeText(getApplication(), s, Toast.LENGTH_SHORT).show()
 
     fun copy(text: String) {
@@ -632,15 +757,16 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun refresh(p: Project) = viewModelScope.launch {
         if (!p.repo.contains("/")) return@launch
         val r = gh.runs(p.repo)
-        if (r.isEmpty() && runs[p.id] != null) return@launch   // offline or API error: keep what is shown
+        if (r.isEmpty() && runs[p.id] != null && !isVercel(p)) return@launch   // offline or API error: keep what is shown (a Vercel project has no runs, its status comes from Vercel)
         val real = r.filter { !it.cancelled }   // a run you cancelled is not a result: it never shows as failed
         var changed = false
         if (runs[p.id] != real) { runs[p.id] = real; changed = true }
         val last = real.firstOrNull()
-        val status = when { last == null -> "none"; last.ok == null -> "running"; last.ok == true -> "passed"; else -> "failed" }
+        val vs = vercelState(p)   // v39: a Vercel website / server takes its status from the Vercel deployment
+        val status = when { vs != null -> vs.first; last == null -> "none"; last.ok == null -> "running"; last.ok == true -> "passed"; else -> "failed" }
         notifyBuild(p, last)
         // the error text is read once per failed run, not on every poll
-        val err = if (status == "failed" && last != null) {
+        val err = if (vs != null) vs.second else if (status == "failed" && last != null) {
             val old = errors[p.id].orEmpty()
             if (errRun[p.id] == last.id && old.isNotBlank()) old else gh.errorOf(p.repo, last.id).also { if (it.isNotBlank()) errRun[p.id] = last.id }
         } else ""
@@ -676,6 +802,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 // The label is the newest "vNNN:" commit that was pushed. Merge commits, cancelled runs, re-runs and manual
                 // dispatches never change it, and it is never kept ahead of the latest build (that gave "v27" after a v24 push).
                 val pushed = r.sortedByDescending { it.id }.firstNotNullOfOrNull { vOf(it.msg) }
+                    ?: vercelVer[p.id]
                     ?: prefs.pushedVer(p.id).ifBlank { cur.version }
                 if (r.isNotEmpty()) prefs.setLastRun(p.id, r.maxOf { it.id })
                 if (pushedV[p.id] != pushed) { prefs.setPushedVer(p.id, pushed); pushedV[p.id] = pushed }
@@ -781,7 +908,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun update(p: Project) = viewModelScope.launch {
         dao.save(p)
     }
-    fun delete(p: Project) = viewModelScope.launch { health.remove(p.id); dropCache(p); ApkStore.clearPrev(getApplication<Application>(), prefs, p.id); ApkStore.clearParts(getApplication<Application>(), p.id); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
+    fun delete(p: Project) = viewModelScope.launch { prefs.setVercelId(p.repo, ""); vercelLast.remove(p.id); vercelVer.remove(p.id); health.remove(p.id); dropCache(p); ApkStore.clearPrev(getApplication<Application>(), prefs, p.id); ApkStore.clearParts(getApplication<Application>(), p.id); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
 
     fun build(p: Project) = viewModelScope.launch {
         toast(if (gh.dispatch(p.repo)) "Build triggered on GitHub" else "Trigger failed — push the workflow first")
@@ -822,12 +949,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 }
             } else if (noWorkflow) {
                 // the standard workflow builds an Android APK, so it is never added to a website or server
-                deployLog += "• no workflow in this zip: include .github/workflows/ with your ${p.kind.label.lowercase()} deploy, or nothing will run"
+                deployLog += if (isVercel(p)) "• Vercel builds this push by itself, no workflow needed"
+                    else "• no workflow in this zip: include .github/workflows/ with your ${p.kind.label.lowercase()} deploy, or nothing will run"
             }
             val ver = pack.version.ifBlank { Commands.bump(p.version) }
             val msg = "$ver: ${note.replace("\n", " ").trim().ifBlank { "update from App Hub" }}"
             val before = gh.runs(p.repo).firstOrNull()?.id ?: 0L
             if (prefs.notifiedRun(p.id) == 0L && before != 0L) prefs.setNotifiedRun(p.id, before)
+            val pushStart = System.currentTimeMillis()
             deployLog += "Pushing ${files.size} files to ${p.repo}…"
             val res = gh.pushFiles(p.repo, files, msg) { deployLog += it }
             if (res.ok) {
@@ -837,7 +966,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                     projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
                     prefs.setPushedVer(p.id, ver); pushedV[p.id] = ver
                     deployLog += "✓ Pushed $ver (${res.added} new, ${res.changed} updated). Watching the build…"
-                    watch(p, before, deployGen)
+                    if (isVercel(p)) watchVercel(p, pushStart, deployGen) else watch(p, before, deployGen)
                 }
             }
         } finally { deploying = false }
@@ -896,7 +1025,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /** Setup wizard: repo -> keystore -> secrets -> save project, all in-app via OAuth. */
     fun setup(name: String, repoName: String, pkg: String, version: String, create: Boolean, keys: Boolean,
-              type: ProjectType = ProjectType.APP, liveUrl: String = "") = viewModelScope.launch {
+              type: ProjectType = ProjectType.APP, liveUrl: String = "", vercelOn: Boolean = false) = viewModelScope.launch {
         log.clear()
         if (login.isBlank() && !repoName.contains("/")) { log += "✗ Log in with GitHub (Settings) or enter owner/name"; return@launch }
         val repo = if (repoName.contains("/")) repoName else "$login/$repoName"
@@ -904,6 +1033,18 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             log += "Creating repo $repo…"
             val c = gh.createRepo(repo.substringAfter("/")).first
             log += when (c) { 201 -> "✓ repo created"; 422 -> "• repo already exists"; else -> "✗ repo failed ($c)" }
+        }
+        // v39: Vercel project linked to the repo (websites and servers). Needs the repo to exist, so it runs after the repo step.
+        var liveAddr = if (type == ProjectType.APP) "" else cleanUrl(liveUrl)
+        var vercelProject = ""
+        if (vercelOn && type != ProjectType.APP) {
+            if (prefs.vercelToken.isBlank()) log += "✗ Vercel: log in first (Settings, Vercel). Project added without it."
+            else {
+                log += "Linking Vercel project…"
+                val (lk, err) = vercel.link(repo)
+                if (lk == null) log += "✗ Vercel: $err"
+                else { vercelProject = lk.id; if (liveAddr.isBlank()) liveAddr = lk.url; log += "✓ Vercel project ${lk.name} linked" }
+            }
         }
         if (keys && type == ProjectType.APP) {
             log += "Generating signing keystore…"
@@ -915,7 +1056,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             log += if (ok) "✓ 4 secrets set on GitHub" else "✗ setting secrets failed (check repo exists / token scope)"
         }
         val id = dao.save(Project(name = name, repo = repo, packageName = if (type == ProjectType.APP) pkg else "", version = version,
-            stack = type.defaultStack, type = type.name, liveUrl = if (type == ProjectType.APP) "" else cleanUrl(liveUrl)))
+            stack = type.defaultStack, type = type.name, liveUrl = liveAddr))
+        if (vercelProject.isNotBlank()) { prefs.setVercelId(repo, vercelProject); vercelRev++ }
         selId = id
         log += "✓ Project added. Open Deploy and choose your zip to push and build."
     }
