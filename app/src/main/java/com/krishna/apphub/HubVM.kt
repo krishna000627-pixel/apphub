@@ -74,6 +74,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     val deployLog = mutableStateListOf<String>()
 
     var login by mutableStateOf(prefs.login)
+    var sessionExpired by mutableStateOf(false)   // GitHub rejected the token and it could not be refreshed: log in again
     var userCode by mutableStateOf<String?>(null)
     var loginMsg by mutableStateOf("")
     var clientSecret by mutableStateOf(prefs.clientSecret)
@@ -520,7 +521,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     private suspend fun finishLogin() {
         val u = gh.user()
         if (u == null) { prefs.token = ""; loginMsg = "GitHub rejected the token (could not read your user)"; toast(loginMsg); return }
-        login = u; prefs.login = u; loginMsg = ""
+        login = u; prefs.login = u; loginMsg = ""; sessionExpired = false; gh.authLost = false
         toast("Logged in as $u"); fixOwners(); refreshAll()
         if (!inForeground) comeBack(u)
     }
@@ -546,7 +547,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun logout() { cancelLogin(); prefs.token = ""; prefs.login = ""; login = "" }
+    fun logout() { cancelLogin(); prefs.token = ""; prefs.refreshToken = ""; prefs.tokenExpiry = 0L; prefs.login = ""; login = ""; sessionExpired = false }
 
     // ---- projects ----
     /**
@@ -609,12 +610,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /** Silent live sync, called every 3 s while App Hub is on screen and when a screen opens. No spinner, overlapping runs are skipped. */
     fun autoSync() {
-        if (!inForeground || prefs.token.isBlank() || !syncing.compareAndSet(false, true)) return
+        if (gh.authLost && !sessionExpired) sessionExpired = true
+        if (!inForeground || prefs.token.isBlank() || sessionExpired || !syncing.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
                 projects.value.map { refresh(it) }.forEach { it.join() }
                 scanZips(getApplication())
                 checkInstalls()
+                if (gh.authLost) sessionExpired = true
             } finally { syncing.set(false) }
         }
     }

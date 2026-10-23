@@ -35,7 +35,66 @@ class GitHub(private val prefs: Prefs) {
     data class Job(val id: Long, val name: String, val ok: Boolean?, val steps: List<Step>)
     data class Rel(val tag: String, val body: String, val assetUrl: String, val time: String = "", val sizeKb: Long = 0L)
 
-    private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS).build()
+    // ---- token lifetime: GitHub App tokens last 8 hours. Refresh before they end, and again if GitHub answers 401. ----
+    /** true once GitHub rejected the token and it could not be refreshed: the user has to log in again. */
+    @Volatile var authLost = false
+    private val refreshLock = Any()
+    private val plain = OkHttpClient()   // no interceptors: used only to refresh the token
+
+    private fun saveToken(j: JSONObject) {
+        prefs.token = j.getString("access_token")
+        prefs.refreshToken = j.optString("refresh_token", "")
+        val ex = j.optLong("expires_in", 0L)
+        prefs.tokenExpiry = if (ex > 0) System.currentTimeMillis() + ex * 1000L else 0L
+        authLost = false
+    }
+
+    /** 1 = refreshed, 0 = network problem (try again later), -1 = GitHub rejected it (or there is no refresh token). */
+    private fun refreshBlocking(): Int {
+        val rt = prefs.refreshToken
+        if (rt.isBlank()) return -1
+        val fb = FormBody.Builder().add("client_id", prefs.clientId).add("grant_type", "refresh_token").add("refresh_token", rt)
+        if (prefs.clientSecret.isNotBlank()) fb.add("client_secret", prefs.clientSecret)
+        return try {
+            plain.newCall(Request.Builder().url("https://github.com/login/oauth/access_token").header("Accept", "application/json").post(fb.build()).build())
+                .execute().use { r ->
+                    val j = JSONObject(r.body?.string() ?: "{}")
+                    if (j.has("access_token")) { saveToken(j); 1 }
+                    else { if (j.has("error")) { prefs.refreshToken = ""; -1 } else 0 }
+                }
+        } catch (e: Exception) { 0 }
+    }
+
+    private fun proactive(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        val exp = prefs.tokenExpiry
+        if (req.header("Authorization") != null && exp > 0 && prefs.refreshToken.isNotBlank() && System.currentTimeMillis() > exp - 300_000L) {
+            synchronized(refreshLock) {
+                if (System.currentTimeMillis() > prefs.tokenExpiry - 300_000L && refreshBlocking() < 0) authLost = true
+            }
+            return chain.proceed(req.newBuilder().header("Authorization", "Bearer ${prefs.token}").build())
+        }
+        return chain.proceed(req)
+    }
+
+    private fun reauth(resp: Response): Request? {
+        if (resp.priorResponse != null) return null
+        val sent = resp.request.header("Authorization")?.removePrefix("Bearer ") ?: return null
+        synchronized(refreshLock) {
+            val now = prefs.token
+            if (now.isNotBlank() && now != sent) return resp.request.newBuilder().header("Authorization", "Bearer $now").build()   // already refreshed by another call
+            return when (refreshBlocking()) {
+                1 -> resp.request.newBuilder().header("Authorization", "Bearer ${prefs.token}").build()
+                0 -> null                      // offline: the next poll tries again
+                else -> { authLost = true; null }
+            }
+        }
+    }
+
+    private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS)
+        .addInterceptor { chain -> proactive(chain) }
+        .authenticator { _, response -> reauth(response) }
+        .build()
     private val api = "https://api.github.com"
 
     private fun rb(url: String) = Request.Builder().url(url)
@@ -88,7 +147,7 @@ class GitHub(private val prefs: Prefs) {
             val j = runCatching { JSONObject(exec(r).second) }.getOrNull() ?: continue // network blip: try again
             val err = j.optString("error")
             when {
-                j.has("access_token") -> { prefs.token = j.getString("access_token"); return null }
+                j.has("access_token") -> { saveToken(j); return null }
                 err == "slow_down" -> wait = j.optInt("interval", wait + 5)
                 err == "authorization_pending" -> {}
                 err == "expired_token" -> return "Code expired, tap Login again"
@@ -116,7 +175,7 @@ class GitHub(private val prefs: Prefs) {
                 .add("code", code).add("redirect_uri", "apphub://oauth").add("code_verifier", verifier).build()).build()
         val (c, b) = exec(r)
         val j = runCatching { JSONObject(b) }.getOrNull() ?: return "Network error ($c)"
-        if (j.has("access_token")) { prefs.token = j.getString("access_token"); return null }
+        if (j.has("access_token")) { saveToken(j); return null }
         return when (val e = j.optString("error")) {
             "bad_verification_code" -> "Code already used or expired, tap Login again"
             "incorrect_client_credentials" -> "Client ID or client secret is wrong"

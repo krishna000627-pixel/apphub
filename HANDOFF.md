@@ -12,6 +12,9 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v26
+- Fix: "app stops after 5-7 hours, have to log in again". GitHub App user tokens expire after 8 hours; App Hub kept only access_token and ignored refresh_token / expires_in, and a 401 just looked like "no data". Now GitHub.saveToken stores refresh_token + expiry (Prefs.refreshToken / tokenExpiry); an OkHttp interceptor refreshes 5 min before expiry and an Authenticator refreshes and retries once on 401 (refresh needs the client secret for GitHub Apps: Settings -> GitHub). If GitHub rejects the refresh (or the token was revoked and there is none) GitHub.authLost -> HubVM.sessionExpired -> red banner on the Dashboard and "Log in again" in Settings; live sync pauses instead of failing silently. Classic OAuth App tokens do not expire. For a GitHub App you can also switch off "Expire user authorization tokens" in the app's settings on GitHub.
+
 ## v25
 - Live data: App() runs HubVM.autoSync() every 3 s while the app is on screen (and on resume / Dashboard open): runs, newest release, installed check, zip scan. Silent, no spinners (only the Refresh button shows one). The 10-minute staleness gate is gone; the snapshot cache (SnapCache) is only the first paint. GitHub.get caches ETags: a 304 answer is free against the rate limit, so polling is cheap. The error text is read once per failed run (errRun). Detail and Install screens also poll loadDetails every 3 s.
 - GitHub.latest now picks the newest APK release by published_at from /releases?per_page=20 (/releases/latest orders by commit date and kept returning a very old build); releases() is sorted the same way. GitHub.Rel carries time + sizeKb.

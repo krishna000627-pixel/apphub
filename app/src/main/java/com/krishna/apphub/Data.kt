@@ -45,6 +45,13 @@ class Prefs(ctx: Context) {
     var login: String
         get() = s("login")
         set(v) = put("login", v)
+    /** Expiring tokens (GitHub Apps, 8 hours): the refresh token and when the access token stops working (0 = never expires). */
+    var refreshToken: String
+        get() = s("refresh_token")
+        set(v) = put("refresh_token", v)
+    var tokenExpiry: Long
+        get() = sp.getLong("token_expiry", 0L)
+        set(v) { sp.edit().putLong("token_expiry", v).apply() }
     var clientId: String
         get() = s("client").ifBlank { BuildConfig.APPHUB_CLIENT_ID }
         set(v) = put("client", v)
@@ -144,7 +151,7 @@ object Presets {
     val all = listOf(
         Preset("QuestBlock", "questblock", "", HOME + "QuestBlock", version = "v285"),
         Preset("BgBrowser", "bgbrowser", "com.bgbrowser", HOME + "BgBrowser"),
-        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v25"),
+        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v26"),
         Preset("Videowall", "videowall", "", HOME + "Videowall")
     )
 }

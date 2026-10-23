@@ -189,6 +189,15 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
             IconButton({ nav.navigate("add") }, Modifier.size(40.dp)) { Icon(Icons.Default.Add, null, tint = Green) }
         }
+        if (vm.sessionExpired) Panel(Modifier.padding(bottom = 6.dp), border = Red.copy(alpha = 0.7f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("GitHub session expired", fontWeight = FontWeight.Bold, color = Red, fontSize = 13.sp)
+                    Text("Live updates are paused until you log in again.", fontSize = 12.sp, color = Muted)
+                }
+                Button({ nav.navigate("settings") { popUpTo("dash"); launchSingleTop = true } }, contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) { BtnText("Log in") }
+            }
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Stat("Apps", ps.size, Cyan, Modifier.weight(1f))
             Stat("Passing", ps.count { it.lastStatus == "passed" }, Green, Modifier.weight(1f))
@@ -797,12 +806,13 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
         Header("Settings")
         Panel {
             Text("GitHub", fontWeight = FontWeight.Bold)
-            Text(if (vm.login.isBlank()) "Not logged in" else "Logged in as ${vm.login}", color = if (vm.login.isBlank()) Amber else Green)
+            Text(if (vm.login.isBlank()) "Not logged in" else if (vm.sessionExpired) "Session expired for ${vm.login}" else "Logged in as ${vm.login}",
+                color = if (vm.login.isBlank() || vm.sessionExpired) Amber else Green)
             vm.userCode?.let { Spacer(Modifier.height(8.dp)); Text("Enter this code on GitHub:"); Text(it, fontSize = 30.sp, color = Cyan, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) }
-            if (vm.loginMsg.isNotBlank() && vm.login.isBlank()) { Spacer(Modifier.height(6.dp)); Text(vm.loginMsg, fontSize = 12.sp, color = Amber) }
+            if (vm.loginMsg.isNotBlank() && (vm.login.isBlank() || vm.sessionExpired)) { Spacer(Modifier.height(6.dp)); Text(vm.loginMsg, fontSize = 12.sp, color = Amber) }
             Spacer(Modifier.height(8.dp))
-            if (vm.login.isBlank()) {
-                BigButton("Login with GitHub", Icons.Default.Login) { vm.startLogin() }
+            if (vm.login.isBlank() || vm.sessionExpired) {
+                BigButton(if (vm.login.isBlank()) "Login with GitHub" else "Log in again", Icons.Default.Login) { vm.startLogin() }
                 if (vm.loginMsg.isNotBlank()) TextButton({ vm.cancelLogin() }) { Text("Cancel") }
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(vm.clientSecret, { vm.updateClientSecret(it) }, label = { Text("Client secret (optional)") }, singleLine = true,
