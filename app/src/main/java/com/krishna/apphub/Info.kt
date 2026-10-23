@@ -76,7 +76,7 @@ private class IR(val k: String, val v: String, val c: Color = Color.Unspecified,
         item {
             Column(Modifier.fillMaxWidth().background(Surf, RoundedCornerShape(16.dp)).border(1.dp, Line, RoundedCornerShape(16.dp)).padding(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(56.dp).background(Line, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Apps, null, Modifier.size(30.dp), tint = Cyan) }
+                    Box(Modifier.size(56.dp).background(Line, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) { Icon(p.kind.icon(), null, Modifier.size(30.dp), tint = Cyan) }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(p.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
@@ -86,30 +86,37 @@ private class IR(val k: String, val v: String, val c: Color = Color.Unspecified,
                 }
                 Spacer(Modifier.height(12.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (p.lastStatus != "none") Pill(if (p.lastStatus == "passed") "✓ Passed" else if (p.lastStatus == "failed") "✕ Failed" else "… Running", statusColor(p.lastStatus))
-                    else Pill("No builds", Muted)
-                    when (phone) {
-                        true -> Pill("● ${vm.onPhone[id]?.ifBlank { null } ?: "On phone"}", Green)
-                        false -> Pill("○ Not installed", Muted)
-                        null -> {}
+                    val st = vm.stage(p)
+                    Pill(st.pill(), st.color())
+                    if (p.kind == ProjectType.APP) {
+                        when (phone) {
+                            true -> Pill("● ${vm.onPhone[id]?.ifBlank { null } ?: "On phone"}", Green)
+                            false -> Pill("○ Not installed", Muted)
+                            null -> {}
+                        }
+                        if (upd) Pill(if (phone == false) "Install" else "Update", Amber)
+                    } else {
+                        Pill(p.kind.label, Muted)
+                        hostOf(p.liveUrl)?.let { Pill("↗ $it", Cyan) }
                     }
-                    if (upd) Pill(if (phone == false) "Install" else "Update", Amber)
                 }
             }
         }
         item {
-            InfoCard("App", vm, listOf(
-                IR("Package", p.packageName.ifBlank { "unknown" }, copy = p.packageName.isNotBlank(), mono = true),
+            InfoCard(p.kind.label, vm, listOf(
+                if (p.kind == ProjectType.APP) IR("Package", p.packageName.ifBlank { "unknown" }, copy = p.packageName.isNotBlank(), mono = true)
+                else IR("Live URL", p.liveUrl.ifBlank { "not set" }, if (p.liveUrl.isBlank()) Muted else Color.Unspecified, copy = p.liveUrl.isNotBlank(), mono = true),
                 IR("Repo", p.repo, copy = true, mono = true),
                 IR("Stack", p.stack)
             ))
         }
         item {
             InfoCard("Build", vm, listOf(
-                IR("Status", p.lastStatus, statusColor(p.lastStatus)),
-                IR("Installed", instText, instColor),
-                IR("Latest", vm.latest[id] ?: "-", mono = true),
-                if (vm.waitingInstall(p)) IR("Saved APK", "${vm.cachedTag(id)} (not installed yet)", Amber, mono = true)
+                vm.stage(p).let { IR("Status", it.label, it.color()) },
+                if (p.kind == ProjectType.APP) IR("Installed", instText, instColor) else null,
+                if (p.kind == ProjectType.APP) IR("Latest", vm.latest[id] ?: "-", mono = true) else null,
+                if (p.kind != ProjectType.APP) null
+                else if (vm.waitingInstall(p)) IR("Saved APK", "${vm.cachedTag(id)} (not installed yet)", Amber, mono = true)
                 else if (vm.hasCached(p)) IR("Saved APK", vm.cachedTag(id), mono = true) else null
             ))
         }

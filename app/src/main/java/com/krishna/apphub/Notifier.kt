@@ -39,7 +39,7 @@ object Notifier {
     fun buildDone(ctx: Context, prefs: Prefs, p: Project, number: Int, ok: Boolean) {
         if (!allowed(ctx, prefs)) return
         post(ctx, 100 + (p.id * 2).toInt(), "builds", "Builds",
-            "${p.name} build #$number ${if (ok) "passed" else "failed"}",
+            "${p.name} build #$number ${if (!ok) "failed" else if (p.kind == ProjectType.APP) "passed" else "deployed"}",
             if (ok) "Tap to open the app" else "Tap to see the error",
             "detail/${p.id}", android.R.drawable.ic_dialog_info)
     }

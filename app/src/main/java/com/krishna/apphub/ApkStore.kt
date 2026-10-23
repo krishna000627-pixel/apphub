@@ -77,9 +77,9 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         val prefs = Prefs(ctx)
         if (prefs.token.isBlank() || !prefs.autoDownload) return Result.success()
         val gh = GitHub(prefs)
-        val db = Room.databaseBuilder(ctx, Db::class.java, "hub").build()
+        val db = HubDb.build(ctx)
         try {
-            db.dao().all().first().filter { it.repo.contains("/") }.forEach { p ->
+            db.dao().all().first().filter { it.repo.contains("/") && it.kind == ProjectType.APP }.forEach { p ->
                 runCatching {
                     val rel = gh.latest(p.repo) ?: return@runCatching
                     val saved = prefs.cachedTag(p.id) == rel.tag && ApkStore.file(ctx, p.id).exists()

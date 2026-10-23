@@ -50,6 +50,14 @@ import java.io.File
 @Composable fun Mono(t: String, mod: Modifier = Modifier, color: Color = Color.Unspecified) =
     Text(t, mod, color, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
 
+/** v38: App / Website / Server chips, used when adding a project and in its settings. */
+@Composable fun TypePicker(type: ProjectType, onType: (ProjectType) -> Unit) =
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ProjectType.values().forEach { t ->
+            FilterChip(type == t, { onType(t) }, { Text(t.label) }, leadingIcon = { Icon(t.icon(), null, Modifier.size(16.dp)) })
+        }
+    }
+
 @Composable fun Pill(t: String, c: Color) =
     Box(Modifier.widthIn(max = 180.dp).border(1.dp, c, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp)) { Text(t, color = c, fontSize = 11.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
 
@@ -205,7 +213,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     LaunchedEffect(Unit) { vm.autoSync() }   // fresh data at once, silently
     val ctx = LocalContext.current
     fun hit(p: Project, k: String) = when (k) {
-        "Pinned" -> vm.isPinned(p.id); "To push" -> vm.pending(p); "Errors" -> p.lastStatus == "failed"; "Updates" -> vm.hasUpdate(p); else -> true
+        "Pinned" -> vm.isPinned(p.id); "To push" -> vm.pending(p); "Errors" -> p.lastStatus == "failed"; "Updates" -> vm.hasUpdate(p)
+        else -> ProjectType.values().firstOrNull { it.plural == k }?.let { t -> p.kind == t } ?: true
     }
     val shown = ps.filter { hit(it, f) && (q.isBlank() || it.name.contains(q, true) || it.repo.contains(q, true)) }
         .sortedWith(compareByDescending<Project> { vm.isPinned(it.id) }.thenBy { it.name.lowercase() })
@@ -253,8 +262,12 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
         }
         Spacer(Modifier.height(6.dp))
+        // v38: Websites / Servers chips appear once such a project exists
+        val chips = listOf("All", "Pinned", "To push", "Errors", "Updates") +
+            ProjectType.values().filter { t -> t != ProjectType.APP && ps.any { it.kind == t } }.map { it.plural }
+        LaunchedEffect(chips) { if (f !in chips) f = "All" }
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("All", "Pinned", "To push", "Errors", "Updates").forEach { k ->
+            chips.forEach { k ->
                 FilterChip(f == k, { f = k }, { Text("$k (${ps.count { hit(it, k) }})", fontSize = 12.sp) })
             }
         }
@@ -288,7 +301,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val dl = dlPct(vm, p)
     Panel(Modifier.clickable { nav.navigate("detail/${p.id}") }, border = if (p.lastStatus == "failed") Red.copy(alpha = 0.6f) else Line) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Apps, null, tint = Cyan) }
+            Box(Modifier.size(40.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(p.kind.icon(), null, tint = Cyan) }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(p.name, fontWeight = FontWeight.Bold)
@@ -301,13 +314,16 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         }
         Spacer(Modifier.height(8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (p.lastStatus != "none") Pill(if (p.lastStatus == "passed") "✓ Passed" else if (p.lastStatus == "failed") "✕ Failed" else "… Running", statusColor(p.lastStatus))
-            else Pill("No builds", Muted)
+            val st = vm.buildStage(p)   // v38: Building / Passed (app), Deployed (website), Running (server)
+            Pill(st.pill(), st.color())
             if (pend) Pill("+ Push ${vm.waitLabel(p)}", Amber)
-            when (vm.isInstalled(p)) {
+            if (p.kind == ProjectType.APP) when (vm.isInstalled(p)) {
                 true -> Pill("● ${vm.onPhone[p.id]?.ifBlank { null } ?: "On phone"}", Green)
                 false -> Pill("○ Not installed", Muted)
                 null -> if (p.packageName.isBlank()) Pill("? No package", Muted)
+            } else {
+                Pill(p.kind.label, Muted)
+                hostOf(p.liveUrl)?.let { Pill("↗ $it", Cyan) }
             }
             // v35: download / update pill goes last, after the status and installed pills
             if (dl != null) Pill("Updating", Cyan)
@@ -362,9 +378,12 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = if (pend) Amber else Green, contentColor = Color.Black)) {
                     Icon(if (pend) Icons.Default.AddCircle else Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText(if (pend) "Push ${vm.waitLabel(p)}" else "Deploy")
                 }
-                OutlinedButton({ nav.navigate("install/$id") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.outlinedButtonColors(contentColor = if (upd || dl != null) Amber else Cyan)) {
+                if (p.kind == ProjectType.APP) OutlinedButton({ nav.navigate("install/$id") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.outlinedButtonColors(contentColor = if (upd || dl != null) Amber else Cyan)) {
                     if (dl != null) { CircularProgressIndicator({ dl / 100f }, Modifier.size(14.dp), color = Amber, strokeWidth = 2.dp); Spacer(Modifier.width(6.dp)) }
                     BtnText(if (dl != null) dlText(dl) else installLabel(vm, p, upd))
+                }
+                else OutlinedButton({ if (p.liveUrl.isBlank()) vm.toast("Set the live URL in Settings") else openUrl(ctx, p.liveUrl) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)) {
+                    Icon(Icons.Default.OpenInNew, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText(if (p.kind == ProjectType.WEBSITE) "Open site" else "Open server")
                 }
             }
         }
@@ -379,8 +398,10 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                     Panel(Modifier.clickable { nav.navigate("info/$id") }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Mono("status   : ${p.lastStatus}", color = statusColor(p.lastStatus))
-                                Mono("installed: $instText", color = instColor)
+                                val st = vm.stage(p)
+                                Mono("status   : ${st.label.lowercase()}", color = st.color())
+                                if (p.kind == ProjectType.APP) Mono("installed: $instText", color = instColor)
+                                else Mono("live     : ${p.liveUrl.ifBlank { "-" }}")
                                 Mono("version  : ${p.version}")
                             }
                             Icon(Icons.Default.ChevronRight, null, tint = Muted)
@@ -507,11 +528,13 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     var name by remember(p.id) { mutableStateOf(p.name) }
     var repo by remember(p.id) { mutableStateOf(p.repo) }
     var pkg by remember(p.id) { mutableStateOf(p.packageName) }
+    var type by remember(p.id) { mutableStateOf(p.kind) }
+    var url by remember(p.id) { mutableStateOf(p.liveUrl) }
     var stack by remember(p.id) { mutableStateOf(p.stack) }
     var ver by remember(p.id, p.version) { mutableStateOf(p.version) }
     var confirm by remember { mutableStateOf(false) }
     var confirmUndo by remember { mutableStateOf(false) }
-    val dirty = name != p.name || repo != p.repo || pkg != p.packageName || stack != p.stack || ver != p.version
+    val dirty = name != p.name || repo != p.repo || pkg != p.packageName || stack != p.stack || ver != p.version || type != p.kind || (type != ProjectType.APP && cleanUrl(url) != p.liveUrl)
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         confirmButton = { TextButton({ vm.delete(p); nav.popBackStack() }) { Text("Remove", color = Red) } },
         dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },
@@ -523,10 +546,17 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         text = { Text("Adds a new commit that puts the previous code back and starts a build. History is kept. Android will not install an older versionCode over a newer one, so bump the version on your next push.") })
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Panel {
-            SectionTitle(Icons.Default.Info, "App details")
+            SectionTitle(Icons.Default.Info, "${type.label} details")
+            TypePicker(type) { type = it }
             OutlinedTextField(name, { name = it }, label = { Text("App name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(repo, { repo = it }, label = { Text("GitHub repo (owner/name)") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
-            OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+            if (type == ProjectType.APP) OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+            else {
+                OutlinedTextField(url, { url = it }, label = { Text(if (type == ProjectType.WEBSITE) "Live URL" else "Endpoint URL") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    placeholder = { Text(if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") })
+                Text(if (type == ProjectType.WEBSITE) "Shown as Deployed once the build passes." else "Shown as Running once this https address answers after a passed deploy. Without one, a passed deploy counts as Running.",
+                    fontSize = 11.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
+            }
             OutlinedTextField(stack, { stack = it }, label = { Text("Tech stack") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
         }
         Panel {
@@ -544,7 +574,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         }
         Button({
             val r = repo.trim().let { if (it.contains("/") || vm.login.isBlank()) it else "${vm.login}/$it" }
-            vm.update(p.copy(name = name.trim().ifBlank { p.name }, repo = r, packageName = pkg.trim(), stack = stack.trim(), version = ver.trim().ifBlank { p.version }))
+            vm.update(p.copy(name = name.trim().ifBlank { p.name }, repo = r, packageName = if (type == ProjectType.APP) pkg.trim() else p.packageName, stack = stack.trim(), version = ver.trim().ifBlank { p.version },
+                type = type.name, liveUrl = if (type == ProjectType.APP) p.liveUrl else cleanUrl(url)))
             vm.toast("Saved")
         }, Modifier.fillMaxWidth().height(46.dp), enabled = dirty, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
             Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(if (dirty) "Save changes" else "Saved", fontWeight = FontWeight.Bold)
@@ -1009,18 +1040,24 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     // Nothing is filled in for you. Only an app name you carried over from the idea picker is kept.
     var name by remember { mutableStateOf(vm.draftName) }; var repo by remember { mutableStateOf("") }
     var pkg by remember { mutableStateOf("") }; var ver by remember { mutableStateOf("") }
+    var type by remember { mutableStateOf(ProjectType.APP) }; var url by remember { mutableStateOf("") }   // v38: what kind of project
     LaunchedEffect(Unit) { vm.draftName = "" }
     var create by remember { mutableStateOf(true) }; var keys by remember { mutableStateOf(true) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
-        OutlinedTextField(name, { name = it }, label = { Text("App name") }, placeholder = { Text("e.g. My App") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        TypePicker(type) { type = it }
+        OutlinedTextField(name, { name = it }, label = { Text("${type.label} name") }, placeholder = { Text(when (type) { ProjectType.APP -> "e.g. My App"; ProjectType.WEBSITE -> "e.g. My Site"; ProjectType.SERVER -> "e.g. My API" }) }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(repo, { repo = it }, label = { Text("Repo name (or owner/name)") }, placeholder = { Text("e.g. myapp") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name (optional)") }, placeholder = { Text("found automatically if left empty") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        if (type == ProjectType.APP) OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name (optional)") }, placeholder = { Text("found automatically if left empty") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        else OutlinedTextField(url, { url = it }, label = { Text(if (type == ProjectType.WEBSITE) "Live URL (optional)" else "Endpoint URL (optional)") },
+            placeholder = { Text(if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text("v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(create, { create = it }); Text("  Create GitHub repo (private)") }
-        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it }); Text("  Generate signing keys + set secrets") }
+        if (type == ProjectType.APP) Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it }); Text("  Generate signing keys + set secrets") }
+        else Text(if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
+            else "Your zip needs its own .github/workflows deploy. The status shows Running once the endpoint answers.", fontSize = 12.sp, color = Muted)
         BigButton("Create project", Icons.Default.PlayArrow) {
-            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, create, keys) else vm.toast("Name and repo required")
+            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, create, keys && type == ProjectType.APP, type, url) else vm.toast("Name and repo required")
         }
         if (vm.log.isNotEmpty()) {
             Panel { vm.log.forEach { Mono(it) } }

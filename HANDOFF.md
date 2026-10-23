@@ -12,6 +12,15 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v38
+- Project types. Project has `type` ("APP" | "WEBSITE" | "SERVER", text) and `liveUrl`. Room db version 2: `HubDb.build(ctx)` (Data.kt) is the ONLY way the db is opened (HubVM + SyncWorker) and holds MIGRATION 1->2 (ALTER TABLE ... DEFAULT 'APP' / ''). Never open Room elsewhere without it, and any new column needs migration 2->3.
+- ProjectStatus.kt: ProjectType (+ defaultStack, icon), `Project.kind`, Stage + `stageOf(p, healthy)`, pill/color, `cleanUrl`, `hostOf`, `Health.probe`. Raw CI result stays in `lastStatus` (none/running/passed/failed); the stage is derived per type: APP Building/Passed(/Installed on Info), WEBSITE Building/Deployed, SERVER Building/Running. Extras: Failed, No builds, Offline (server deploy passed but endpoint not answering).
+- Server: after a passed run, HubVM.probeServer checks `liveUrl` (https only, any answer < 500 = up; every 15 s until healthy, then 60 s; result in `vm.health`). Passed + no https URL = Running. Passed + not yet probed = Building.
+- Website: when a run passes and liveUrl is blank, `gh.pagesUrl()` fills it (GitHub Pages API, retried every 10 min), saved in the db.
+- Websites/servers: no APK release lookup, no checkInstalls, no hasUpdate, no auto-download (SyncWorker filters APP), no standard Android build.yml added on deploy (a log line says to include a workflow in the zip).
+- UI: TypePicker (Setup + Settings), card pill uses `vm.buildStage`, Info/overview use `vm.stage`, Websites/Servers filter chips appear once one exists, Detail shows "Open site/server" instead of Install. Backup entries carry `kind` + `liveUrl` (format still 1; old files read as APP).
+No new dependencies.
+
 ## v37
 - Info page (Info.kt InfoScreen): hero card (icon, name, stack, version, status/installed/update pills), then InfoCard sections App / Build / Repository (label left, value right, wraps; package and repo tap to copy via vm.copy). Header title is just "Info".
 - Files page (Files.kt FilesScreen): header "Files" with Refresh, FilesHead (search, home icon + breadcrumbs, totals or match count) fixed above a LazyColumn that resets to top on folder/search change; "Up one folder" row; delete icon is DeleteOutline with a 44dp target; DeleteFileDialog redesigned (red icon badge, file name + folder, workflow warning row, Cancel / red Delete). filesBrowser no longer emits the head item.

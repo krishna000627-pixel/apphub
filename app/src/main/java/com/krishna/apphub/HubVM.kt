@@ -34,7 +34,7 @@ import java.io.File
 class HubVM(app: Application) : AndroidViewModel(app) {
     val prefs = Prefs(app)
     val gh = GitHub(prefs)
-    private val dao = Room.databaseBuilder(app, Db::class.java, "hub").build().dao()
+    private val dao = HubDb.build(app).dao()
     private val lock = Mutex()
 
     val projects = dao.all().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -56,6 +56,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     val commits = mutableStateMapOf<Long, List<GitHub.Commit>>()
     val releases = mutableStateMapOf<Long, List<GitHub.Release>>()
     val jobs = mutableStateMapOf<Long, List<GitHub.Job>>()
+    val health = mutableStateMapOf<Long, Boolean>()   // v38: last endpoint check of a server (absent = not checked yet)
+    private val probeAt = mutableMapOf<Long, Long>()
+    private val urlTry = mutableMapOf<Long, Long>()
     val cached = mutableStateMapOf<Long, String>()    // release tag of the APK waiting in the cache, per app
     val zipFound = mutableStateMapOf<Long, File>()    // newest unpushed zip per app
     val zipLatest = mutableStateMapOf<Long, File>()   // newest zip per app, pushed or not
@@ -147,10 +150,19 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun installedTag(id: Long) = installed[id] ?: prefs.installed(id)
     fun markInstalled(id: Long, tag: String) { installed[id] = tag; prefs.setInstalled(id, tag) }
     fun hasUpdate(p: Project): Boolean {
+        if (p.kind != ProjectType.APP) return false   // websites and servers have no APK to update
         val l = latest[p.id] ?: return false
         val i = installedTag(p.id)
         if (i.isNotBlank()) return i != l
         return behind[p.id] == true   // installed outside App Hub: judged by the versionCode of the saved APK
+    }
+
+    /** v38: what the build result means for this project's type (cards use this: an app shows Passed, its installed pill sits next to it). */
+    fun buildStage(p: Project): Stage = stageOf(p, health[p.id])
+    /** v38: like [buildStage], and an app that passed and is on the phone with the newest build reads Installed (Info page). */
+    fun stage(p: Project): Stage {
+        val st = buildStage(p)
+        return if (p.kind == ProjectType.APP && st == Stage.PASSED && isInstalled(p) == true && !hasUpdate(p)) Stage.INSTALLED else st
     }
 
     // ---- APK cache: downloaded -> installed -> cleared ----
@@ -262,6 +274,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             val pm = getApplication<Application>().packageManager
             getApplication<Application>().cacheDir.let { File(it, "apks").deleteRecursively() }   // old location (before v19)
             list.forEach { p0 ->
+                if (p0.kind != ProjectType.APP) return@forEach   // v38: nothing to install for websites and servers
                 var p = p0
                 if (p.packageName.isBlank()) {
                     val found = detectPackage(p, pm)
@@ -632,7 +645,18 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             if (errRun[p.id] == last.id && old.isNotBlank()) old else gh.errorOf(p.repo, last.id).also { if (it.isNotBlank()) errRun[p.id] = last.id }
         } else ""
         if (errors[p.id] != err) { errors[p.id] = err; changed = true }
-        val rel = gh.latest(p.repo)
+        // v38: websites and servers have no APK release; a server is checked once its deploy passed; a website learns its Pages address
+        val kind = (projects.value.firstOrNull { it.id == p.id } ?: p).kind
+        val liveNow = projects.value.firstOrNull { it.id == p.id }?.liveUrl ?: p.liveUrl
+        if (kind == ProjectType.SERVER) {
+            if (status == "passed" && Health.canProbe(liveNow)) probeServer(p.id, liveNow) else health.remove(p.id)
+        }
+        var foundUrl = ""
+        if (kind == ProjectType.WEBSITE && status == "passed" && liveNow.isBlank() && System.currentTimeMillis() - (urlTry[p.id] ?: 0L) > 600_000L) {
+            urlTry[p.id] = System.currentTimeMillis()
+            foundUrl = gh.pagesUrl(p.repo)
+        }
+        val rel = if (kind == ProjectType.APP) gh.latest(p.repo) else null
         if (rel != null) {
             if (latestRel[p.id] != rel) latestRel[p.id] = rel
             if (latest[p.id] != rel.tag) { latest[p.id] = rel.tag; changed = true }
@@ -656,11 +680,22 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 if (r.isNotEmpty()) prefs.setLastRun(p.id, r.maxOf { it.id })
                 if (pushedV[p.id] != pushed) { prefs.setPushedVer(p.id, pushed); pushedV[p.id] = pushed }
                 val label = if (prefs.autoVer(p.id)) pushed else cur.version
-                val next = cur.copy(version = label, lastStatus = status, lastError = err)
+                val next = cur.copy(version = label, lastStatus = status, lastError = err, liveUrl = cur.liveUrl.ifBlank { foundUrl })
                 if (next != cur) { dao.save(next); changed = true }
             }
         }
         if (changed) saveSnap(p)
+    }
+
+    /** v38: checks a server endpoint in the background (not awaited, so a slow server never slows the sync). Every 15 s until healthy, then every minute. */
+    private fun probeServer(id: Long, url: String) {
+        val now = System.currentTimeMillis()
+        if (now - (probeAt[id] ?: 0L) < (if (health[id] == true) 60_000L else 15_000L)) return
+        probeAt[id] = now
+        viewModelScope.launch {
+            val ok = Health.probe(url)
+            if (health[id] != ok) health[id] = ok
+        }
     }
 
     /** v27 feature 3: one notification per finished build. The first sync only remembers the newest run, and old runs are never announced. */
@@ -746,7 +781,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun update(p: Project) = viewModelScope.launch {
         dao.save(p)
     }
-    fun delete(p: Project) = viewModelScope.launch { dropCache(p); ApkStore.clearPrev(getApplication<Application>(), prefs, p.id); ApkStore.clearParts(getApplication<Application>(), p.id); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
+    fun delete(p: Project) = viewModelScope.launch { health.remove(p.id); dropCache(p); ApkStore.clearPrev(getApplication<Application>(), prefs, p.id); ApkStore.clearParts(getApplication<Application>(), p.id); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
 
     fun build(p: Project) = viewModelScope.launch {
         toast(if (gh.dispatch(p.repo)) "Build triggered on GitHub" else "Trigger failed — push the workflow first")
@@ -779,9 +814,15 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         deploying = true; deployLog.clear(); deployGen++
         try {
             val files = pack.entries.map { it.path to it.bytes }.toMutableList()
-            if (files.none { it.first.startsWith(".github/workflows/") } && !gh.exists(p.repo, ".github/workflows/build.yml")) {
-                files.add(".github/workflows/build.yml" to ctx.assets.open("build.yml").readBytes())
-                deployLog += "• added the standard build workflow"
+            val noWorkflow = files.none { it.first.startsWith(".github/workflows/") }
+            if (p.kind == ProjectType.APP) {
+                if (noWorkflow && !gh.exists(p.repo, ".github/workflows/build.yml")) {
+                    files.add(".github/workflows/build.yml" to ctx.assets.open("build.yml").readBytes())
+                    deployLog += "• added the standard build workflow"
+                }
+            } else if (noWorkflow) {
+                // the standard workflow builds an Android APK, so it is never added to a website or server
+                deployLog += "• no workflow in this zip: include .github/workflows/ with your ${p.kind.label.lowercase()} deploy, or nothing will run"
             }
             val ver = pack.version.ifBlank { Commands.bump(p.version) }
             val msg = "$ver: ${note.replace("\n", " ").trim().ifBlank { "update from App Hub" }}"
@@ -817,8 +858,13 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             refresh(p).join()
             if (l.ok == true) {
                 setLive("✓ Build #${l.number} passed  ${(System.currentTimeMillis() - t0) / 1000}s")
-                toast("${p.name} build passed")
-                if (autoInstall) autoInstallLatest(p, gen) else deployLog += "Tap Install this build below."
+                if (p.kind == ProjectType.APP) {
+                    toast("${p.name} build passed")
+                    if (autoInstall) autoInstallLatest(p, gen) else deployLog += "Tap Install this build below."
+                } else {
+                    toast(if (p.kind == ProjectType.WEBSITE) "${p.name} deployed" else "${p.name} build passed")
+                    deployLog += if (p.kind == ProjectType.WEBSITE) "✓ Deployed" else "✓ Deploy finished. Running once the endpoint answers."
+                }
             } else {
                 setLive("✗ Build #${l.number} failed")
                 (errors[p.id] ?: "").lines().filter { it.isNotBlank() }.take(8).forEach { deployLog += "  $it" }
@@ -849,7 +895,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     }
 
     /** Setup wizard: repo -> keystore -> secrets -> save project, all in-app via OAuth. */
-    fun setup(name: String, repoName: String, pkg: String, version: String, create: Boolean, keys: Boolean) = viewModelScope.launch {
+    fun setup(name: String, repoName: String, pkg: String, version: String, create: Boolean, keys: Boolean,
+              type: ProjectType = ProjectType.APP, liveUrl: String = "") = viewModelScope.launch {
         log.clear()
         if (login.isBlank() && !repoName.contains("/")) { log += "✗ Log in with GitHub (Settings) or enter owner/name"; return@launch }
         val repo = if (repoName.contains("/")) repoName else "$login/$repoName"
@@ -858,7 +905,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             val c = gh.createRepo(repo.substringAfter("/")).first
             log += when (c) { 201 -> "✓ repo created"; 422 -> "• repo already exists"; else -> "✗ repo failed ($c)" }
         }
-        if (keys) {
+        if (keys && type == ProjectType.APP) {
             log += "Generating signing keystore…"
             val s = Signing.generate(name)
             val b64 = Base64.encodeToString(s.p12, Base64.NO_WRAP)
@@ -867,7 +914,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             val ok = all.all { gh.setSecret(repo, it.first, it.second) }
             log += if (ok) "✓ 4 secrets set on GitHub" else "✗ setting secrets failed (check repo exists / token scope)"
         }
-        val id = dao.save(Project(name = name, repo = repo, packageName = pkg, version = version))
+        val id = dao.save(Project(name = name, repo = repo, packageName = if (type == ProjectType.APP) pkg else "", version = version,
+            stack = type.defaultStack, type = type.name, liveUrl = if (type == ProjectType.APP) "" else cleanUrl(liveUrl)))
         selId = id
         log += "✓ Project added. Open Deploy and choose your zip to push and build."
     }
@@ -942,8 +990,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         var added = 0; var replaced = 0
         d.apps.forEach { a ->
             val m = have.firstOrNull { it.repo.equals(a.repo, true) }
-            if (m != null) { dao.save(m.copy(name = a.name, packageName = a.pkg, version = a.version, stack = a.stack)); replaced++ }
-            else { dao.save(Project(name = a.name, repo = a.repo, packageName = a.pkg, version = a.version, stack = a.stack)); added++ }
+            if (m != null) { dao.save(m.copy(name = a.name, packageName = a.pkg, version = a.version, stack = a.stack, type = a.kind, liveUrl = a.liveUrl)); replaced++ }
+            else { dao.save(Project(name = a.name, repo = a.repo, packageName = a.pkg, version = a.version, stack = a.stack, type = a.kind, liveUrl = a.liveUrl)); added++ }
         }
         d.keys.forEach { (repo, v) -> prefs.saveKeys(repo, v) }
         pendingBackup = null

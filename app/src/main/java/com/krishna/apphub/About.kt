@@ -18,6 +18,12 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v38" to listOf(
+            "New project types: App, Website and Server. Pick one in Setup, change it in Settings.",
+            "Status per type: App Building / Passed / Installed, Website Building / Deployed, Server Building / Running.",
+            "A server shows Running once its https endpoint answers; a website keeps its live URL (found automatically for GitHub Pages).",
+            "Backups keep the type and URL. Websites and servers get no APK, install or update actions."
+        ),
         "v37" to listOf(
             "Info page: app card with name, version and status pills, then App / Build / Repository cards. Tap package or repo to copy.",
             "Files page: search and path stay in place while the list scrolls, Up one folder row, refresh button, match count, clearer delete confirmation."

@@ -8,7 +8,8 @@ import org.json.JSONObject
  * The keystores are secrets: the UI warns before exporting and asks before importing over existing data.
  */
 object Backup {
-    class AppEntry(val name: String, val repo: String, val pkg: String, val version: String, val stack: String)
+    class AppEntry(val name: String, val repo: String, val pkg: String, val version: String, val stack: String,
+                   val kind: String = "APP", val liveUrl: String = "")
     class Data(val apps: List<AppEntry>, val keys: Map<String, String>)
 
     private const val MAGIC = "apphub-backup"
@@ -19,7 +20,7 @@ object Backup {
         val a = JSONArray()
         apps.forEach { p ->
             a.put(JSONObject().put("name", p.name).put("repo", p.repo).put("package", p.packageName)
-                .put("version", p.version).put("stack", p.stack))
+                .put("version", p.version).put("stack", p.stack).put("kind", p.kind.name).put("liveUrl", p.liveUrl))
         }
         o.put("apps", a)
         val k = JSONObject()
@@ -37,7 +38,8 @@ object Backup {
                 val j = a.getJSONObject(i)
                 val name = j.optString("name").trim(); val repo = j.optString("repo").trim()
                 if (name.isBlank() || repo.isBlank()) null
-                else AppEntry(name, repo, j.optString("package"), j.optString("version").ifBlank { "v1" }, j.optString("stack").ifBlank { "Kotlin • Compose" })
+                else AppEntry(name, repo, j.optString("package"), j.optString("version").ifBlank { "v1" }, j.optString("stack").ifBlank { "Kotlin • Compose" },
+                    ProjectType.from(j.optString("kind")).name, j.optString("liveUrl").trim())
             }
             val keys: Map<String, String> = o.optJSONObject("keystores")?.let { kk ->
                 kk.keys().asSequence().associateWith { name -> kk.optString(name) }.filterValues { it.isNotBlank() }

@@ -261,6 +261,12 @@ class GitHub(private val prefs: Prefs) {
             j.optBoolean("private"), j.s("pushed_at").replace("T", " ").take(16), j.optInt("stargazers_count"))
     }
 
+    /** v38: the live address of a GitHub Pages site (empty when the repo has none or the token cannot see it). */
+    suspend fun pagesUrl(repo: String): String {
+        val (c, b) = get("/repos/$repo/pages"); if (c != 200) return ""
+        return runCatching { JSONObject(b).optString("html_url") }.getOrDefault("")
+    }
+
     suspend fun commits(repo: String): List<Commit> {
         val (c, b) = get("/repos/$repo/commits?per_page=8"); if (c != 200) return emptyList()
         val a = JSONArray(b)

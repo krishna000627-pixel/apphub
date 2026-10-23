@@ -2,6 +2,8 @@ package com.krishna.apphub
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.Flow
@@ -16,7 +18,11 @@ data class Project(
     val version: String = "v1",
     val stack: String = "Kotlin • Compose",
     val lastStatus: String = "none",
-    val lastError: String = ""
+    val lastError: String = "",
+    /** v38: ProjectType name (APP, WEBSITE, SERVER). Stored as text so old rows and backups stay readable. */
+    val type: String = "APP",
+    /** v38: where a website is live / where a server answers (empty = not set). */
+    val liveUrl: String = ""
 )
 
 @Dao
@@ -26,8 +32,20 @@ interface ProjectDao {
     @Delete suspend fun delete(p: Project)
 }
 
-@Database(entities = [Project::class], version = 1, exportSchema = false)
+@Database(entities = [Project::class], version = 2, exportSchema = false)
 abstract class Db : RoomDatabase() { abstract fun dao(): ProjectDao }
+
+/** The one place the database is opened (app and background worker), so both always know the migrations. */
+object HubDb {
+    /** v38: project type + live URL. Existing rows become APP with no URL, so nothing changes for current projects. */
+    private val M1_2 = object : Migration(1, 2) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE Project ADD COLUMN type TEXT NOT NULL DEFAULT 'APP'")
+            db.execSQL("ALTER TABLE Project ADD COLUMN liveUrl TEXT NOT NULL DEFAULT ''")
+        }
+    }
+    fun build(ctx: Context): Db = Room.databaseBuilder(ctx, Db::class.java, "hub").addMigrations(M1_2).build()
+}
 
 class Prefs(ctx: Context) {
     private val sp = EncryptedSharedPreferences.create(
