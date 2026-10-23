@@ -12,6 +12,24 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v44
+- AddScreen: "Deploy on Vercel" and "Create GitHub repo" are `ConnRow`s (Panel with icon, title, connection status line, switch; the whole row is tappable). Connected: tap toggles and saves the position (Prefs.setupVercel / setupCreate). Not connected (or GitHub session expired): the switch shows off, the saved position is kept untouched, and a tap opens the Accounts page. `vercelUsable` / `createUsable` (switch AND account connected) are what the screen text and `vm.setup` use, so a switch can never act without its login. The old amber "log in first" line is gone (the row says it).
+- Only Vercel is listed as a deploy target: Render and Supabase are connected read-only (no deploy code), so they are not offered here yet.
+No new dependencies.
+
+## v43
+- Logins moved out of Settings into `AccountsScreen` (route `accounts`, back arrow header): the GitHub panel and the Vercel panel are moved over unchanged, plus new Supabase and Render panels. Settings keeps a small "Accounts" summary (who is connected) with an "Open accounts" button. The dashboard "GitHub session expired" button and the "log in first" hints/toasts now point to Accounts.
+- Supabase: `Supabase.kt` (`SupabaseApi.projects`: GET api.supabase.com/v1/projects with a personal access token). Render: `Render.kt` (`RenderApi.owner` = GET /v1/owners, `services` = GET /v1/services). Token / key in encrypted Prefs (`supabaseToken`, `renderKey`, `renderUser`). VM: `supabaseLogin/Logout/load`, `renderLogin/Logout/load`; lists load silently when the Accounts page opens (replaced only when changed). Tapping a project / service opens it on its dashboard.
+- Read only on purpose: nothing deploys, pauses or changes on Supabase or Render yet. Natural next steps: link a SERVER project to a Render service (status from Render instead of the endpoint probe), or to a Supabase project (paused warning).
+No new dependencies.
+
+## v42
+- Secret check: `SecretScan` (Zip.kt) runs when a zip is parsed (file names: .env* except .example/.sample/.template/.dist, .pem/.p12/.pfx/.key/.keystore/.p8, id_rsa..., service-account json; contents of text files up to 400 KB: private key blocks, GitHub/AWS/Stripe-live/Slack/Anthropic/OpenAI-style keys). `Pack.findings`. `HubVM.deploy(..., secretsChecked)` stops and sets `secretAsk` when there are findings; the Deploy screen shows `SecretDialog` (Leave out & push drops whole-file findings via `Pack.without`, Push anyway, Cancel). Every push path goes through `deploy`, so Push now / Undo-free flows are covered.
+- Server alerts: `ServerWatch.kt`. `record(ctx, prefs, project, ok)` keeps a per-server state in Prefs (0 unknown, 1 up, 2 down never announced, 3 down announced): down is announced after 2 failed checks in a row and only if the server was up before; up only after an announced down; the first result is only remembered. Fed by `HubVM.probeServer` (app open) and by `ServerWatchWorker` (WorkManager, every 15 min, only SERVER projects with an https liveUrl, second check after 5 s on a failure). Switch `Prefs.serverAlerts` (default on) in Settings > Notifications; needs the global Notify me switch. `Notifier.serverDown/serverUp`, channel "servers".
+- Vercel environment variables: `Vercel.envList/envSet/envDelete` (v10 list and create with upsert=true, v9 delete; type "encrypted", targets production+preview+development). `EnvScreen` (route `env/{id}`), opened from the Vercel panel in the app's Settings tab. Values are only sent, never read back or stored. Changes apply from the next deployment (no redeploy button).
+- Not built (already there): push preview, Builds tab as timeline, Copy errors + AI prompt on a failed build, Undo last push and previous APK as rollback. Not built (gap): Vercel instant rollback (promote an older deployment); Undo last push triggers a new Vercel build instead.
+No new dependencies (WorkManager was already there).
+
 ## v41
 - Prompt Maker (Screens.kt PromptScreen): removed the New app / New website / New server tasks and their screens (NewAppSection, NewWebSection, Prompts.buildWeb, vm.web*/draftType, Prefs.webVercel). Ideas / Prompts.ideasPrompt / Prompts.buildPrompt are left in the code but nothing opens them.
 - Tasks per project type (`Prompts.tasksFor(kind)`): APP and WEBSITE = Fix error, Add feature, Improve UI, Refactor, Release notes, Other; SERVER = Fix error, Add feature, Improve API, Refactor, Release notes, Other. A selected task that the project type does not have falls back to the first one. Website/server wording and Vercel line stay in `webBody`.

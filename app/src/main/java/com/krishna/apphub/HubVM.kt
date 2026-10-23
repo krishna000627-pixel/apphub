@@ -106,6 +106,70 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     private val vercelErrFor = mutableMapOf<Long, String>()   // deployment whose error text is in vercelLast
     private val vercelVer = mutableMapOf<Long, String>()      // newest "vNNN" seen in a Vercel commit message
 
+    // ---- v43: Supabase and Render connections (read only: they list your projects and services) ----
+    val supabase = SupabaseApi(prefs)
+    var supabaseOn by mutableStateOf(prefs.supabaseToken.isNotBlank())
+    val supabaseProjects = mutableStateListOf<SupabaseApi.Proj>()
+    var supabaseMsg by mutableStateOf("")
+    var supabaseBusy by mutableStateOf(false)
+    val render = RenderApi(prefs)
+    var renderUser by mutableStateOf(prefs.renderUser)
+    val renderServices = mutableStateListOf<RenderApi.Svc>()
+    var renderMsg by mutableStateOf("")
+    var renderBusy by mutableStateOf(false)
+
+    fun supabaseLogin(token: String, onDone: () -> Unit) = viewModelScope.launch {
+        if (token.isBlank()) { supabaseMsg = "Paste a Supabase token first"; return@launch }
+        supabaseBusy = true; supabaseMsg = ""
+        val (list, err) = supabase.projects(token.trim())
+        supabaseBusy = false
+        if (list == null) { supabaseMsg = "Supabase: $err"; return@launch }
+        prefs.supabaseToken = token; supabaseOn = true
+        supabaseProjects.clear(); supabaseProjects.addAll(list)
+        onDone(); toast("Supabase connected")
+    }
+
+    fun supabaseLogout() { prefs.supabaseToken = ""; supabaseOn = false; supabaseProjects.clear(); supabaseMsg = "" }
+
+    /** Silent refresh of the project list (no spinner); the list is only replaced when it changed. */
+    fun loadSupabase() = viewModelScope.launch {
+        if (!supabaseOn) return@launch
+        val (list, err) = supabase.projects()
+        if (list == null) { supabaseMsg = "Supabase: $err"; return@launch }
+        supabaseMsg = ""
+        if (supabaseProjects.toList() != list) { supabaseProjects.clear(); supabaseProjects.addAll(list) }
+    }
+
+    fun renderLogin(key: String, onDone: () -> Unit) = viewModelScope.launch {
+        if (key.isBlank()) { renderMsg = "Paste a Render API key first"; return@launch }
+        renderBusy = true; renderMsg = ""
+        val (who, err) = render.owner(key.trim())
+        renderBusy = false
+        if (who == null) { renderMsg = "Render: $err"; return@launch }
+        prefs.renderKey = key; prefs.renderUser = who; renderUser = who
+        onDone(); toast("Render connected as $who")
+        loadRender()
+    }
+
+    fun renderLogout() { prefs.renderKey = ""; prefs.renderUser = ""; renderUser = ""; renderServices.clear(); renderMsg = "" }
+
+    fun loadRender() = viewModelScope.launch {
+        if (renderUser.isBlank()) return@launch
+        val (list, err) = render.services()
+        if (list == null) { renderMsg = "Render: $err"; return@launch }
+        renderMsg = ""
+        if (renderServices.toList() != list) { renderServices.clear(); renderServices.addAll(list) }
+    }
+
+    // ---- v42: environment variables on Vercel (names only; a value is sent once and never kept here) ----
+    val envVars = mutableStateListOf<Vercel.Env>()
+    var envMsg by mutableStateOf("")
+    var envBusy by mutableStateOf(false)
+    // ---- v42: secrets found in a zip about to be pushed (the Deploy screen asks) ----
+    var secretAsk by mutableStateOf<SecretAsk?>(null)
+    // ---- v42: server down / up alerts ----
+    var serverAlerts by mutableStateOf(prefs.serverAlerts)
+
     // new-app prompt maker (kept here so it survives switching tabs)
     var ideaCat by mutableStateOf("Productivity")
     var ideaName by mutableStateOf("")
@@ -357,7 +421,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var deletingFile by mutableStateOf("")
 
     fun loadFiles(p: Project, quiet: Boolean = false) = viewModelScope.launch {
-        if (!p.repo.contains("/")) { if (!quiet) toast("Log in with GitHub first (Settings)"); return@launch }
+        if (!p.repo.contains("/")) { if (!quiet) toast("Log in with GitHub first (Accounts)"); return@launch }
         filesLoading = true
         val l = gh.files(p.repo)
         if (l != null) repoFiles[p.id] = l else if (!quiet) toast("Could not read the file list")
@@ -428,7 +492,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     /** Shows what a push would change (new / changed files) without pushing anything. */
     fun preview(p: Project, pack: Zipper.Pack) = viewModelScope.launch {
         if (deploying) return@launch
-        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Settings)"); return@launch }
+        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Accounts)"); return@launch }
         deploying = true; deployLog.clear(); deployGen++
         try {
             deployLog += "Comparing ${pack.entries.size} files with ${p.repo}…"
@@ -438,7 +502,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /** Adds a commit that restores the previous version of the code (history is kept). */
     fun undoLastPush(p: Project) = viewModelScope.launch {
-        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Settings)"); return@launch }
+        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Accounts)"); return@launch }
         val (ok, m) = gh.revertLast(p.repo)
         toast(if (ok) "Undone: $m. A new build starts." else m)
         if (ok) { delay(3_000); refresh(p) }
@@ -518,8 +582,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /** Creates (or reuses) the Vercel project for an existing website / server and remembers the link. */
     fun linkVercel(p: Project) = viewModelScope.launch {
-        if (vercelUser.isBlank()) { vercelMsg = "Log in to Vercel first (Settings)"; return@launch }
-        if (!p.repo.contains("/")) { vercelMsg = "Log in with GitHub first (Settings)"; return@launch }
+        if (vercelUser.isBlank()) { vercelMsg = "Log in to Vercel first (Accounts)"; return@launch }
+        if (!p.repo.contains("/")) { vercelMsg = "Log in with GitHub first (Accounts)"; return@launch }
         vercelBusy = true; vercelMsg = ""
         val (lk, err) = vercel.link(p.repo)
         vercelBusy = false
@@ -532,6 +596,42 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     /** Only forgets the link here; the project on Vercel stays. */
     fun unlinkVercel(p: Project) {
         prefs.setVercelId(p.repo, ""); vercelLast.remove(p.id); vercelVer.remove(p.id); vercelRev++
+    }
+
+    fun loadEnv(p: Project) = viewModelScope.launch {
+        val vid = prefs.vercelId(p.repo)
+        if (vid.isBlank()) { envMsg = "Link this project to Vercel first"; return@launch }
+        val (list, err) = vercel.envList(vid)
+        if (list == null) { envMsg = "Vercel: $err"; return@launch }
+        envMsg = ""; envVars.clear(); envVars.addAll(list)
+    }
+
+    /** Adds or replaces a variable. Takes effect on the next deployment. */
+    fun saveEnv(p: Project, key: String, value: String, onSaved: () -> Unit) = viewModelScope.launch {
+        val vid = prefs.vercelId(p.repo)
+        val k = key.trim()
+        when {
+            vid.isBlank() -> { envMsg = "Link this project to Vercel first"; return@launch }
+            !Regex("[A-Za-z_][A-Za-z0-9_]*").matches(k) -> { envMsg = "Name: letters, digits and _ only, not starting with a digit"; return@launch }
+            value.isEmpty() -> { envMsg = "Enter a value"; return@launch }
+        }
+        envBusy = true; envMsg = ""
+        val err = vercel.envSet(vid, k, value)
+        envBusy = false
+        if (err.isNotBlank()) { envMsg = "Vercel: $err"; return@launch }
+        onSaved(); toast("$k saved. It applies from the next deployment")
+        loadEnv(p)
+    }
+
+    fun deleteEnv(p: Project, e: Vercel.Env) = viewModelScope.launch {
+        val vid = prefs.vercelId(p.repo)
+        if (vid.isBlank()) return@launch
+        envBusy = true; envMsg = ""
+        val err = vercel.envDelete(vid, e.id)
+        envBusy = false
+        if (err.isNotBlank()) { envMsg = "Vercel: $err"; return@launch }
+        toast("${e.key} deleted")
+        loadEnv(p)
     }
 
     /**
@@ -816,6 +916,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val ok = Health.probe(url)
             if (health[id] != ok) health[id] = ok
+            projects.value.firstOrNull { it.id == id }?.let { ServerWatch.record(getApplication<Application>(), prefs, it, ok) }   // v42
         }
     }
 
@@ -921,6 +1022,25 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun keyBackup(p: Project) = prefs.keys(p.repo)
 
     // ---- deploy: zip -> GitHub commit -> CI build (no Termux) ----
+    fun secretPushAnyway(ctx: Context) {
+        val a = secretAsk ?: return
+        secretAsk = null
+        deploy(ctx, a.p, a.pack, a.note, a.src, secretsChecked = true)
+    }
+
+    /** Pushes without the files that are secrets themselves (.env, key files). Secrets found inside code files stay: they are yours to fix. */
+    fun secretLeaveOut(ctx: Context) {
+        val a = secretAsk ?: return
+        secretAsk = null
+        val drop = a.pack.findings.filter { it.wholeFile }.map { it.path }.toSet()
+        val trimmed = a.pack.without(drop)
+        zipPack = trimmed
+        toast("Left out ${drop.size} file(s)")
+        deploy(ctx, a.p, trimmed, a.note, a.src, secretsChecked = true)
+    }
+
+    fun secretCancel() { secretAsk = null }
+
     fun pickZip(ctx: Context, uri: Uri) = viewModelScope.launch {
         val pack = withContext(Dispatchers.IO) { runCatching { Zipper.read(ctx, uri) }.getOrNull() }
         if (pack == null || pack.entries.isEmpty()) { toast("Could not read that zip"); return@launch }
@@ -929,9 +1049,11 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         projects.value.firstOrNull { Commands.fileBase(it).equals(base, true) }?.let { selId = it.id }
     }
 
-    fun deploy(ctx: Context, p: Project, pack: Zipper.Pack, note: String, src: File? = null) = viewModelScope.launch {
+    fun deploy(ctx: Context, p: Project, pack: Zipper.Pack, note: String, src: File? = null, secretsChecked: Boolean = false) = viewModelScope.launch {
         if (deploying) return@launch
-        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Settings)"); return@launch }
+        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Accounts)"); return@launch }
+        // v42: keys, tokens and .env files are asked about before anything leaves the phone
+        if (pack.findings.isNotEmpty() && !secretsChecked) { secretAsk = SecretAsk(p, pack, note, src); return@launch }
         deploying = true; deployLog.clear(); deployGen++
         try {
             val files = pack.entries.map { it.path to it.bytes }.toMutableList()
@@ -1021,7 +1143,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun setup(name: String, repoName: String, pkg: String, version: String, create: Boolean, keys: Boolean,
               type: ProjectType = ProjectType.APP, liveUrl: String = "", vercelOn: Boolean = false) = viewModelScope.launch {
         log.clear()
-        if (login.isBlank() && !repoName.contains("/")) { log += "✗ Log in with GitHub (Settings) or enter owner/name"; return@launch }
+        if (login.isBlank() && !repoName.contains("/")) { log += "✗ Log in with GitHub (Accounts) or enter owner/name"; return@launch }
         val repo = if (repoName.contains("/")) repoName else "$login/$repoName"
         if (create) {
             log += "Creating repo $repo…"
@@ -1032,7 +1154,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         var liveAddr = if (type == ProjectType.APP) "" else cleanUrl(liveUrl)
         var vercelProject = ""
         if (vercelOn && type != ProjectType.APP) {
-            if (prefs.vercelToken.isBlank()) log += "✗ Vercel: log in first (Settings, Vercel). Project added without it."
+            if (prefs.vercelToken.isBlank()) log += "✗ Vercel: log in first (Accounts). Project added without it."
             else {
                 log += "Linking Vercel project…"
                 val (lk, err) = vercel.link(repo)
@@ -1062,6 +1184,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     // ---- feature 3: notifications switch ----
     fun updateNotify(v: Boolean) { notifyOn = v; prefs.notifyOn = v }
+    fun updateServerAlerts(v: Boolean) { serverAlerts = v; prefs.serverAlerts = v; ServerWatch.schedule(getApplication<Application>(), prefs) }   // v42
 
     // ---- feature 6: live sync choice + storage ----
     fun updateSyncSecs(v: Int) { syncSecs = v; prefs.syncSecs = v }

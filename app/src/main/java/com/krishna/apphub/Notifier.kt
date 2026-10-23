@@ -44,6 +44,17 @@ object Notifier {
             "detail/${p.id}", android.R.drawable.ic_dialog_info)
     }
 
+    /** v42: a server stopped answering / answers again. One notification per server, the newer one replaces the older. */
+    fun serverDown(ctx: Context, prefs: Prefs, p: Project) {
+        if (!allowed(ctx, prefs)) return
+        post(ctx, 100_000 + p.id.toInt(), "servers", "Server status", "${p.name} is not answering", "Tap to open", "detail/${p.id}", android.R.drawable.ic_dialog_alert)
+    }
+
+    fun serverUp(ctx: Context, prefs: Prefs, p: Project) {
+        if (!allowed(ctx, prefs)) return
+        post(ctx, 100_000 + p.id.toInt(), "servers", "Server status", "${p.name} is back up", "Tap to open", "detail/${p.id}", android.R.drawable.ic_dialog_info)
+    }
+
     fun apkReady(ctx: Context, prefs: Prefs, p: Project, tag: String) {
         if (!allowed(ctx, prefs)) return
         post(ctx, 101 + (p.id * 2).toInt(), "apks", "Downloaded updates",

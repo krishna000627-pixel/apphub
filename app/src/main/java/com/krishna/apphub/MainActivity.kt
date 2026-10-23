@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (savedInstanceState == null) { hub.handleCallback(intent?.data); intent?.getStringExtra("route")?.let { hub.openRoute = it } }
         Sync.schedule(applicationContext, hub.prefs)
+        ServerWatch.schedule(applicationContext, hub.prefs)   // v42: server down / up alerts
         // one-time: lets the login notification ("tap to return") show after approving on GitHub
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
             && !getSharedPreferences("hub_ui", MODE_PRIVATE).getBoolean("asked_notif", false)) {

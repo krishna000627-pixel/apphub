@@ -183,6 +183,16 @@ class Prefs(ctx: Context) {
     var vercelTeam: String
         get() = s("vc_team")
         set(v) = put("vc_team", v.trim())
+    // ---- v43 Supabase access token, Render API key and the Render account name ----
+    var supabaseToken: String
+        get() = s("sb_token")
+        set(v) = put("sb_token", v.trim())
+    var renderKey: String
+        get() = s("rd_key")
+        set(v) = put("rd_key", v.trim())
+    var renderUser: String
+        get() = s("rd_user")
+        set(v) = put("rd_user", v)
     /** Vercel project id this repo deploys to ("" = not on Vercel). */
     fun vercelId(repo: String) = s("vp_$repo")
     fun setVercelId(repo: String, v: String) = put("vp_$repo", v)
@@ -197,6 +207,15 @@ class Prefs(ctx: Context) {
     var setupVercel: Boolean            // Setup: Deploy on Vercel (off until tapped)
         get() = sp.getBoolean("su_vercel", false)
         set(v) { sp.edit().putBoolean("su_vercel", v).apply() }
+    // ---- v42: server down / up alerts. State per server: 0 unknown, 1 up, 2 down (never announced), 3 down (announced) ----
+    var serverAlerts: Boolean
+        get() = sp.getBoolean("srv_alerts", true)
+        set(v) { sp.edit().putBoolean("srv_alerts", v).apply() }
+    fun serverState(id: Long) = sp.getInt("ss_$id", 0)
+    fun setServerState(id: Long, v: Int) { sp.edit().putInt("ss_$id", v).apply() }
+    fun serverFails(id: Long) = sp.getInt("sf_$id", 0)
+    fun setServerFails(id: Long, v: Int) { sp.edit().putInt("sf_$id", v).apply() }
+
     var promptDeliver: Boolean          // Prompt Maker: Add zip name + version bump rules
         get() = sp.getBoolean("pm_deliver", true)
         set(v) { sp.edit().putBoolean("pm_deliver", v).apply() }

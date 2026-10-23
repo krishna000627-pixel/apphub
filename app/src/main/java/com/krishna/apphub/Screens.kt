@@ -198,7 +198,9 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
             composable("files/{id}", listOf(navArgument("id") { type = NavType.LongType })) { FilesScreen(vm, nav, it.arguments!!.getLong("id")) }
             composable("info/{id}", listOf(navArgument("id") { type = NavType.LongType })) { InfoScreen(vm, nav, it.arguments!!.getLong("id")) }
+            composable("accounts") { AccountsScreen(vm, nav) }   // v43
             composable("add") { AddScreen(vm, nav) }
+            composable("env/{id}", listOf(navArgument("id") { type = NavType.LongType })) { EnvScreen(vm, nav, it.arguments!!.getLong("id")) }   // v42
             composable("detail/{id}", listOf(navArgument("id") { type = NavType.LongType })) { Detail(vm, nav, it.arguments!!.getLong("id")) }
             composable("install/{id}", listOf(navArgument("id") { type = NavType.LongType })) { InstallScreen(vm, nav, it.arguments!!.getLong("id")) }
         }
@@ -231,7 +233,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                     Text("GitHub session expired", fontWeight = FontWeight.Bold, color = Red, fontSize = 13.sp)
                     Text("Live updates are paused until you log in again.", fontSize = 12.sp, color = Muted)
                 }
-                Button({ nav.navigate("settings") { popUpTo("dash"); launchSingleTop = true } }, contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) { BtnText("Log in") }
+                Button({ nav.navigate("accounts") { launchSingleTop = true } }, contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) { BtnText("Log in") }
             }
         }
         // v27 feature 4: small amber note while GitHub is unreachable or the API limit is reached; it clears by itself
@@ -508,6 +510,21 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     }
 
 /** Clear on/off look: green track + dark thumb when on, outlined track + grey thumb when off. */
+/** v44: a setup switch shown like a project row: icon, title, who is connected, and the switch. The whole row is tappable. */
+@Composable fun ConnRow(icon: ImageVector, title: String, status: String, statusColor: Color, on: Boolean, onTap: () -> Unit) {
+    Panel(Modifier.clickable { onTap() }) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = Cyan, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Bold)
+                Text(status, fontSize = 12.sp, color = statusColor)
+            }
+            HubSwitch(on, { onTap() })
+        }
+    }
+}
+
 @Composable fun HubSwitch(checked: Boolean, onChange: (Boolean) -> Unit) = Switch(checked, onChange,
     colors = SwitchDefaults.colors(
         checkedThumbColor = Color.Black, checkedTrackColor = Green, checkedBorderColor = Green,
@@ -563,10 +580,11 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             SectionTitle(Icons.Default.Cloud, "Vercel")
             if (vm.isVercel(p)) {
                 Text("Linked. Every push deploys by itself and the status follows the Vercel deployment.", fontSize = 11.sp, color = Muted)
+                SettingRow(Icons.Default.VpnKey, "Environment variables", "Names only, values stay hidden", Cyan, { nav.navigate("env/${p.id}") })
                 SettingRow(Icons.Default.OpenInNew, "Open on Vercel", "Dashboard", Muted, { openUrl(ctx, "https://vercel.com/dashboard") })
                 SettingRow(Icons.Default.LinkOff, "Unlink", "Only forgets the link, the Vercel project stays", Amber, { vm.unlinkVercel(p) })
             } else {
-                Text(if (vm.vercelUser.isBlank()) "Log in to Vercel in Settings first." else "Not linked. Link creates the Vercel project from ${p.repo}.", fontSize = 11.sp, color = Muted)
+                Text(if (vm.vercelUser.isBlank()) "Log in to Vercel in Accounts first." else "Not linked. Link creates the Vercel project from ${p.repo}.", fontSize = 11.sp, color = Muted)
                 SettingRow(Icons.Default.Link, if (vm.vercelBusy) "Linking…" else "Link to Vercel", "Deploy this ${p.kind.label.lowercase()} on Vercel", Green, { if (!vm.vercelBusy) vm.linkVercel(p) })
             }
             if (vm.vercelMsg.isNotBlank()) Text(vm.vercelMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
@@ -657,6 +675,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 Mono("files   : ${pack.entries.size}  (skipped ${pack.skipped})")
                 Mono("size    : ${"%.1f".format(pack.bytes / 1048576.0)} MB")
                 if (p != null && !vm.nameMatches(p, pack.name)) Text("⚠ This zip name doesn't match ${p.name}", color = Amber, fontSize = 12.sp)
+                if (pack.findings.isNotEmpty()) Text("⚠ ${pack.findings.size} possible secret(s) in this zip. You are asked before the push.", color = Amber, fontSize = 12.sp)
             }
             Spacer(Modifier.height(8.dp))
             OutlinedButton({ pick.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) }) {
@@ -680,6 +699,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 onSelected = { target = null; if (pack != null) start(tp, pack, note) },
                 onCancel = { target = null })
         }
+        vm.secretAsk?.let { a -> SecretDialog(a, onAnyway = { vm.secretPushAnyway(ctx) }, onLeave = { vm.secretLeaveOut(ctx) }, onCancel = { vm.secretCancel() }) }
         older?.let { op ->
             if (pack != null) OldVersionDialog(pack.name, pack.version, vm.pushedVersion(op), op,
                 onPush = { older = null; vm.deploy(ctx, op, pack, note) }, onCancel = { older = null })
@@ -888,51 +908,14 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
 }
 
 // ---------- settings ----------
-@Composable fun SettingsScreen(vm: HubVM, nav: NavHostController) {
+/** v43: every login on one page: GitHub, Vercel, Supabase, Render. Settings only shows who is connected. */
+@Composable fun AccountsScreen(vm: HubVM, nav: NavHostController) {
     val ctx = LocalContext.current
-    val info = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0) }.getOrNull() }
-    val appVer = info?.versionName ?: "?"
-    // v27 feature 6: space used by saved APKs, refreshed in the background
-    var storage by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(Unit) { while (true) { storage = withContext(Dispatchers.IO) { vm.apkBytes() }; delay(3_000) } }
-    var confirmClear by remember { mutableStateOf(false) }
-    var vTok by remember { mutableStateOf("") }; var vTeam by remember { mutableStateOf("") }   // v39: Vercel login fields
-    // v27 feature 2: backup
-    var warnExport by remember { mutableStateOf(false) }
-    val exportFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if (uri != null) vm.exportBackup(ctx, uri) }
-    val importFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.readBackup(ctx, uri) }
-    // v27 feature 3: notification permission, asked when the switch is turned on
-    val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-
-    if (confirmClear) AlertDialog(onDismissRequest = { confirmClear = false },
-        title = { Text("Clear saved APKs?") },
-        text = { Text("Deletes the saved latest and previous builds of every app (${fmtBytes(storage)}). You can download them again, but the Previous build option is gone.") },
-        confirmButton = { TextButton({ confirmClear = false; vm.clearApks() }) { Text("Clear", color = Red) } },
-        dismissButton = { TextButton({ confirmClear = false }) { Text("Cancel") } })
-    if (warnExport) AlertDialog(onDismissRequest = { warnExport = false },
-        title = { Text("Export backup") },
-        text = { Text("The file holds your app list and the signing keystores with their passwords. Anyone who has it can sign apps as you. Keep it private and never share it.") },
-        confirmButton = { TextButton({
-            warnExport = false
-            exportFile.launch("apphub-backup-${java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())}.json")
-        }) { Text("Export", color = Amber) } },
-        dismissButton = { TextButton({ warnExport = false }) { Text("Cancel") } })
-    vm.pendingBackup?.let { d ->
-        val (clash, keyClash) = vm.backupClashes(d)
-        AlertDialog(onDismissRequest = { vm.pendingBackup = null },
-            title = { Text("Import backup?") },
-            text = {
-                Text("This backup has ${d.apps.size} app(s) and ${d.keys.size} keystore(s).\n\n" +
-                    (if (clash > 0) "$clash app(s) already exist here and will be overwritten (name, package, version, stack).\n" else "") +
-                    (if (keyClash > 0) "$keyClash stored keystore(s) will be replaced.\n" else "") +
-                    (if (clash == 0 && keyClash == 0) "Nothing here is overwritten, the apps are added." else "\nThis cannot be undone."))
-            },
-            confirmButton = { TextButton({ vm.applyBackup(d) }) { Text("Import", color = if (clash > 0 || keyClash > 0) Red else Green) } },
-            dismissButton = { TextButton({ vm.pendingBackup = null }) { Text("Cancel") } })
-    }
-
+    var vTok by remember { mutableStateOf("") }; var vTeam by remember { mutableStateOf("") }   // Vercel login fields
+    var sTok by remember { mutableStateOf("") }; var rKey by remember { mutableStateOf("") }   // Supabase token, Render key
+    LaunchedEffect(Unit) { vm.loadSupabase(); vm.loadRender() }   // silent: the lists fill in by themselves
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Header("Settings")
+        Header("Accounts", nav)
         Panel {
             Text("GitHub", fontWeight = FontWeight.Bold)
             Text(if (vm.login.isBlank()) "Not logged in" else if (vm.sessionExpired) "Session expired for ${vm.login}" else "Logged in as ${vm.login}",
@@ -970,10 +953,123 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
                 OutlinedButton({ vm.vercelLogout() }) { Text("Log out") }
             }
         }
+        // ---- v43: Supabase ----
+        Panel {
+            Text("Supabase", fontWeight = FontWeight.Bold)
+            if (!vm.supabaseOn) {
+                Text("Not connected", color = Amber)
+                Text("Create an access token at supabase.com/dashboard/account/tokens and paste it here. App Hub only reads your project list.", fontSize = 12.sp, color = Muted)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(sTok, { sTok = it }, label = { Text("Supabase access token") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                if (vm.supabaseMsg.isNotBlank()) Text(vm.supabaseMsg, Modifier.padding(top = 6.dp), fontSize = 12.sp, color = Amber)
+                Spacer(Modifier.height(8.dp))
+                BigButton(if (vm.supabaseBusy) "Checking…" else "Connect Supabase", Icons.Default.Login) { if (!vm.supabaseBusy) vm.supabaseLogin(sTok) { sTok = "" } }
+                TextButton({ openUrl(ctx, "https://supabase.com/dashboard/account/tokens") }) { Text("Open token page") }
+            } else {
+                Text("Connected", color = Green)
+                if (vm.supabaseMsg.isNotBlank()) Text(vm.supabaseMsg, fontSize = 12.sp, color = Amber)
+                Text("${vm.supabaseProjects.size} project(s). Tap one to open it on Supabase.", fontSize = 12.sp, color = Muted)
+                vm.supabaseProjects.forEach { pr ->
+                    Column(Modifier.fillMaxWidth().clickable { openUrl(ctx, "https://supabase.com/dashboard/project/${pr.id}") }.padding(vertical = 4.dp)) {
+                        Mono(pr.name, color = Cyan)
+                        Mono("${pr.status.lowercase().replace('_', ' ')} • ${pr.region}", color = if (pr.status.startsWith("ACTIVE")) Green else Amber)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton({ vm.supabaseLogout() }) { Text("Disconnect") }
+            }
+        }
+        // ---- v43: Render ----
+        Panel {
+            Text("Render", fontWeight = FontWeight.Bold)
+            if (vm.renderUser.isBlank()) {
+                Text("Not connected", color = Amber)
+                Text("Create an API key at dashboard.render.com/u/settings#api-keys and paste it here. App Hub only reads your services.", fontSize = 12.sp, color = Muted)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(rKey, { rKey = it }, label = { Text("Render API key") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                if (vm.renderMsg.isNotBlank()) Text(vm.renderMsg, Modifier.padding(top = 6.dp), fontSize = 12.sp, color = Amber)
+                Spacer(Modifier.height(8.dp))
+                BigButton(if (vm.renderBusy) "Checking…" else "Connect Render", Icons.Default.Login) { if (!vm.renderBusy) vm.renderLogin(rKey) { rKey = "" } }
+                TextButton({ openUrl(ctx, "https://dashboard.render.com/u/settings#api-keys") }) { Text("Open API keys page") }
+            } else {
+                Text("Connected as ${vm.renderUser}", color = Green)
+                if (vm.renderMsg.isNotBlank()) Text(vm.renderMsg, fontSize = 12.sp, color = Amber)
+                Text("${vm.renderServices.size} service(s). Tap one to open it on Render.", fontSize = 12.sp, color = Muted)
+                vm.renderServices.forEach { sv ->
+                    Column(Modifier.fillMaxWidth().clickable { openUrl(ctx, sv.dashboardUrl) }.padding(vertical = 4.dp)) {
+                        Mono(sv.name, color = Cyan)
+                        Mono("${sv.kind.replace('_', ' ')} • ${if (sv.suspended) "suspended" else "active"}", color = if (sv.suspended) Amber else Green)
+                        if (sv.url.isNotBlank()) Mono(sv.url, color = Muted)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton({ vm.renderLogout() }) { Text("Disconnect") }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+@Composable fun SettingsScreen(vm: HubVM, nav: NavHostController) {
+    val ctx = LocalContext.current
+    val info = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0) }.getOrNull() }
+    val appVer = info?.versionName ?: "?"
+    // v27 feature 6: space used by saved APKs, refreshed in the background
+    var storage by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) { while (true) { storage = withContext(Dispatchers.IO) { vm.apkBytes() }; delay(3_000) } }
+    var confirmClear by remember { mutableStateOf(false) }
+    // v27 feature 2: backup
+    var warnExport by remember { mutableStateOf(false) }
+    val exportFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if (uri != null) vm.exportBackup(ctx, uri) }
+    val importFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.readBackup(ctx, uri) }
+    // v27 feature 3: notification permission, asked when the switch is turned on
+    val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    if (confirmClear) AlertDialog(onDismissRequest = { confirmClear = false },
+        title = { Text("Clear saved APKs?") },
+        text = { Text("Deletes the saved latest and previous builds of every app (${fmtBytes(storage)}). You can download them again, but the Previous build option is gone.") },
+        confirmButton = { TextButton({ confirmClear = false; vm.clearApks() }) { Text("Clear", color = Red) } },
+        dismissButton = { TextButton({ confirmClear = false }) { Text("Cancel") } })
+    if (warnExport) AlertDialog(onDismissRequest = { warnExport = false },
+        title = { Text("Export backup") },
+        text = { Text("The file holds your app list and the signing keystores with their passwords. Anyone who has it can sign apps as you. Keep it private and never share it.") },
+        confirmButton = { TextButton({
+            warnExport = false
+            exportFile.launch("apphub-backup-${java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())}.json")
+        }) { Text("Export", color = Amber) } },
+        dismissButton = { TextButton({ warnExport = false }) { Text("Cancel") } })
+    vm.pendingBackup?.let { d ->
+        val (clash, keyClash) = vm.backupClashes(d)
+        AlertDialog(onDismissRequest = { vm.pendingBackup = null },
+            title = { Text("Import backup?") },
+            text = {
+                Text("This backup has ${d.apps.size} app(s) and ${d.keys.size} keystore(s).\n\n" +
+                    (if (clash > 0) "$clash app(s) already exist here and will be overwritten (name, package, version, stack).\n" else "") +
+                    (if (keyClash > 0) "$keyClash stored keystore(s) will be replaced.\n" else "") +
+                    (if (clash == 0 && keyClash == 0) "Nothing here is overwritten, the apps are added." else "\nThis cannot be undone."))
+            },
+            confirmButton = { TextButton({ vm.applyBackup(d) }) { Text("Import", color = if (clash > 0 || keyClash > 0) Red else Green) } },
+            dismissButton = { TextButton({ vm.pendingBackup = null }) { Text("Cancel") } })
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Header("Settings")
+        // v43: logins moved to their own page (Accounts)
+        Panel {
+            Text("Accounts", fontWeight = FontWeight.Bold)
+            Mono("GitHub    ${vm.login.ifBlank { "not logged in" }}", color = if (vm.login.isBlank() || vm.sessionExpired) Amber else Green)
+            Mono("Vercel    ${vm.vercelUser.ifBlank { "not connected" }}", color = if (vm.vercelUser.isBlank()) Muted else Green)
+            Mono("Supabase  ${if (vm.supabaseOn) "connected" else "not connected"}", color = if (vm.supabaseOn) Green else Muted)
+            Mono("Render    ${vm.renderUser.ifBlank { "not connected" }}", color = if (vm.renderUser.isBlank()) Muted else Green)
+            Spacer(Modifier.height(8.dp))
+            BigButton("Open accounts", Icons.Default.Login) { nav.navigate("accounts") { launchSingleTop = true } }
+        }
         // ---- v27 feature 3: notifications ----
         Panel {
             Text("Notifications", fontWeight = FontWeight.Bold)
-            Text("One when a build finishes (passed or failed, with the app name) and one when an update APK has finished downloading.", fontSize = 12.sp, color = Muted)
+            Text("One when a build finishes (passed or failed, with the app name), one when an update APK has finished downloading, and one when a server stops answering or is back.", fontSize = 12.sp, color = Muted)
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 HubSwitch(vm.notifyOn, { on ->
@@ -984,6 +1080,12 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
                 })
                 Text("  Notify me", fontSize = 13.sp)
             }
+            // v42
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                HubSwitch(vm.serverAlerts, { vm.updateServerAlerts(it) })
+                Text("  Server down / up alerts", fontSize = 13.sp)
+            }
+            Text("Checks every server address about every 15 minutes, even when App Hub is closed (Android picks the exact time). Needs Notify me on.", fontSize = 11.sp, color = Muted)
         }
         // ---- v27 feature 6: live sync ----
         Panel {
@@ -1052,6 +1154,10 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     // v40: the three switches keep the position you left them in (saved on tap); Vercel stays off until you turn it on
     var create by remember { mutableStateOf(vm.prefs.setupCreate) }; var keys by remember { mutableStateOf(vm.prefs.setupKeys) }
     var vercelOn by remember { mutableStateOf(vm.prefs.setupVercel) }
+    // v44: a switch only counts while its account is connected (the saved position is kept for when you log in)
+    val vercelUsable = vercelOn && vm.vercelUser.isNotBlank()
+    val githubUsable = vm.login.isNotBlank() && !vm.sessionExpired
+    val createUsable = create && githubUsable
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
         TypePicker(type) { type = it }
@@ -1059,20 +1165,27 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         OutlinedTextField(repo, { repo = it }, label = { Text("Repo name (or owner/name)") }, placeholder = { Text("e.g. myapp") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         if (type == ProjectType.APP) OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name (optional)") }, placeholder = { Text("found automatically if left empty") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         else OutlinedTextField(url, { url = it }, label = { Text(if (type == ProjectType.WEBSITE) "Live URL (optional)" else "Endpoint URL (optional)") },
-            placeholder = { Text(if (vercelOn) "set from Vercel automatically" else if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            placeholder = { Text(if (vercelUsable) "set from Vercel automatically" else if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text("v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        // v39: Deploy on Vercel sits above Create GitHub repo (websites and servers)
+        // v39: Deploy on Vercel sits above Create GitHub repo (websites and servers). v44: both are tappable rows that show who is connected.
+        val toAccounts = { nav.navigate("accounts") { launchSingleTop = true }; Unit }
         if (type != ProjectType.APP) {
-            Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vercelOn, { vercelOn = it; vm.prefs.setupVercel = it }); Text("  Deploy on Vercel") }
-            if (vercelOn && vm.vercelUser.isBlank()) Text("Log in to Vercel in Settings first, or the project is added without Vercel.", fontSize = 12.sp, color = Amber)
+            val ok = vm.vercelUser.isNotBlank()
+            ConnRow(Icons.Default.Cloud, "Deploy on Vercel", if (ok) "Connected as ${vm.vercelUser}" else "Not connected. Tap to log in", if (ok) Green else Amber, vercelUsable) {
+                if (ok) { vercelOn = !vercelOn; vm.prefs.setupVercel = vercelOn } else toAccounts()
+            }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(create, { create = it; vm.prefs.setupCreate = it }); Text("  Create GitHub repo (private)") }
+        ConnRow(Icons.Default.Code, "Create GitHub repo (private)",
+            if (githubUsable) "Logged in as ${vm.login}" else if (vm.login.isNotBlank()) "Session expired. Tap to log in again" else "Not logged in. Tap to log in",
+            if (githubUsable) Green else Amber, createUsable) {
+            if (githubUsable) { create = !create; vm.prefs.setupCreate = create } else toAccounts()
+        }
         if (type == ProjectType.APP) Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it; vm.prefs.setupKeys = it }); Text("  Generate signing keys + set secrets") }
-        else Text(if (vercelOn) "Vercel builds every push by itself, no workflow needed. The status follows the Vercel deployment."
+        else Text(if (vercelUsable) "Vercel builds every push by itself, no workflow needed. The status follows the Vercel deployment."
             else if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
             else "Your zip needs its own .github/workflows deploy. The status shows Running once the endpoint answers.", fontSize = 12.sp, color = Muted)
         BigButton("Create project", Icons.Default.PlayArrow) {
-            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, create, keys && type == ProjectType.APP, type, url, vercelOn && type != ProjectType.APP) else vm.toast("Name and repo required")
+            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, createUsable, keys && type == ProjectType.APP, type, url, vercelUsable && type != ProjectType.APP) else vm.toast("Name and repo required")
         }
         if (vm.log.isNotEmpty()) {
             Panel { vm.log.forEach { Mono(it) } }
@@ -1138,6 +1251,70 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
 }
 
 /** v28: the zip is the same as or older than the version already on GitHub. */
+/** v42: asked before a push when the zip holds something that looks like a secret. Back or tapping outside cancels. */
+@Composable fun SecretDialog(a: SecretAsk, onAnyway: () -> Unit, onLeave: () -> Unit, onCancel: () -> Unit) {
+    val whole = a.pack.findings.any { it.wholeFile }
+    AlertDialog(onDismissRequest = onCancel,
+        title = { Text("Possible secrets in this zip") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Once pushed, a secret stays in the repo history, even if the repo is private.", fontSize = 12.sp, color = Muted)
+                a.pack.findings.take(6).forEach { Mono("${it.path}\n  ${it.why}", color = Amber) }
+                if (a.pack.findings.size > 6) Text("+ ${a.pack.findings.size - 6} more", fontSize = 12.sp, color = Muted)
+                if (whole) Text("Leave out & push skips the whole-file secrets. Secrets inside code files stay, remove them in the code.", fontSize = 11.sp, color = Muted)
+            }
+        },
+        confirmButton = { TextButton(if (whole) onLeave else onAnyway) { Text(if (whole) "Leave out & push" else "Push anyway") } },
+        dismissButton = { Row { TextButton(onCancel) { Text("Cancel") }; if (whole) TextButton(onAnyway) { Text("Push anyway") } } })
+}
+
+/** v42: environment variables of a Vercel project. Names are listed, values are write-only and never stored in App Hub. */
+@Composable fun EnvScreen(vm: HubVM, nav: NavHostController, id: Long) {
+    val ps by vm.projects.collectAsState()
+    val p = ps.firstOrNull { it.id == id }
+    var key by remember { mutableStateOf("") }
+    var value by remember { mutableStateOf("") }
+    var del by remember { mutableStateOf<Vercel.Env?>(null) }
+    LaunchedEffect(id) { vm.envVars.clear(); vm.envMsg = ""; ps.firstOrNull { it.id == id }?.let { vm.loadEnv(it) } }
+    if (p == null) return
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Header("Environment variables")
+        Text("${p.name} on Vercel. Values are encrypted by Vercel and never shown or kept in App Hub. A change applies from the next deployment.", fontSize = 12.sp, color = Muted)
+        Panel {
+            Text("Add or replace", fontWeight = FontWeight.Bold)
+            OutlinedTextField(key, { key = it }, label = { Text("Name (for example DATABASE_URL)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value, { value = it }, label = { Text("Value") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+            Text("An existing name gets the new value.", fontSize = 11.sp, color = Muted)
+            if (vm.envMsg.isNotBlank()) Text(vm.envMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
+            Spacer(Modifier.height(8.dp))
+            BigButton(if (vm.envBusy) "Working…" else "Save variable", Icons.Default.Save) {
+                if (!vm.envBusy) vm.saveEnv(p, key, value) { key = ""; value = "" }
+            }
+        }
+        Panel {
+            Text("On Vercel (${vm.envVars.size})", fontWeight = FontWeight.Bold)
+            if (vm.envVars.isEmpty()) Text("No variables yet.", fontSize = 12.sp, color = Muted)
+            vm.envVars.forEach { e ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Mono(e.key, color = Cyan)
+                        Mono(e.targets.joinToString(" • ").ifBlank { "-" }, color = Muted)
+                    }
+                    IconButton({ del = e }) { Icon(Icons.Default.Delete, "Delete ${e.key}", tint = Red) }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+    }
+    del?.let { e ->
+        AlertDialog(onDismissRequest = { del = null },
+            title = { Text("Delete ${e.key}?") },
+            text = { Text("It is removed from Vercel for production, preview and development. Running deployments keep what they have until the next deployment.") },
+            confirmButton = { TextButton({ del = null; vm.deleteEnv(p, e) }) { Text("Delete", color = Red) } },
+            dismissButton = { TextButton({ del = null }) { Text("Cancel") } })
+    }
+}
+
 @Composable fun OldVersionDialog(zip: String, zipVer: String, pushedVer: String, p: Project, onPush: () -> Unit, onCancel: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
     val same = zipVer.filter { it.isDigit() } == pushedVer.filter { it.isDigit() }

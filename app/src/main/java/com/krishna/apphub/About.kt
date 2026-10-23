@@ -18,6 +18,16 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v44" to listOf("Setup: Deploy on Vercel and Create GitHub repo are now tappable rows that show who is connected. A switch only counts while its account is logged in; tapping a row that is not connected opens Accounts."),
+        "v43" to listOf(
+            "Accounts: all logins now live on their own page (GitHub, Vercel, Supabase, Render). Settings shows who is connected and opens it.",
+            "Supabase and Render connections: paste a token or API key, see your projects and services, tap one to open it. Read only."
+        ),
+        "v42" to listOf(
+            "Secret check: before a push, keys, tokens and .env files in the zip are listed. Leave out the files that are secrets, push anyway, or cancel.",
+            "Server alerts: a notification when a server stops answering or is back, checked about every 15 minutes even with the app closed. Switch in Settings.",
+            "Vercel environment variables: add, replace or delete them in the app's Settings tab. Names only, values stay hidden."
+        ),
         "v41" to listOf("Prompt Maker: the New app / New website / New server buttons are gone. Tasks follow the project type: a server gets Fix error, Add feature, Improve API, Refactor, Release notes, Other (no UI or UX)."),
         "v40" to listOf("Setup and Prompt Maker switches (create repo, signing keys, Deploy on Vercel, Host on Vercel, zip rules) keep their position and stay off until you tap them, even after the app is cleared from cache or force stopped."),
         "v39" to listOf(

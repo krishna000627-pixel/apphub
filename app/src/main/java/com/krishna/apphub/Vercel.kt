@@ -21,6 +21,8 @@ class Vercel(private val prefs: Prefs) {
     data class Dep(val id: String, val state: String, val created: Long, val msg: String)
     /** [ok] = false when Vercel could not be asked (offline, bad token); [dep] = null when the project has no deployment yet. */
     data class Latest(val ok: Boolean, val dep: Dep? = null)
+    /** v42: an environment variable. Only the name is ever read; the value is write-only. */
+    data class Env(val id: String, val key: String, val type: String, val targets: List<String>)
 
     private val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
 
@@ -104,6 +106,38 @@ class Vercel(private val prefs: Prefs) {
                     it.optJSONObject("meta")?.optString("githubCommitMessage").orEmpty())
             })
         }.getOrDefault(Latest(false))
+    }
+
+    /** Names of the project's environment variables (never the values). */
+    suspend fun envList(projectId: String): Pair<List<Env>?, String> {
+        val (c, b) = call("GET", "/v10/projects/$projectId/env")
+        if (c != 200) return null to errorOf(c, b)
+        val list = runCatching {
+            val a = JSONObject(b).optJSONArray("envs") ?: JSONArray()
+            (0 until a.length()).map { a.getJSONObject(it) }.map { o ->
+                val t = o.opt("target")
+                val targets = when (t) {
+                    is JSONArray -> (0 until t.length()).map { t.optString(it) }
+                    is String -> listOf(t)
+                    else -> emptyList()
+                }
+                Env(o.optString("id"), o.optString("key"), o.optString("type"), targets)
+            }.filter { it.id.isNotBlank() && it.key.isNotBlank() }.sortedBy { it.key.lowercase() }
+        }.getOrNull() ?: return null to "Vercel answered in an unexpected way"
+        return list to ""
+    }
+
+    /** Adds the variable, or replaces its value when the name exists. Encrypted by Vercel, for production, preview and development. Returns "" or the reason. */
+    suspend fun envSet(projectId: String, key: String, value: String): String {
+        val body = JSONObject().put("key", key).put("value", value).put("type", "encrypted")
+            .put("target", JSONArray(listOf("production", "preview", "development")))
+        val (c, b) = call("POST", "/v10/projects/$projectId/env", body, mapOf("upsert" to "true"))
+        return if (c in 200..299) "" else errorOf(c, b)
+    }
+
+    suspend fun envDelete(projectId: String, envId: String): String {
+        val (c, b) = call("DELETE", "/v9/projects/$projectId/env/$envId")
+        return if (c in 200..299) "" else errorOf(c, b)
     }
 
     /** Last error lines of a failed deployment (build log), or Vercel's own error message. */
