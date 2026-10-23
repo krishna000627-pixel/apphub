@@ -12,6 +12,23 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v30
+- OldVersionDialog is the v28 version again (same centered dialog style as ZipMismatchDialog); the v29 bottom sheet is removed. Everything else unchanged.
+No new dependencies.
+
+## v29
+- OldVersionDialog (Screens.kt) redesigned as a ModalBottomSheet: big "your zip" vs "on GitHub" version numbers with an arrow and how many versions back, side-by-side Cancel / Push vN buttons. Same call sites and logic as v28. ChangeLog gets a v29 line.
+No new dependencies.
+
+## v28
+Each item lists the files it touched.
+1. Older/same version dialog (Screens.kt DeployScreen + OldVersionDialog, HubVM.pushedVersion/isOlder): Push + build asks before pushing a zip whose version is <= the last pushed vNNN (same style as the wrong-app dialog; runs after it, against the final target app). Quick "Push now" paths only offer newer zips, so they are unchanged.
+2. Delete file on GitHub (GitHub.files/deleteFiles, HubVM.repoFiles/loadFiles/deleteFile, Screens.kt Detail "Files" tab): lists the default branch tree, search, bin per file, confirm dialog (extra warning for .github/workflows/). One commit through the git trees API (sha null), message "<next vNNN>: delete <path>", so the label follows and "Undo last push" can restore it.
+3. Downloading state (Screens.kt dlPct/dlText, ProjectCard, Detail): while HubVM.dlProgress has the app, the Dashboard Update/Install button, a "Downloading N%" pill and the Detail Install button show a progress ring and the percentage.
+4. About page (About.kt, Screens.kt Settings + NavHost route "about"): pages App / What's new (ChangeLog.list, update it every version) / Crash log / Help. Settings keeps one "About App Hub" row.
+5. Install label (Screens.kt installLabel, BtnText): "Install" when the app is not on the phone, "Update" / "Update ready" when it is. BtnText now ends with an ellipsis instead of being cut.
+No new dependencies.
+
 ## v27
 Each feature lives in its own part so it is easy to see which files it touched.
 1. Faster login (HubVM.kt, Screens.kt Settings/Dashboard): "Finishing login…" is set the moment the apphub://oauth link arrives or the app resumes with a pending device code (HubVM.loginBusy), before any network call. The device code is checked at once on resume; if it is not approved yet the text goes back to "Approve on GitHub…" after 2.5 s. startLogin already uses the web flow whenever a client secret is saved.

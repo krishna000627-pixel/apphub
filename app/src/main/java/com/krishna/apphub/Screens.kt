@@ -56,8 +56,18 @@ import java.io.File
     Column(mod.fillMaxWidth().background(Surf, RoundedCornerShape(12.dp)).border(1.dp, border, RoundedCornerShape(12.dp)).padding(12.dp), content = content)
 
 /** Single-line button label (never wraps letter by letter when buttons share a row). */
-@Composable fun BtnText(t: String, size: Int = 13) = Text(t, fontSize = size.sp, maxLines = 1, softWrap = false)
+@Composable fun BtnText(t: String, size: Int = 13) = Text(t, fontSize = size.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
 private val BtnPad = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+
+/** v28: 0..100 while this app's APK is downloading, else null. The progress lives in the ViewModel, so every screen shows it. */
+fun dlPct(vm: HubVM, p: Project): Int? = vm.dlProgress[p.id]?.let { (it * 100).toInt().coerceIn(0, 100) }
+fun dlText(pct: Int) = if (pct <= 0) "Downloading…" else "Downloading $pct%"
+/** v28: "Install" while the app is not on the phone, otherwise "Update". */
+fun installLabel(vm: HubVM, p: Project, upd: Boolean): String = when {
+    vm.isInstalled(p) == false -> "Install"
+    vm.isInstalled(p) == true -> if (upd) "Update ready" else "Update"
+    else -> if (upd) "Update ready" else "Install / Update"
+}
 
 @Composable fun BigButton(t: String, icon: ImageVector, onClick: () -> Unit) =
     Button(onClick, Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
@@ -172,7 +182,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             composable("prompt") { PromptScreen(vm, nav) }
             composable("log") { LogScreen(vm, nav) }
             composable("deploy") { DeployScreen(vm, nav) }
-            composable("settings") { SettingsScreen(vm) }
+            composable("settings") { SettingsScreen(vm, nav) }
+            composable("about") { AboutScreen(vm, nav) }
             composable("add") { AddScreen(vm, nav) }
             composable("detail/{id}", listOf(navArgument("id") { type = NavType.LongType })) { Detail(vm, nav, it.arguments!!.getLong("id")) }
             composable("install/{id}", listOf(navArgument("id") { type = NavType.LongType })) { InstallScreen(vm, nav, it.arguments!!.getLong("id")) }
@@ -268,6 +279,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val pinned = vm.isPinned(p.id)
     val upd = vm.hasUpdate(p)
     val pend = vm.pending(p)
+    val dl = dlPct(vm, p)
     Panel(Modifier.clickable { nav.navigate("detail/${p.id}") }, border = if (p.lastStatus == "failed") Red.copy(alpha = 0.6f) else Line) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(40.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Apps, null, tint = Cyan) }
@@ -286,7 +298,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             if (p.lastStatus != "none") Pill(if (p.lastStatus == "passed") "✓ Build passed" else if (p.lastStatus == "failed") "✕ Build failed" else "… Running", statusColor(p.lastStatus))
             else Pill("No builds yet", Muted)
             if (pend) Pill("+ Push ${vm.waitLabel(p)}", Amber)
-            if (upd) Pill("Update ready", Amber)
+            if (dl != null) Pill("↓ ${dlText(dl)}", Cyan)
+            else if (upd) Pill(if (vm.isInstalled(p) == false) "Ready to install" else "Update ready", Amber)
             when (vm.isInstalled(p)) {
                 true -> Pill("● On phone ${vm.onPhone[p.id] ?: ""}".trim(), Green)
                 false -> Pill("○ Not installed", Muted)
@@ -296,8 +309,10 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton({ vm.build(p) }, Modifier.weight(1f), contentPadding = BtnPad) { Icon(Icons.Default.Build, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Build") }
-            if (upd) Button({ nav.navigate("install/${p.id}") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) {
-                Icon(Icons.Default.Download, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Update")
+            if (upd || dl != null) Button({ nav.navigate("install/${p.id}") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) {
+                if (dl != null) CircularProgressIndicator({ dl / 100f }, Modifier.size(14.dp), color = Color.Black, strokeWidth = 2.dp)
+                else Icon(Icons.Default.Download, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp)); BtnText(if (dl != null) dlText(dl) else if (vm.isInstalled(p) == false) "Install" else "Update")
             }
             Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
                 Icon(Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Deploy")
@@ -316,6 +331,26 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val err = vm.errors[id] ?: ""
     val upd = vm.hasUpdate(p)
     val pend = vm.pending(p)
+    val dl = dlPct(vm, p)
+    var fq by remember(id) { mutableStateOf("") }                    // v28: file search
+    var delPath by remember(id) { mutableStateOf<String?>(null) }    // v28: file waiting for the delete confirmation
+    LaunchedEffect(tab, id) { if (tab == 3) vm.loadFiles(p) }
+    delPath?.let { path ->
+        val risky = path.startsWith(".github/workflows/")
+        AlertDialog(onDismissRequest = { delPath = null },
+            icon = { Icon(Icons.Default.Delete, null, tint = Red) },
+            title = { Text("Delete this file?") },
+            text = {
+                Column {
+                    Mono(path, Modifier.fillMaxWidth().background(Bg, RoundedCornerShape(8.dp)).padding(10.dp), Cyan)
+                    Spacer(Modifier.height(8.dp))
+                    Text("It is removed from ${p.repo} in one new commit and a new build starts. \"Undo last push\" in the app's Settings brings it back.", fontSize = 13.sp)
+                    if (risky) Text("This is a build workflow. Without it GitHub cannot build the app.", Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Amber)
+                }
+            },
+            confirmButton = { TextButton({ delPath = null; vm.deleteFile(p, path) }) { Text("Delete", color = Red) } },
+            dismissButton = { TextButton({ delPath = null }) { Text("Cancel") } })
+    }
     LaunchedEffect(id, p.repo) { vm.refresh(p); vm.checkInstalls(); vm.loadDetails(p).join(); while (true) { delay(vm.syncDelayMs); if (vm.live) vm.loadDetails(p).join() } }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
@@ -338,14 +373,15 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = if (pend) Amber else Green, contentColor = Color.Black)) {
                     Icon(if (pend) Icons.Default.AddCircle else Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText(if (pend) "Push ${vm.waitLabel(p)}" else "Deploy zip")
                 }
-                OutlinedButton({ nav.navigate("install/$id") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.outlinedButtonColors(contentColor = if (upd) Amber else Cyan)) {
-                    BtnText(if (upd) "Update ready" else "Install / Update")
+                OutlinedButton({ nav.navigate("install/$id") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.outlinedButtonColors(contentColor = if (upd || dl != null) Amber else Cyan)) {
+                    if (dl != null) { CircularProgressIndicator({ dl / 100f }, Modifier.size(14.dp), color = Amber, strokeWidth = 2.dp); Spacer(Modifier.width(6.dp)) }
+                    BtnText(if (dl != null) dlText(dl) else installLabel(vm, p, upd))
                 }
             }
         }
         item {
             TabRow(tab, containerColor = Bg, contentColor = Green) {
-                listOf("Overview", "Builds", "Releases", "Settings").forEachIndexed { i, t -> Tab(tab == i, { tab = i }, text = { Text(t, fontSize = 11.sp, maxLines = 1) }) }
+                listOf("Overview", "Builds", "Releases", "Files", "Settings").forEachIndexed { i, t -> Tab(tab == i, { tab = i }, text = { Text(t, fontSize = 11.sp, maxLines = 1) }) }
             }
         }
         when (tab) {
@@ -433,6 +469,27 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                     }
                 }
                 if (rl.isEmpty()) item { EmptyState(Icons.Default.Download, "No releases yet", "A release with the APK appears here once a build passes.") }
+            }
+            3 -> {
+                // v28: files in the repo, delete one at a time
+                val all = vm.repoFiles[id]
+                val hits = all?.filter { fq.isBlank() || it.contains(fq, true) } ?: emptyList()
+                item {
+                    OutlinedTextField(fq, { fq = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Search files") },
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        trailingIcon = { if (fq.isNotEmpty()) IconButton({ fq = "" }) { Icon(Icons.Default.Close, null) } })
+                    if (vm.filesLoading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp), color = Green)
+                    if (all != null) Mono("${hits.size} of ${all.size} files${if (hits.size > 200) " (first 200 shown)" else ""}", Modifier.padding(top = 6.dp), Muted)
+                }
+                items(hits.take(200), key = { it }) { path ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Mono(path, Modifier.weight(1f))
+                        if (vm.deletingFile == path) CircularProgressIndicator(Modifier.size(18.dp).padding(end = 2.dp), color = Red, strokeWidth = 2.dp)
+                        else IconButton({ delPath = path }, Modifier.size(36.dp), enabled = vm.deletingFile.isEmpty()) { Icon(Icons.Default.Delete, null, tint = Red.copy(alpha = 0.85f)) }
+                    }
+                }
+                if (all == null && !vm.filesLoading) item { EmptyState(Icons.Default.Folder, "No file list", "Log in with GitHub to see the files in this repo.") }
+                if (all != null && hits.isEmpty()) item { EmptyState(Icons.Default.Search, "No file matches", "Try a shorter name.") }
             }
             else -> item { AppSettings(vm, nav, p) }
         }
@@ -544,6 +601,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.pickZip(ctx, uri) }
     val pack = vm.zipPack
     var target by remember { mutableStateOf<Project?>(null) }   // set when the zip name does not match the selected project
+    var older by remember { mutableStateOf<Project?>(null) }    // v28: set when the zip is not newer than what is on GitHub
+    fun start(tp: Project, pk: Zipper.Pack, n: String) { if (vm.isOlder(tp, pk)) older = tp else vm.deploy(ctx, tp, pk, n) }
     // a chosen zip selects the project it is named after
     LaunchedEffect(pack?.name) { pack?.let { pk -> vm.projectFor(pk.name)?.let { if (it.id != vm.selId) vm.selId = it.id } } }
     val last = p?.let { vm.runs[it.id]?.firstOrNull() }
@@ -586,15 +645,19 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             Icon(Icons.Default.Compare, null, Modifier.size(16.dp)); Text(" Preview changes (nothing is pushed)", fontSize = 13.sp)
         }
         BigButton(if (vm.deploying) "Working…" else "Push + build", Icons.Default.CloudUpload) {
-            if (pack != null && p != null) { if (vm.nameMatches(p, pack.name)) vm.deploy(ctx, p, pack, note) else target = p }
+            if (pack != null && p != null) { if (vm.nameMatches(p, pack.name)) start(p, pack, note) else target = p }
             else vm.toast("Pick a project and a zip first")
         }
         target?.let { tp ->
             val named = pack?.let { vm.projectFor(it.name) }
             ZipMismatchDialog(pack?.name ?: "", named, tp,
-                onNamed = { target = null; named?.let { n -> vm.selId = n.id; if (pack != null) vm.deploy(ctx, n, pack, note) } },
-                onSelected = { target = null; if (pack != null) vm.deploy(ctx, tp, pack, note) },
+                onNamed = { target = null; named?.let { n -> vm.selId = n.id; if (pack != null) start(n, pack, note) } },
+                onSelected = { target = null; if (pack != null) start(tp, pack, note) },
                 onCancel = { target = null })
+        }
+        older?.let { op ->
+            if (pack != null) OldVersionDialog(pack.name, pack.version, vm.pushedVersion(op), op,
+                onPush = { older = null; vm.deploy(ctx, op, pack, note) }, onCancel = { older = null })
         }
         if (vm.deployLog.isNotEmpty()) Panel {
             vm.deployLog.forEach { l ->
@@ -827,11 +890,10 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
 }
 
 // ---------- settings ----------
-@Composable fun SettingsScreen(vm: HubVM) {
+@Composable fun SettingsScreen(vm: HubVM, nav: NavHostController) {
     val ctx = LocalContext.current
     val info = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0) }.getOrNull() }
     val appVer = info?.versionName ?: "?"
-    val appCode = info?.let { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(it) } ?: 0L
     // v27 feature 6: space used by saved APKs, refreshed in the background
     var storage by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) { while (true) { storage = withContext(Dispatchers.IO) { vm.apkBytes() }; delay(3_000) } }
@@ -842,8 +904,6 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
     val importFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.readBackup(ctx, uri) }
     // v27 feature 3: notification permission, asked when the switch is turned on
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    // v27 feature 8: crash log
-    var crash by remember { mutableStateOf(CrashLog.read(ctx)) }
 
     if (confirmClear) AlertDialog(onDismissRequest = { confirmClear = false },
         title = { Text("Clear saved APKs?") },
@@ -950,28 +1010,11 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
             Spacer(Modifier.height(8.dp))
             OutlinedButton({ vm.restorePresets() }) { Icon(Icons.Default.Restore, null, Modifier.size(16.dp)); Text(" Restore presets", fontSize = 12.sp) }
         }
-        // ---- v27 feature 8: about + crash log ----
+        // v28: About, What's new, Crash log and Help moved to their own page so Settings stays short
         Panel {
-            Text("About", fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(4.dp))
-            Mono("App Hub $appVer (build $appCode)")
-            Mono("GitHub user: ${vm.login.ifBlank { "not logged in" }}")
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton({ openUrl(ctx, "https://github.com/krishna000627-pixel/apphub") }, contentPadding = BtnPad) { BtnText("App Hub on GitHub") }
-                if (vm.login.isNotBlank()) TextButton({ openUrl(ctx, "https://github.com/${vm.login}") }, contentPadding = BtnPad) { BtnText("Your GitHub profile") }
+            SettingRow(Icons.Default.Info, "About App Hub", "Version $appVer • What's new • Crash log • Help", onClick = { nav.navigate("about") }) {
+                Icon(Icons.Default.ChevronRight, null, tint = Muted)
             }
-            Spacer(Modifier.height(4.dp))
-            Text("Crash log", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Mono(if (crash.isBlank()) "No crash saved." else crash.lineSequence().first(), color = Muted)
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton({ vm.copy(crash) }, enabled = crash.isNotBlank(), contentPadding = BtnPad) { Icon(Icons.Default.BugReport, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Copy crash log") }
-                TextButton({ CrashLog.clear(ctx); crash = "" }, enabled = crash.isNotBlank(), contentPadding = BtnPad) { BtnText("Clear") }
-            }
-        }
-        Panel {
-            Text("How it works", fontWeight = FontWeight.Bold)
-            Text("Deploy pushes your zip to GitHub as one commit. GitHub builds and signs the APK. Install downloads it. The version label follows every build automatically, however it was started.", fontSize = 12.sp, color = Muted)
         }
         Text("App Hub $appVer", Modifier.fillMaxWidth().padding(vertical = 8.dp), color = Muted, fontSize = 12.sp)
     }
@@ -1056,6 +1099,44 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
                 }
             }
             TextButton(onCancel, Modifier.fillMaxWidth()) { Text("Cancel", color = Muted) }
+        }
+    }
+}
+
+/** v28: the zip is the same as or older than the version already on GitHub. */
+@Composable fun OldVersionDialog(zip: String, zipVer: String, pushedVer: String, p: Project, onPush: () -> Unit, onCancel: () -> Unit) {
+    val shape = RoundedCornerShape(20.dp)
+    val same = zipVer.filter { it.isDigit() } == pushedVer.filter { it.isDigit() }
+    Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).background(Surf, shape).border(1.dp, Amber.copy(alpha = 0.6f), shape).padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).background(Amber.copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.History, null, tint = Amber, modifier = Modifier.size(20.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(if (same) "Already pushed?" else "Older version?", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text(if (same) "GitHub already has this version." else "This zip is older than what is on GitHub.", fontSize = 12.sp, color = Muted)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Mono(zip, Modifier.fillMaxWidth().background(Bg, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 8.dp), Cyan)
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                MismatchCard("Zip version", zipVer.ifBlank { "-" }, p.name, Amber, Modifier.weight(1f))
+                Icon(Icons.Default.SwapHoriz, null, tint = Muted, modifier = Modifier.padding(horizontal = 6.dp).size(18.dp))
+                MismatchCard("On GitHub now", pushedVer.ifBlank { "-" }, p.repo, Green, Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(16.dp))
+            Button(onCancel, Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+                Text("Cancel, keep ${pushedVer.ifBlank { "current" }}", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onPush, Modifier.fillMaxWidth().height(46.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.7f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Amber)) {
+                Icon(Icons.Default.CloudUpload, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                Text("Push ${zipVer.ifBlank { "it" }} anyway", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

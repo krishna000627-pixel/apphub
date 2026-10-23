@@ -317,6 +317,47 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         return zv.isBlank() || n(zv) > n(pv)
     }
 
+    /** v28: the version the repo is at now (last pushed "vNNN:" commit). */
+    fun pushedVersion(p: Project): String = (pushedV[p.id] ?: prefs.pushedVer(p.id)).ifBlank { p.version }
+
+    /** v28: true when the zip's version is the same as or older than what is already on GitHub (asks before pushing). */
+    fun isOlder(p: Project, pack: Zipper.Pack): Boolean {
+        val zv = n(pack.version)
+        return pack.version.isNotBlank() && zv > 0 && zv <= n(pushedVersion(p))
+    }
+
+    // ---- v28: delete files on GitHub ----
+    val repoFiles = mutableStateMapOf<Long, List<String>>()
+    var filesLoading by mutableStateOf(false)
+    var deletingFile by mutableStateOf("")
+
+    fun loadFiles(p: Project) = viewModelScope.launch {
+        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Settings)"); return@launch }
+        filesLoading = true
+        val l = gh.files(p.repo)
+        if (l != null) repoFiles[p.id] = l else toast("Could not read the file list")
+        filesLoading = false
+    }
+
+    /** One commit that removes the file. The message starts with the next vNNN, like every push, so the version label follows. */
+    fun deleteFile(p: Project, path: String) = viewModelScope.launch {
+        if (deletingFile.isNotEmpty()) return@launch
+        deletingFile = path
+        try {
+            val ver = Commands.bump(pushedVersion(p))
+            val before = gh.runs(p.repo).firstOrNull()?.id ?: 0L
+            if (prefs.notifiedRun(p.id) == 0L && before != 0L) prefs.setNotifiedRun(p.id, before)
+            val (ok, m) = gh.deleteFiles(p.repo, listOf(path), "$ver: delete $path")
+            if (ok) {
+                projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
+                prefs.setPushedVer(p.id, ver); pushedV[p.id] = ver
+                repoFiles[p.id] = (repoFiles[p.id] ?: emptyList()).filter { it != path }
+                toast("Deleted $path. A new build starts.")
+                delay(3_000); refresh(p)
+            } else toast(m)
+        } finally { deletingFile = "" }
+    }
+
     /** What the + icon is waiting to push: the new zip's version, or the bumped label. */
     fun waitLabel(p: Project): String = zipFound[p.id]?.let { Zipper.versionOf(it.name).ifBlank { it.name } } ?: p.version
 

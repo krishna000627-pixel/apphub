@@ -297,6 +297,38 @@ class GitHub(private val prefs: Prefs) {
 
     suspend fun exists(repo: String, path: String) = get("/repos/$repo/contents/$path").first == 200
 
+    /** v28: every file path on the default branch (blobs only), sorted. null = could not be read. */
+    suspend fun files(repo: String): List<String>? {
+        val (c0, b0) = get("/repos/$repo"); if (c0 != 200) return null
+        val branch = JSONObject(b0).s("default_branch").ifBlank { "main" }
+        val (c, b) = get("/repos/$repo/git/trees/$branch?recursive=1"); if (c != 200) return null
+        val arr = JSONObject(b).optJSONArray("tree") ?: return emptyList()
+        return (0 until arr.length()).map { arr.getJSONObject(it) }.filter { it.optString("type") == "blob" }.map { it.getString("path") }.sorted()
+    }
+
+    /**
+     * v28: deletes files in ONE new commit (git trees API: a null sha removes the path), so history is kept and the
+     * last push can still be undone. Returns (ok, message).
+     */
+    suspend fun deleteFiles(repo: String, paths: List<String>, message: String): Pair<Boolean, String> {
+        if (paths.isEmpty()) return false to "Nothing to delete"
+        val (c0, b0) = get("/repos/$repo"); if (c0 != 200) return false to "Cannot open $repo ($c0)"
+        val branch = JSONObject(b0).s("default_branch").ifBlank { "main" }
+        val ref = get("/repos/$repo/git/ref/heads/$branch"); if (ref.first != 200) return false to "Branch not found"
+        val head = JSONObject(ref.second).getJSONObject("object").getString("sha")
+        val (c1, b1) = get("/repos/$repo/git/commits/$head"); if (c1 != 200) return false to "Cannot read the last commit ($c1)"
+        val baseTree = JSONObject(b1).getJSONObject("tree").getString("sha")
+        val entries = JSONArray()
+        paths.forEach { entries.put(JSONObject().put("path", it).put("mode", "100644").put("type", "blob").put("sha", JSONObject.NULL)) }
+        val (c2, b2) = send("POST", "/repos/$repo/git/trees", JSONObject().put("base_tree", baseTree).put("tree", entries))
+        if (c2 != 201) return false to "GitHub refused the delete ($c2)"
+        val (c3, b3) = send("POST", "/repos/$repo/git/commits",
+            JSONObject().put("message", message).put("tree", JSONObject(b2).getString("sha")).put("parents", JSONArray().put(head)))
+        if (c3 != 201) return false to "Delete commit failed ($c3)"
+        val c4 = send("PATCH", "/repos/$repo/git/refs/heads/$branch", JSONObject().put("sha", JSONObject(b3).getString("sha"))).first
+        return if (c4 == 200) true to message else false to "Branch update failed ($c4)"
+    }
+
     data class PushResult(val ok: Boolean, val committed: Boolean = false, val added: Int = 0, val changed: Int = 0, val same: Int = 0, val sha: String = "", val branch: String = "")
 
     /** The file as text if it is valid UTF-8 (so it can travel inline), else null. */
