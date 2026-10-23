@@ -12,6 +12,11 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v34
+- Files is no longer a top tab on the app page (tabs: Info / Builds / Releases / Settings). The Files box on Info opens a Files page (Files.kt FilesScreen, route files/{id}) with the same browser (breadcrumbs, search, delete); Back goes up a folder first. Tapping a file still opens file/{id}?path=...
+- Info (Screens.kt Detail tab 0) is a short box: status, installed, version, with a chevron. Tapping it opens InfoScreen (Info.kt, route info/{id}): name, package, version, stack, repo, status, installed, latest, saved apk, plus repo info (description, language, branch, size, issues/stars, access, pushed). installedLine() in Info.kt is shared by both.
+No new dependencies.
+
 ## v33
 - Pill (Screens.kt): max width 180dp, one line, ellipsis (last characters become "...") so text can never escape the border. HubTabs labels and breadcrumb crumbs also ellipsize.
 

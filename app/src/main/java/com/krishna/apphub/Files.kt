@@ -14,6 +14,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.BackHandler
+import android.net.Uri
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -254,5 +256,25 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
             }
         }
         Spacer(Modifier.height(10.dp))
+    }
+}
+
+// ---------- v34: the Files page (opened from the Files box on Info) ----------
+/** Folder browser on its own page. Back goes up one folder (or clears the search) before leaving the page. */
+@Composable fun FilesScreen(vm: HubVM, nav: NavHostController, id: Long) {
+    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
+    var fq by remember(id) { mutableStateOf("") }
+    var delPath by remember(id) { mutableStateOf<String?>(null) }
+    var dir by remember(id) { mutableStateOf("") }
+    LaunchedEffect(id) { vm.loadFiles(p) }
+    BackHandler(enabled = dir.isNotEmpty() || fq.isNotEmpty()) {
+        if (fq.isNotEmpty()) fq = "" else dir = dir.dropLast(1).substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }
+    }
+    delPath?.let { path -> DeleteFileDialog(p, path, { delPath = null }) { delPath = null; vm.deleteFile(p, path) } }
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+        item { Header("${p.name} files", nav) }
+        filesBrowser(vm, p, dir, { dir = it }, fq, { fq = it },
+            onOpen = { nav.navigate("file/$id?path=${Uri.encode(it)}") }, onDelete = { delPath = it })
+        item { Spacer(Modifier.height(16.dp)) }
     }
 }

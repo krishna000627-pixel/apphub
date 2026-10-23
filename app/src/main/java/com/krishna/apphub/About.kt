@@ -18,6 +18,10 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v34" to listOf(
+            "Files is no longer a top tab: open it from the Files box on Info.",
+            "Info shows only status, installed and version. Tap it for the full details."
+        ),
         "v33" to listOf("Pill text that does not fit ends with \"...\" instead of escaping the pill."),
         "v32" to listOf("Shorter words on buttons, pills, tabs and dialogs so nothing is cut."),
         "v31" to listOf(
@@ -52,7 +56,7 @@ private val helpItems = listOf(
     "Push a zip" to "Deploy tab: pick the zip (or tap the + on a card). App Hub uploads only new and changed files in one commit and GitHub builds it.",
     "Wrong zip" to "If the zip is named after another app, or is not newer than what is on GitHub, App Hub asks before pushing.",
     "Install or update" to "Open the app, tap Install (not on the phone) or Update. The button shows the download while it runs.",
-    "Delete a file" to "Open the app, Files tab, search, tap the bin. It is one commit and a new build starts. Undo last push in the app's Settings brings it back.",
+    "Delete a file" to "Open the app, tap the Files box on Info, search, tap the bin. It is one commit and a new build starts. Undo last push in the app's Settings brings it back.",
     "Stay logged in" to "Add the client secret in Settings so the token refreshes by itself. If the red banner shows, log in again.",
     "Something broke" to "Crash log page: copy it and paste it to the AI together with what you did."
 )

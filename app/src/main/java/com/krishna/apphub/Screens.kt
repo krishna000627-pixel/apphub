@@ -188,6 +188,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             composable("file/{id}?path={path}", listOf(navArgument("id") { type = NavType.LongType }, navArgument("path") { type = NavType.StringType; defaultValue = "" })) {
                 FileViewerScreen(vm, nav, it.arguments!!.getLong("id"), it.arguments?.getString("path").orEmpty())
             }
+            composable("files/{id}", listOf(navArgument("id") { type = NavType.LongType })) { FilesScreen(vm, nav, it.arguments!!.getLong("id")) }
+            composable("info/{id}", listOf(navArgument("id") { type = NavType.LongType })) { InfoScreen(vm, nav, it.arguments!!.getLong("id")) }
             composable("add") { AddScreen(vm, nav) }
             composable("detail/{id}", listOf(navArgument("id") { type = NavType.LongType })) { Detail(vm, nav, it.arguments!!.getLong("id")) }
             composable("install/{id}", listOf(navArgument("id") { type = NavType.LongType })) { InstallScreen(vm, nav, it.arguments!!.getLong("id")) }
@@ -336,15 +338,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val upd = vm.hasUpdate(p)
     val pend = vm.pending(p)
     val dl = dlPct(vm, p)
-    var fq by remember(id) { mutableStateOf("") }                    // v28: file search
-    var delPath by remember(id) { mutableStateOf<String?>(null) }    // v28: file waiting for the delete confirmation
-    var dir by remember(id) { mutableStateOf("") }                   // v31: folder open in the Files tab
-    LaunchedEffect(tab, id) { if (tab == 3) vm.loadFiles(p) else if (tab == 0 && vm.repoFiles[id] == null) vm.loadFiles(p, quiet = true) }
-    // back inside the Files tab goes up one folder (or clears the search) before leaving the app page
-    BackHandler(enabled = tab == 3 && (dir.isNotEmpty() || fq.isNotEmpty())) {
-        if (fq.isNotEmpty()) fq = "" else dir = dir.dropLast(1).substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }
-    }
-    delPath?.let { path -> DeleteFileDialog(p, path, { delPath = null }) { delPath = null; vm.deleteFile(p, path) } }
+    LaunchedEffect(id) { if (vm.repoFiles[id] == null) vm.loadFiles(p, quiet = true) }   // file count for the Files box
     LaunchedEffect(id, p.repo) { vm.refresh(p); vm.checkInstalls(); vm.loadDetails(p).join(); while (true) { delay(vm.syncDelayMs); if (vm.live) vm.loadDetails(p).join() } }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
@@ -374,38 +368,29 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
         }
         item {
-            HubTabs(listOf("Info", "Builds", "Releases", "Files", "Settings"), tab) { tab = it }
+            HubTabs(listOf("Info", "Builds", "Releases", "Settings"), tab) { tab = it }
         }
         when (tab) {
             0 -> {
                 item {
-                    Panel {
-                        val i = vm.infos[id]
-                        if (i == null) Text("Loading repo info…", color = Muted) else {
-                            if (i.desc.isNotBlank()) { Text(i.desc, fontSize = 13.sp); Spacer(Modifier.height(6.dp)) }
-                            Mono("language : ${i.lang.ifBlank { "-" }}"); Mono("branch   : ${i.branch}")
-                            Mono("size     : ${"%.1f".format(i.sizeKb / 1024.0)} MB"); Mono("issues   : ${i.issues}   stars: ${i.stars}")
-                            Mono("access   : ${if (i.priv) "private" else "public"}"); Mono("pushed   : ${ago(i.pushed)}")
+                    // v34: short overview; tap it for everything else (InfoScreen)
+                    val (instText, instColor) = installedLine(vm, p)
+                    Panel(Modifier.clickable { nav.navigate("info/$id") }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Mono("status   : ${p.lastStatus}", color = statusColor(p.lastStatus))
+                                Mono("installed: $instText", color = instColor)
+                                Mono("version  : ${p.version}")
+                            }
+                            Icon(Icons.Default.ChevronRight, null, tint = Muted)
                         }
-                        Spacer(Modifier.height(6.dp))
-                        Mono("status   : ${p.lastStatus}", color = statusColor(p.lastStatus))
-                        val inst = vm.installedTag(id); val phone = vm.isInstalled(p)
-                        Mono("installed: ${when {
-                            phone == false -> "no (not on this phone)"
-                            phone == true -> "yes, ${vm.onPhone[id] ?: "?"}" + if (inst.isNotBlank()) " ($inst)" else ""
-                            inst.isNotBlank() -> inst
-                            else -> "unknown"
-                        }}", color = if (phone == false) Amber else Color.Unspecified)
-                        Mono("latest   : ${vm.latest[id] ?: "-"}")
-                        if (vm.waitingInstall(p)) Mono("saved apk: ${vm.cachedTag(id)} (not installed yet)", color = Amber)
-                        else if (vm.hasCached(p)) Mono("saved apk: ${vm.cachedTag(id)}")
                     }
                 }
                 item {
                     // v31: the repo's files, one tap away; common files open straight on their own page
                     val all = vm.repoFiles[id]
                     val key = all?.let { l -> listOf("README.md", "HANDOFF.md", "app/src/main/AndroidManifest.xml", "app/build.gradle.kts", "build.gradle.kts", ".github/workflows/build.yml").filter { k -> l.any { it.path == k } } } ?: emptyList()
-                    Panel(Modifier.clickable { tab = 3 }) {
+                    Panel(Modifier.clickable { nav.navigate("files/$id") }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.size(40.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Folder, null, tint = Amber) }
                             Spacer(Modifier.width(10.dp))
@@ -487,8 +472,6 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 }
                 if (rl.isEmpty()) item { EmptyState(Icons.Default.Download, "No releases yet", "A release with the APK appears here once a build passes.") }
             }
-            3 -> filesBrowser(vm, p, dir, { dir = it }, fq, { fq = it },
-                onOpen = { nav.navigate("file/$id?path=${Uri.encode(it)}") }, onDelete = { delPath = it })
             else -> item { AppSettings(vm, nav, p) }
         }
         item { Spacer(Modifier.height(16.dp)) }
