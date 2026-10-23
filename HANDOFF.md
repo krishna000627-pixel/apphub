@@ -12,6 +12,12 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v45
+- Render page: `RenderScreen.kt` (route `render`, opened from Accounts > Render > Open Render). Summary + one card per service (kind icon, status pill from the newest deploy, Open / Site / Deploy). `HubVM.refreshRender` (on open, every 20 s while open), `renderDeploys` map, `renderDeploy(sv)` = POST /v1/services/{id}/deploys. Accounts Render panel is now just connect / Open Render / Disconnect.
+- Setup "Deploy on": one choice Vercel | Render | Supabase | none (`Prefs.setupTarget`, old `su_vercel` carries over as vercel). `HubVM.setup(..., vercelOn, target)`. Render: `RenderApi.create` (POST /v1/services; website = static_site, server = Node web service, free plan, repo default branch). Supabase: `SupabaseApi.create` makes a project and fills liveUrl with https://ref.supabase.co. Only for Website/Server.
+- Supabase test: Accounts > Supabase > "Test legacy API" (`HubVM.supabaseTest`): creates ONE project `apphub-test` (reuses it if present), waits for ACTIVE, GET /api-keys/legacy (enabled flag), GET /api-keys?reveal=true, then calls /rest/v1/ with the anon and service_role keys. Keys masked in the log, never stored. DB password is random and not kept. Create uses organization_slug + region_selection (americas), retries with organization_id + us-east-1 on 400/422.
+- Not compiled here: CI is the first build, paste errors back.
+
 ## v44
 - AddScreen: "Deploy on Vercel" and "Create GitHub repo" are `ConnRow`s (Panel with icon, title, connection status line, switch; the whole row is tappable). Connected: tap toggles and saves the position (Prefs.setupVercel / setupCreate). Not connected (or GitHub session expired): the switch shows off, the saved position is kept untouched, and a tap opens the Accounts page. `vercelUsable` / `createUsable` (switch AND account connected) are what the screen text and `vm.setup` use, so a switch can never act without its login. The old amber "log in first" line is gone (the row says it).
 - Only Vercel is listed as a deploy target: Render and Supabase are connected read-only (no deploy code), so they are not offered here yet.

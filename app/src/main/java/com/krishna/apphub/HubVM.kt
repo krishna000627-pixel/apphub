@@ -151,7 +151,57 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         loadRender()
     }
 
-    fun renderLogout() { prefs.renderKey = ""; prefs.renderUser = ""; renderUser = ""; renderServices.clear(); renderMsg = "" }
+    fun renderLogout() { prefs.renderKey = ""; prefs.renderUser = ""; renderUser = ""; renderServices.clear(); renderDeploys.clear(); renderMsg = "" }
+
+    // ---- v45: Render page (last deploy per service, manual deploy) and the Supabase legacy API test ----
+    val renderDeploys = mutableStateMapOf<String, String>()
+    var renderLoading by mutableStateOf(false)
+    fun refreshRender() = viewModelScope.launch {
+        if (renderUser.isBlank()) return@launch
+        renderLoading = true
+        val (list, err) = render.services()
+        if (list == null) renderMsg = "Render: $err" else {
+            renderMsg = ""
+            if (renderServices.toList() != list) { renderServices.clear(); renderServices.addAll(list) }
+            list.take(25).forEach { sv -> val st = render.lastDeploy(sv.id); if (st.isNotBlank()) renderDeploys[sv.id] = st }
+        }
+        renderLoading = false
+    }
+    fun renderDeploy(sv: RenderApi.Svc) = viewModelScope.launch {
+        val err = render.deploy(sv.id)
+        if (err.isBlank()) { toast("Deploy started"); renderDeploys[sv.id] = "build_in_progress" } else toast("Render: $err")
+    }
+
+    val supabaseLog = mutableStateListOf<String>()
+    var supabaseTesting by mutableStateOf(false)
+    /** Creates ONE project called apphub-test (reuses it if it exists), waits until it is up, then tests its legacy keys. */
+    fun supabaseTest() = viewModelScope.launch {
+        if (supabaseTesting) return@launch
+        supabaseTesting = true; supabaseLog.clear()
+        try {
+            val name = "apphub-test"
+            var ref = supabaseProjects.firstOrNull { it.name == name }?.id.orEmpty()
+            if (ref.isBlank()) {
+                supabaseLog += "Creating project $name…"
+                val (pr, err) = supabase.create(name)
+                if (pr == null) { supabaseLog += "✗ $err"; return@launch }
+                ref = pr.id; supabaseLog += "✓ created ($ref)"
+            } else supabaseLog += "• $name already exists, reusing it"
+            var st = supabase.status(ref); var tries = 0
+            while (!st.startsWith("ACTIVE") && tries < 48) {
+                if (tries == 0) supabaseLog += "Waiting for it to start…"
+                delay(5_000); st = supabase.status(ref); tries++
+            }
+            if (!st.startsWith("ACTIVE")) { supabaseLog += "✗ not up yet (${st.lowercase().replace('_', ' ')}). Run the test again in a minute."; return@launch }
+            supabaseLog += "✓ project is up"
+            val r = supabase.legacyTest(ref)
+            if (r.error.isNotBlank()) { supabaseLog += "✗ keys: ${r.error}"; return@launch }
+            supabaseLog += "Legacy keys: ${r.enabled}"
+            if (r.anon.isNotBlank()) supabaseLog += "${if (r.anonCode in 200..299) "✓" else "✗"} anon ${r.anon} → HTTP ${r.anonCode}"
+            if (r.service.isNotBlank()) supabaseLog += "${if (r.serviceCode in 200..299) "✓" else "✗"} service_role ${r.service} → HTTP ${r.serviceCode}"
+            supabaseLog += if (r.anonCode in 200..299 || r.serviceCode in 200..299) "✓ Legacy API access works" else "✗ Legacy API access does not work"
+        } finally { supabaseTesting = false; loadSupabase() }
+    }
 
     fun loadRender() = viewModelScope.launch {
         if (renderUser.isBlank()) return@launch
@@ -1141,7 +1191,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /** Setup wizard: repo -> keystore -> secrets -> save project, all in-app via OAuth. */
     fun setup(name: String, repoName: String, pkg: String, version: String, create: Boolean, keys: Boolean,
-              type: ProjectType = ProjectType.APP, liveUrl: String = "", vercelOn: Boolean = false) = viewModelScope.launch {
+              type: ProjectType = ProjectType.APP, liveUrl: String = "", vercelOn: Boolean = false, target: String = "") = viewModelScope.launch {
         log.clear()
         if (login.isBlank() && !repoName.contains("/")) { log += "✗ Log in with GitHub (Accounts) or enter owner/name"; return@launch }
         val repo = if (repoName.contains("/")) repoName else "$login/$repoName"
@@ -1160,6 +1210,26 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 val (lk, err) = vercel.link(repo)
                 if (lk == null) log += "✗ Vercel: $err"
                 else { vercelProject = lk.id; if (liveAddr.isBlank()) liveAddr = lk.url; log += "✓ Vercel project ${lk.name} linked" }
+            }
+        }
+        // v45: Render service from the repo
+        if (target == "render" && type != ProjectType.APP) {
+            if (prefs.renderKey.isBlank()) log += "✗ Render: log in first (Accounts). Project added without it."
+            else {
+                log += "Creating Render service…"
+                val (sv, err) = render.create(repo, name, type == ProjectType.WEBSITE)
+                if (sv == null) log += "✗ Render: $err"
+                else { if (liveAddr.isBlank()) liveAddr = sv.url; log += "✓ Render service ${sv.name} created"; refreshRender() }
+            }
+        }
+        // v45: Supabase project (backend) for the app
+        if (target == "supabase" && type != ProjectType.APP) {
+            if (prefs.supabaseToken.isBlank()) log += "✗ Supabase: connect first (Accounts). Project added without it."
+            else {
+                log += "Creating Supabase project…"
+                val (pr, err) = supabase.create(name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "project" })
+                if (pr == null) log += "✗ Supabase: $err"
+                else { if (liveAddr.isBlank()) liveAddr = "https://${pr.id}.supabase.co"; log += "✓ Supabase project ${pr.name} created"; loadSupabase() }
             }
         }
         if (keys && type == ProjectType.APP) {

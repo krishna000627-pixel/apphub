@@ -18,6 +18,7 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v45" to listOf("Render has its own page with a card per service (last deploy, Open, Site, Deploy). Setup: Deploy on picks Vercel, Render or Supabase. Supabase: Test legacy API creates one test project and checks its legacy keys."),
         "v44" to listOf("Setup: Deploy on Vercel and Create GitHub repo are now tappable rows that show who is connected. A switch only counts while its account is logged in; tapping a row that is not connected opens Accounts."),
         "v43" to listOf(
             "Accounts: all logins now live on their own page (GitHub, Vercel, Supabase, Render). Settings shows who is connected and opens it.",
