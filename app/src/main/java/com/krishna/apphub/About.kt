@@ -18,6 +18,8 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v41" to listOf("Prompt Maker: the New app / New website / New server buttons are gone. Tasks follow the project type: a server gets Fix error, Add feature, Improve API, Refactor, Release notes, Other (no UI or UX)."),
+        "v40" to listOf("Setup and Prompt Maker switches (create repo, signing keys, Deploy on Vercel, Host on Vercel, zip rules) keep their position and stay off until you tap them, even after the app is cleared from cache or force stopped."),
         "v39" to listOf(
             "Vercel login in Settings (paste a token). Websites and servers get a Deploy on Vercel switch in Setup, above Create GitHub repo.",
             "A Vercel project follows the Vercel deployment: Building, Deployed or Running, build errors included. Push zips as before, no workflow needed.",

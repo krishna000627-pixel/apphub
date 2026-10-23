@@ -726,94 +726,35 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val ps by vm.projects.collectAsState()
     val p = vm.sel()
     var stack by remember(p?.id) { mutableStateOf(p?.stack ?: "") }
-    var deliver by remember { mutableStateOf(true) }
-    val isNew = Prompts.isNew(vm.task)
+    var deliver by remember { mutableStateOf(vm.prefs.promptDeliver) }   // v40: remembered
     val selKind = p?.kind ?: ProjectType.APP
+    val tasks = Prompts.tasksFor(selKind)
+    val task = if (vm.task in tasks) vm.task else tasks.first()   // v41: a task of another project type falls back to the first one
     val err = if (p == null) "" else (vm.errors[p.id] ?: p.lastError)
-    val text = if (p == null || isNew) "" else Prompts.make(vm.task, p, stack, err, deliver, vm.promptNote, vm.isVercel(p))
+    val text = if (p == null) "" else Prompts.make(task, p, stack, err, deliver, vm.promptNote, vm.isVercel(p))
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Prompt Maker")
-        if (!isNew) { Text("1. Select Project", color = Color.Gray); ProjectPicker(ps, p) { vm.selId = it.id } }
-        Text(if (isNew) "What do you want to do?" else "2. What do you want to do?", color = Color.Gray)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Prompts.tasks.forEach { FilterChip(vm.task == it, { vm.task = it }, { Text(Prompts.label(it, if (Prompts.isNew(it)) ProjectType.APP else selKind)) }) } }
-        if (isNew) when (vm.task) {
-            "New website" -> NewWebSection(vm, nav, ProjectType.WEBSITE)
-            "New server" -> NewWebSection(vm, nav, ProjectType.SERVER)
-            else -> NewAppSection(vm, nav)
-        } else {
+        Text("1. Select Project", color = Color.Gray); ProjectPicker(ps, p) { vm.selId = it.id }
+        Text("2. What do you want to do?", color = Color.Gray)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { tasks.forEach { FilterChip(task == it, { vm.task = it }, { Text(it) }) } }
+        run {
             Text("3. Tech Stack", color = Color.Gray)
             OutlinedTextField(stack, { stack = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(deliver, { deliver = it }); Text("  Add zip name + version bump rules", fontSize = 12.sp) }
+            Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(deliver, { deliver = it; vm.prefs.promptDeliver = it }); Text("  Add zip name + version bump rules", fontSize = 12.sp) }
             Text("4. What do you want changed?", color = Color.Gray)
-            OutlinedTextField(vm.promptNote, { vm.promptNote = it }, Modifier.fillMaxWidth(), minLines = 4, label = { Text(Prompts.hint(vm.task, selKind)) })
-            if (vm.task == "Fix error") Mono(if (err.isBlank()) "No build error on record for ${p?.name ?: "this app"}." else "Build error included (${err.lines().count { it.isNotBlank() }} lines)", color = Muted)
-            if (p != null) Mono("${vm.task} • ${p.name} ${p.version}${if (deliver) " • delivery rules" else ""}", color = Muted)
+            OutlinedTextField(vm.promptNote, { vm.promptNote = it }, Modifier.fillMaxWidth(), minLines = 4, label = { Text(Prompts.hint(task, selKind)) })
+            if (task == "Fix error") Mono(if (err.isBlank()) "No build error on record for ${p?.name ?: "this app"}." else "Build error included (${err.lines().count { it.isNotBlank() }} lines)", color = Muted)
+            if (p != null) Mono("$task • ${p.name} ${p.version}${if (deliver) " • delivery rules" else ""}", color = Muted)
             BigButton("Copy prompt", Icons.Default.ContentCopy) {
                 when {
                     text.isBlank() -> vm.toast("Add a project first")
-                    vm.promptNote.isBlank() && vm.task != "Fix error" -> vm.toast("Write what you want changed first")
+                    vm.promptNote.isBlank() && task != "Fix error" -> vm.toast("Write what you want changed first")
                     else -> vm.copy(text)
                 }
             }
             Text("The full prompt is not shown here. Copy it and check it in Claude.", fontSize = 11.sp, color = Muted)
         }
         Spacer(Modifier.height(12.dp))
-    }
-}
-
-/** v39: New website / New server. Name, idea, stack, then the prompt is copied (never shown), like the other tasks. */
-@Composable fun NewWebSection(vm: HubVM, nav: NavHostController, kind: ProjectType) {
-    val site = kind == ProjectType.WEBSITE
-    val stacks = if (site) Prompts.webStacks else Prompts.serverStacks
-    val stack = if (vm.webStack in stacks) vm.webStack else stacks.first()
-    val what = kind.label.lowercase()
-    Text("1. Name and idea", color = Color.Gray)
-    OutlinedTextField(vm.webName, { vm.webName = it }, label = { Text("${kind.label} name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-    OutlinedTextField(vm.webPitch, { vm.webPitch = it }, Modifier.fillMaxWidth(), minLines = 3,
-        label = { Text(if (site) "What is it for? (pages, audience)" else "What should it do? (endpoints, data)") })
-    Text("2. Tech stack", color = Color.Gray)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { stacks.forEach { st -> FilterChip(stack == st, { vm.webStack = st }, { Text(st) }) } }
-    Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.webVercel, { vm.webVercel = it }); Text("  Host on Vercel (adds deploy rules)", fontSize = 12.sp) }
-    Text("3. Copy", color = Color.Gray)
-    BigButton("Copy prompt", Icons.Default.ContentCopy) {
-        when {
-            vm.webName.isBlank() -> vm.toast("Enter a name first")
-            vm.webPitch.isBlank() -> vm.toast("Say what it should do")
-            else -> vm.copy(Prompts.buildWeb(kind, vm.webName.trim(), vm.webPitch.trim(), stack, vm.webVercel))
-        }
-    }
-    OutlinedButton({ if (vm.webName.isNotBlank()) { vm.draftName = vm.webName.trim(); vm.draftType = kind; nav.navigate("add") } else vm.toast("Enter a name first") }, Modifier.fillMaxWidth()) {
-        Text("Set up this $what in App Hub")
-    }
-    Text("The full prompt is not shown here. Copy it and check it in Claude.", fontSize = 11.sp, color = Muted)
-}
-
-/** New app: ideas first, then the build prompt. */
-@Composable fun NewAppSection(vm: HubVM, nav: NavHostController) {
-    val ideas = Ideas.list[vm.ideaCat] ?: emptyList()
-    Text("1. Pick a direction", color = Color.Gray)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Ideas.cats.forEach { c -> FilterChip(vm.ideaCat == c, { vm.ideaCat = c }, { Text(c) }) } }
-    Text("2. Ideas first. Tap one, or ask the AI for more.", color = Color.Gray)
-    ideas.forEach { (n, d) ->
-        val on = vm.ideaName == n
-        Panel(Modifier.clickable { vm.ideaName = n; vm.ideaPitch = d }, border = if (on) Green else Line) {
-            Text(n, fontWeight = FontWeight.Bold, color = if (on) Green else Color.Unspecified)
-            Text(d, fontSize = 12.sp, color = Muted)
-        }
-    }
-    OutlinedTextField(vm.ideaNotes, { vm.ideaNotes = it }, label = { Text("Your interests / must-haves (optional)") }, modifier = Modifier.fillMaxWidth())
-    OutlinedButton({ vm.copy(Prompts.ideasPrompt(vm.ideaCat, vm.ideaNotes)) }, Modifier.fillMaxWidth()) {
-        Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp), tint = Cyan); Text(" Copy ideas prompt (AI suggests, you pick)", fontSize = 12.sp)
-    }
-    Text("3. Your pick", color = Color.Gray)
-    OutlinedTextField(vm.ideaName, { vm.ideaName = it }, label = { Text("App name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-    OutlinedTextField(vm.ideaPitch, { vm.ideaPitch = it }, label = { Text("One-line pitch") }, modifier = Modifier.fillMaxWidth())
-    Text("4. Build prompt", color = Color.Gray)
-    val text = Prompts.buildPrompt(vm.ideaName, vm.ideaPitch)
-    Panel { Mono(if (vm.ideaName.isBlank()) "Pick or type an app name first." else text) }
-    BigButton("Copy build prompt", Icons.Default.ContentCopy) { if (vm.ideaName.isNotBlank()) vm.copy(text) else vm.toast("Pick an idea first") }
-    OutlinedButton({ if (vm.ideaName.isNotBlank()) { vm.draftName = vm.ideaName; nav.navigate("add") } else vm.toast("Pick an idea first") }, Modifier.fillMaxWidth()) {
-        Text("Set up this app in App Hub")
     }
 }
 
@@ -1106,10 +1047,11 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     // Nothing is filled in for you. Only an app name you carried over from the idea picker is kept.
     var name by remember { mutableStateOf(vm.draftName) }; var repo by remember { mutableStateOf("") }
     var pkg by remember { mutableStateOf("") }; var ver by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf(vm.draftType) }; var url by remember { mutableStateOf("") }   // v38: what kind of project (v39: may come from the Prompt Maker)
-    LaunchedEffect(Unit) { vm.draftName = ""; vm.draftType = ProjectType.APP }
-    var create by remember { mutableStateOf(true) }; var keys by remember { mutableStateOf(true) }
-    var vercelOn by remember { mutableStateOf(vm.vercelUser.isNotBlank()) }   // v39: on by default once you are logged in to Vercel
+    var type by remember { mutableStateOf(ProjectType.APP) }; var url by remember { mutableStateOf("") }   // v38: what kind of project (v39: may come from the Prompt Maker)
+    LaunchedEffect(Unit) { vm.draftName = "" }
+    // v40: the three switches keep the position you left them in (saved on tap); Vercel stays off until you turn it on
+    var create by remember { mutableStateOf(vm.prefs.setupCreate) }; var keys by remember { mutableStateOf(vm.prefs.setupKeys) }
+    var vercelOn by remember { mutableStateOf(vm.prefs.setupVercel) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
         TypePicker(type) { type = it }
@@ -1121,11 +1063,11 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text("v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         // v39: Deploy on Vercel sits above Create GitHub repo (websites and servers)
         if (type != ProjectType.APP) {
-            Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vercelOn, { vercelOn = it }); Text("  Deploy on Vercel") }
+            Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vercelOn, { vercelOn = it; vm.prefs.setupVercel = it }); Text("  Deploy on Vercel") }
             if (vercelOn && vm.vercelUser.isBlank()) Text("Log in to Vercel in Settings first, or the project is added without Vercel.", fontSize = 12.sp, color = Amber)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(create, { create = it }); Text("  Create GitHub repo (private)") }
-        if (type == ProjectType.APP) Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it }); Text("  Generate signing keys + set secrets") }
+        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(create, { create = it; vm.prefs.setupCreate = it }); Text("  Create GitHub repo (private)") }
+        if (type == ProjectType.APP) Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it; vm.prefs.setupKeys = it }); Text("  Generate signing keys + set secrets") }
         else Text(if (vercelOn) "Vercel builds every push by itself, no workflow needed. The status follows the Vercel deployment."
             else if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
             else "Your zip needs its own .github/workflows deploy. The status shows Running once the endpoint answers.", fontSize = 12.sp, color = Muted)

@@ -112,12 +112,6 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var ideaPitch by mutableStateOf("")
     var ideaNotes by mutableStateOf("")
     var draftName by mutableStateOf("")
-    var draftType by mutableStateOf(ProjectType.APP)   // v39: type carried from the Prompt Maker to Setup
-    // v39: new website / server prompt maker
-    var webName by mutableStateOf("")
-    var webPitch by mutableStateOf("")
-    var webStack by mutableStateOf("")
-    var webVercel by mutableStateOf(true)
     var promptNote by mutableStateOf("")   // "what do you want changed" text of the Prompt Maker, kept across tabs
 
     // full build-log viewer

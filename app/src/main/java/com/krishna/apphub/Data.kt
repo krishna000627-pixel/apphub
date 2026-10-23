@@ -186,6 +186,20 @@ class Prefs(ctx: Context) {
     /** Vercel project id this repo deploys to ("" = not on Vercel). */
     fun vercelId(repo: String) = s("vp_$repo")
     fun setVercelId(repo: String, v: String) = put("vp_$repo", v)
+
+    // ---- v40: switches keep their last position (stored on disk, so cache clear / force stop never resets them) ----
+    var setupCreate: Boolean            // Setup: Create GitHub repo
+        get() = sp.getBoolean("su_create", true)
+        set(v) { sp.edit().putBoolean("su_create", v).apply() }
+    var setupKeys: Boolean              // Setup: Generate signing keys + set secrets
+        get() = sp.getBoolean("su_keys", true)
+        set(v) { sp.edit().putBoolean("su_keys", v).apply() }
+    var setupVercel: Boolean            // Setup: Deploy on Vercel (off until tapped)
+        get() = sp.getBoolean("su_vercel", false)
+        set(v) { sp.edit().putBoolean("su_vercel", v).apply() }
+    var promptDeliver: Boolean          // Prompt Maker: Add zip name + version bump rules
+        get() = sp.getBoolean("pm_deliver", true)
+        set(v) { sp.edit().putBoolean("pm_deliver", v).apply() }
 }
 
 /** Shown when a release has no notes, the way Google Play falls back to a generic line. */

@@ -12,6 +12,15 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v41
+- Prompt Maker (Screens.kt PromptScreen): removed the New app / New website / New server tasks and their screens (NewAppSection, NewWebSection, Prompts.buildWeb, vm.web*/draftType, Prefs.webVercel). Ideas / Prompts.ideasPrompt / Prompts.buildPrompt are left in the code but nothing opens them.
+- Tasks per project type (`Prompts.tasksFor(kind)`): APP and WEBSITE = Fix error, Add feature, Improve UI, Refactor, Release notes, Other; SERVER = Fix error, Add feature, Improve API, Refactor, Release notes, Other. A selected task that the project type does not have falls back to the first one. Website/server wording and Vercel line stay in `webBody`.
+No new dependencies.
+
+## v40
+- Switch state is stored in Prefs (EncryptedSharedPreferences, survives cache clear and force stop): setupCreate (default on), setupKeys (default on), setupVercel (default OFF, no longer auto-on after Vercel login), webVercel (Prompt Maker, default OFF), promptDeliver (default on). Written on tap in AddScreen / PromptScreen / NewWebSection; read once when the screen opens. Rule: a switch never changes by itself. (Clearing app DATA still resets everything.)
+No new dependencies.
+
 ## v39
 - Vercel for websites and servers. `Vercel.kt` (REST: verify token, `link(repo)` creates/reuses the project from the GitHub repo, `latest(projectId)` newest production deployment, `errorText(id)` last build-log error lines). Login = personal access token (+ optional Team ID) in Settings -> Vercel (Prefs.vercelToken/vercelUser/vercelTeam, encrypted). The Vercel project id is stored per repo (`Prefs.vercelId(repo)`, no Room change, so no migration; backups do not carry it, relink from the app's Settings tab).
 - Setup (AddScreen): "Deploy on Vercel" switch for Website/Server, ABOVE "Create GitHub repo" (on by default once logged in). `HubVM.setup(..., vercelOn)` links after the repo step and fills liveUrl with the *.vercel.app address. App Settings tab has a Vercel panel (Link / Unlink) for existing websites and servers.
