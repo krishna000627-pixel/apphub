@@ -1,14 +1,25 @@
+@file:OptIn(ExperimentalLayoutApi::class)
+
 package com.krishna.apphub
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
@@ -26,44 +37,94 @@ fun installedLine(vm: HubVM, p: Project): Pair<String, Color> {
     return text to (if (phone == false) Amber else Color.Unspecified)
 }
 
-/** v34: everything about the app on one page (opened by tapping the overview box). */
+/** One label/value line of an info card. [copy] makes the line tappable (copies the value). */
+private class IR(val k: String, val v: String, val c: Color = Color.Unspecified, val copy: Boolean = false, val mono: Boolean = false)
+
+/** A titled card: label on the left, value on the right of it (wraps instead of being cut), thin dividers between lines. */
+@Composable private fun InfoCard(title: String, vm: HubVM, rows: List<IR?>, footer: @Composable ColumnScope.() -> Unit = {}) {
+    val list = rows.filterNotNull()
+    Column(Modifier.fillMaxWidth().background(Surf, RoundedCornerShape(16.dp)).border(1.dp, Line, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) {
+        Text(title.uppercase(), fontSize = 11.sp, color = Muted, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, modifier = Modifier.padding(top = 2.dp, bottom = 2.dp))
+        list.forEachIndexed { i, r ->
+            if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(Line.copy(alpha = 0.6f)))
+            Row(Modifier.fillMaxWidth().let { if (r.copy) it.clickable { vm.copy(r.v) } else it }.padding(vertical = 11.dp), verticalAlignment = Alignment.Top) {
+                Text(r.k, Modifier.width(96.dp), fontSize = 13.sp, color = Muted)
+                Text(r.v, Modifier.weight(1f), fontSize = 13.sp, color = r.c, fontFamily = if (r.mono) FontFamily.Monospace else FontFamily.Default)
+                if (r.copy) { Spacer(Modifier.width(8.dp)); Icon(Icons.Default.ContentCopy, null, Modifier.size(14.dp).padding(top = 2.dp), tint = Muted) }
+            }
+        }
+        footer()
+    }
+}
+
+/** v34: everything about the app on one page (opened by tapping the overview box). v37: hero card, grouped cards, tap to copy. */
 @Composable fun InfoScreen(vm: HubVM, nav: NavHostController, id: Long) {
     val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
     val ctx = LocalContext.current
     LaunchedEffect(id) { vm.checkInstalls(); vm.loadDetails(p) }
     val i = vm.infos[id]
     val (instText, instColor) = installedLine(vm, p)
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val phone = vm.isInstalled(p)
+    val upd = vm.hasUpdate(p)
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Header("${p.name} info", nav) {
+            Header("Info", nav) {
                 IconButton({ openUrl(ctx, "https://github.com/${p.repo}") }, Modifier.size(40.dp)) { Icon(Icons.Default.OpenInNew, null, tint = Muted) }
             }
         }
+        // hero: icon, name, version, quick status pills
         item {
-            Panel {
-                Text("App", color = Muted, fontSize = 12.sp); Spacer(Modifier.height(4.dp))
-                Mono("name     : ${p.name}")
-                Mono("package  : ${p.packageName.ifBlank { "unknown" }}")
-                Mono("version  : ${p.version}")
-                Mono("stack    : ${p.stack}")
-                Mono("repo     : ${p.repo}")
-                Mono("status   : ${p.lastStatus}", color = statusColor(p.lastStatus))
-                Mono("installed: $instText", color = instColor)
-                Mono("latest   : ${vm.latest[id] ?: "-"}")
-                if (vm.waitingInstall(p)) Mono("saved apk: ${vm.cachedTag(id)} (not installed yet)", color = Amber)
-                else if (vm.hasCached(p)) Mono("saved apk: ${vm.cachedTag(id)}")
+            Column(Modifier.fillMaxWidth().background(Surf, RoundedCornerShape(16.dp)).border(1.dp, Line, RoundedCornerShape(16.dp)).padding(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(56.dp).background(Line, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Apps, null, Modifier.size(30.dp), tint = Cyan) }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(p.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        Text(p.stack, fontSize = 12.sp, color = Muted, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    }
+                    Text(p.version, fontSize = 26.sp, color = Cyan, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(12.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (p.lastStatus != "none") Pill(if (p.lastStatus == "passed") "✓ Passed" else if (p.lastStatus == "failed") "✕ Failed" else "… Running", statusColor(p.lastStatus))
+                    else Pill("No builds", Muted)
+                    when (phone) {
+                        true -> Pill("● ${vm.onPhone[id]?.ifBlank { null } ?: "On phone"}", Green)
+                        false -> Pill("○ Not installed", Muted)
+                        null -> {}
+                    }
+                    if (upd) Pill(if (phone == false) "Install" else "Update", Amber)
+                }
             }
         }
         item {
-            Panel {
-                Text("Repository", color = Muted, fontSize = 12.sp); Spacer(Modifier.height(4.dp))
-                if (i == null) Text("Loading repo info…", color = Muted) else {
-                    if (i.desc.isNotBlank()) { Text(i.desc, fontSize = 13.sp); Spacer(Modifier.height(6.dp)) }
-                    Mono("language : ${i.lang.ifBlank { "-" }}"); Mono("branch   : ${i.branch}")
-                    Mono("size     : ${"%.1f".format(i.sizeKb / 1024.0)} MB"); Mono("issues   : ${i.issues}   stars: ${i.stars}")
-                    Mono("access   : ${if (i.priv) "private" else "public"}"); Mono("pushed   : ${ago(i.pushed)}")
-                }
-            }
+            InfoCard("App", vm, listOf(
+                IR("Package", p.packageName.ifBlank { "unknown" }, copy = p.packageName.isNotBlank(), mono = true),
+                IR("Repo", p.repo, copy = true, mono = true),
+                IR("Stack", p.stack)
+            ))
+        }
+        item {
+            InfoCard("Build", vm, listOf(
+                IR("Status", p.lastStatus, statusColor(p.lastStatus)),
+                IR("Installed", instText, instColor),
+                IR("Latest", vm.latest[id] ?: "-", mono = true),
+                if (vm.waitingInstall(p)) IR("Saved APK", "${vm.cachedTag(id)} (not installed yet)", Amber, mono = true)
+                else if (vm.hasCached(p)) IR("Saved APK", vm.cachedTag(id), mono = true) else null
+            ))
+        }
+        item {
+            if (i == null) InfoCard("Repository", vm, listOf(IR("", "Loading repo info…", Muted)))
+            else InfoCard("Repository", vm, listOf(
+                if (i.desc.isNotBlank()) IR("About", i.desc) else null,
+                IR("Language", i.lang.ifBlank { "-" }),
+                IR("Branch", i.branch, mono = true),
+                IR("Size", "%.1f MB".format(i.sizeKb / 1024.0)),
+                IR("Issues", "${i.issues}"),
+                IR("Stars", "${i.stars}"),
+                IR("Access", if (i.priv) "Private" else "Public"),
+                IR("Pushed", ago(i.pushed))
+            ))
         }
         item { Spacer(Modifier.height(16.dp)) }
     }

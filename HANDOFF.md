@@ -12,6 +12,19 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v37
+- Info page (Info.kt InfoScreen): hero card (icon, name, stack, version, status/installed/update pills), then InfoCard sections App / Build / Repository (label left, value right, wraps; package and repo tap to copy via vm.copy). Header title is just "Info".
+- Files page (Files.kt FilesScreen): header "Files" with Refresh, FilesHead (search, home icon + breadcrumbs, totals or match count) fixed above a LazyColumn that resets to top on folder/search change; "Up one folder" row; delete icon is DeleteOutline with a 44dp target; DeleteFileDialog redesigned (red icon badge, file name + folder, workflow warning row, Cancel / red Delete). filesBrowser no longer emits the head item.
+No new dependencies.
+
+## v36
+- Dashboard card (Screens.kt ProjectCard): buttons are Build / Deploy / orange Update (last, right end). The update pill reads "Updating" while downloading and "Updated" once the APK is saved and waiting to be installed (installed app only; a not-installed app keeps "Install").
+No new dependencies.
+
+## v35
+- Dashboard card pills (Screens.kt ProjectCard): the download pill reads "Updating" (no percent; the button keeps ring + percent) and is the last pill, after status and installed. The "Update"/"Install" pill moved to the end too.
+No new dependencies.
+
 ## v34
 - Files is no longer a top tab on the app page (tabs: Info / Builds / Releases / Settings). The Files box on Info opens a Files page (Files.kt FilesScreen, route files/{id}) with the same browser (breadcrumbs, search, delete); Back goes up a folder first. Tapping a file still opens file/{id}?path=...
 - Info (Screens.kt Detail tab 0) is a short box: status, installed, version, with a chevron. Tapping it opens InfoScreen (Info.kt, route info/{id}): name, package, version, stack, repo, status, installed, latest, saved apk, plus repo info (description, language, branch, size, issues/stars, access, pushed). installedLine() in Info.kt is shared by both.

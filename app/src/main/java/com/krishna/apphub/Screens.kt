@@ -304,24 +304,25 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             if (p.lastStatus != "none") Pill(if (p.lastStatus == "passed") "✓ Passed" else if (p.lastStatus == "failed") "✕ Failed" else "… Running", statusColor(p.lastStatus))
             else Pill("No builds", Muted)
             if (pend) Pill("+ Push ${vm.waitLabel(p)}", Amber)
-            if (dl != null) Pill("↓ ${dlText(dl)}", Cyan)
-            else if (upd) Pill(if (vm.isInstalled(p) == false) "Install" else "Update", Amber)
             when (vm.isInstalled(p)) {
                 true -> Pill("● ${vm.onPhone[p.id]?.ifBlank { null } ?: "On phone"}", Green)
                 false -> Pill("○ Not installed", Muted)
                 null -> if (p.packageName.isBlank()) Pill("? No package", Muted)
             }
+            // v35: download / update pill goes last, after the status and installed pills
+            if (dl != null) Pill("Updating", Cyan)
+            else if (upd) Pill(if (vm.isInstalled(p) == false) "Install" else if (vm.waitingInstall(p)) "Updated" else "Update", Amber)
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton({ vm.build(p) }, Modifier.weight(1f), contentPadding = BtnPad) { Icon(Icons.Default.Build, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Build") }
+            Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+                Icon(Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Deploy")
+            }
             if (upd || dl != null) Button({ nav.navigate("install/${p.id}") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) {
                 if (dl != null) CircularProgressIndicator({ dl / 100f }, Modifier.size(14.dp), color = Color.Black, strokeWidth = 2.dp)
                 else Icon(Icons.Default.Download, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp)); BtnText(if (dl != null) "$dl%" else if (vm.isInstalled(p) == false) "Install" else "Update")
-            }
-            Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
-                Icon(Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Deploy")
             }
         }
     }

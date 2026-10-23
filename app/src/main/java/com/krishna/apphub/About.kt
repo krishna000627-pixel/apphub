@@ -18,6 +18,12 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v37" to listOf(
+            "Info page: app card with name, version and status pills, then App / Build / Repository cards. Tap package or repo to copy.",
+            "Files page: search and path stay in place while the list scrolls, Up one folder row, refresh button, match count, clearer delete confirmation."
+        ),
+        "v36" to listOf("Dashboard card: the orange Update button is now at the right end; the pill says \"Updated\" once the download is finished."),
+        "v35" to listOf("Dashboard card: the download pill now says \"Updating\" and sits last, after the Passed and version pills."),
         "v34" to listOf(
             "Files is no longer a top tab: open it from the Files box on Info.",
             "Info shows only status, installed and version. Tap it for the full details."

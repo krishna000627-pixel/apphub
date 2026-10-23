@@ -11,7 +11,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.activity.compose.BackHandler
@@ -102,7 +104,7 @@ private fun listDir(all: List<GitHub.RepoFile>, dir: String): List<Node> {
         }
         if (n.isDir) Icon(Icons.Default.ChevronRight, null, tint = Muted)
         else if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Red, strokeWidth = 2.dp)
-        else IconButton(onDelete, Modifier.size(36.dp), enabled = canDelete) { Icon(Icons.Default.Delete, null, Modifier.size(18.dp), tint = Red.copy(alpha = 0.8f)) }
+        else IconButton(onDelete, Modifier.size(44.dp), enabled = canDelete) { Icon(Icons.Default.DeleteOutline, null, Modifier.size(20.dp), tint = Red.copy(alpha = 0.7f)) }
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(Line.copy(alpha = 0.6f)))
 }
@@ -113,31 +115,21 @@ fun LazyListScope.filesBrowser(
     onOpen: (String) -> Unit, onDelete: (String) -> Unit
 ) {
     val all = vm.repoFiles[p.id]
-    item(key = "files-head") {
-        Column {
-            OutlinedTextField(fq, onFq, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Search") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = { if (fq.isNotEmpty()) IconButton({ onFq("") }) { Icon(Icons.Default.Close, null) } })
-            if (vm.filesLoading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp), color = Green)
-            if (all != null) {
-                if (fq.isBlank()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Crumb(p.repo.substringAfter('/'), dir.isEmpty()) { onDir("") }
-                    var acc = ""
-                    dir.split("/").filter { it.isNotEmpty() }.forEach { seg ->
-                        acc += "$seg/"
-                        val target = acc
-                        Icon(Icons.Default.ChevronRight, null, Modifier.size(16.dp), tint = Muted)
-                        Crumb(seg, target == dir) { onDir(target) }
-                    }
-                }
-                Mono("${all.size} files • ${fmtBytes(all.sumOf { it.size })}", Modifier.padding(top = 2.dp, bottom = 4.dp), Muted)
-            }
-        }
-    }
     val nodes = when {
         all == null -> emptyList()
         fq.isBlank() -> listDir(all, dir)
         else -> all.filter { it.path.contains(fq, true) }.take(200).map { Node(it.path.substringAfterLast('/'), it.path, false, it.size, 0) }
+    }
+    if (all != null && fq.isBlank() && dir.isNotEmpty()) item(key = "up") {
+        val parent = dir.dropLast(1).substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }
+        Row(Modifier.fillMaxWidth().clickable { onDir(parent) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(38.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.ArrowUpward, null, Modifier.size(20.dp), tint = Green)
+            }
+            Spacer(Modifier.width(12.dp))
+            Text("Up one folder", fontSize = 14.sp, color = Green)
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Line.copy(alpha = 0.6f)))
     }
     items(nodes, key = { it.path }) { n ->
         NodeRow(n, fq.isNotBlank(), vm.deletingFile == n.path, vm.deletingFile.isEmpty(),
@@ -150,22 +142,33 @@ fun LazyListScope.filesBrowser(
     }
 }
 
-// ---------- delete confirmation (Files tab and file page) ----------
+// ---------- delete confirmation (Files page and file page) ----------
 @Composable fun DeleteFileDialog(p: Project, path: String, onCancel: () -> Unit, onConfirm: () -> Unit) {
     val risky = path.startsWith(".github/workflows/")
-    AlertDialog(onDismissRequest = onCancel,
-        icon = { Icon(Icons.Default.Delete, null, tint = Red) },
-        title = { Text("Delete this file?") },
+    val name = path.substringAfterLast('/')
+    val folder = path.substringBeforeLast('/', "")
+    AlertDialog(onDismissRequest = onCancel, containerColor = Surf, shape = RoundedCornerShape(24.dp),
+        icon = { Box(Modifier.size(48.dp).background(Red.copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.DeleteOutline, null, tint = Red) } },
+        title = { Text("Delete file?", fontWeight = FontWeight.Bold) },
         text = {
-            Column {
-                Mono(path, Modifier.fillMaxWidth().background(Bg, RoundedCornerShape(8.dp)).padding(10.dp), Cyan)
-                Spacer(Modifier.height(8.dp))
-                Text("It is removed from ${p.repo} in one new commit and a new build starts. \"Undo last push\" in the app's Settings brings it back.", fontSize = 13.sp)
-                if (risky) Text("This is a build workflow. Without it GitHub cannot build the app.", Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Amber)
+            Column(Modifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth().background(Bg, RoundedCornerShape(12.dp)).padding(12.dp)) {
+                    Text(name, fontWeight = FontWeight.Bold, color = Cyan, fontSize = 15.sp)
+                    if (folder.isNotEmpty()) Mono(folder, color = Muted)
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("One new commit removes it from ${p.repo} and a new build starts. Undo last push (app Settings) brings it back.", fontSize = 13.sp, color = Muted)
+                if (risky) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth().background(Amber.copy(alpha = 0.12f), RoundedCornerShape(12.dp)).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, null, Modifier.size(18.dp), tint = Amber); Spacer(Modifier.width(8.dp))
+                        Text("Build workflow. Without it GitHub cannot build the app.", fontSize = 12.sp, color = Amber)
+                    }
+                }
             }
         },
-        confirmButton = { TextButton(onConfirm) { Text("Delete", color = Red) } },
-        dismissButton = { TextButton(onCancel) { Text("Cancel") } })
+        confirmButton = { Button(onConfirm, colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) { Text("Delete") } },
+        dismissButton = { TextButton(onCancel) { Text("Cancel", color = Green) } })
 }
 
 // ---------- the file page ----------
@@ -259,22 +262,55 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
     }
 }
 
-// ---------- v34: the Files page (opened from the Files box on Info) ----------
+// ---------- the Files page (opened from the Files box on Info) ----------
+/** Search, path and totals. Stays on screen while the list scrolls underneath. */
+@Composable private fun FilesHead(vm: HubVM, p: Project, dir: String, onDir: (String) -> Unit, fq: String, onFq: (String) -> Unit) {
+    val all = vm.repoFiles[p.id]
+    Column(Modifier.fillMaxWidth()) {
+        OutlinedTextField(fq, onFq, Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(14.dp), placeholder = { Text("Search all files") },
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = { if (fq.isNotEmpty()) IconButton({ onFq("") }) { Icon(Icons.Default.Close, null) } })
+        Box(Modifier.fillMaxWidth().height(3.dp).padding(top = 1.dp)) { if (vm.filesLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Green) }
+        if (all != null) {
+            if (fq.isBlank()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Home, null, Modifier.size(16.dp).clickable { onDir("") }, tint = if (dir.isEmpty()) Green else Cyan)
+                var acc = ""
+                dir.split("/").filter { it.isNotEmpty() }.forEach { seg ->
+                    acc += "$seg/"
+                    val target = acc
+                    Icon(Icons.Default.ChevronRight, null, Modifier.size(16.dp), tint = Muted)
+                    Crumb(seg, target == dir) { onDir(target) }
+                }
+                if (dir.isEmpty()) Crumb(p.repo.substringAfter('/'), true) { onDir("") }
+            }
+            Mono(if (fq.isBlank()) "${all.size} files • ${fmtBytes(all.sumOf { it.size })}" else "${all.count { it.path.contains(fq, true) }} matches",
+                Modifier.padding(top = 2.dp, bottom = 4.dp), Muted)
+        }
+    }
+}
+
 /** Folder browser on its own page. Back goes up one folder (or clears the search) before leaving the page. */
 @Composable fun FilesScreen(vm: HubVM, nav: NavHostController, id: Long) {
     val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
     var fq by remember(id) { mutableStateOf("") }
     var delPath by remember(id) { mutableStateOf<String?>(null) }
     var dir by remember(id) { mutableStateOf("") }
+    val list = rememberLazyListState()
     LaunchedEffect(id) { vm.loadFiles(p) }
+    LaunchedEffect(dir, fq) { list.scrollToItem(0) }
     BackHandler(enabled = dir.isNotEmpty() || fq.isNotEmpty()) {
         if (fq.isNotEmpty()) fq = "" else dir = dir.dropLast(1).substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }
     }
     delPath?.let { path -> DeleteFileDialog(p, path, { delPath = null }) { delPath = null; vm.deleteFile(p, path) } }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-        item { Header("${p.name} files", nav) }
-        filesBrowser(vm, p, dir, { dir = it }, fq, { fq = it },
-            onOpen = { nav.navigate("file/$id?path=${Uri.encode(it)}") }, onDelete = { delPath = it })
-        item { Spacer(Modifier.height(16.dp)) }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Header("Files", nav) {
+            IconButton({ vm.loadFiles(p) }, Modifier.size(40.dp), enabled = !vm.filesLoading) { Icon(Icons.Default.Refresh, null, tint = Muted) }
+        }
+        FilesHead(vm, p, dir, { dir = it }, fq, { fq = it })
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
+            filesBrowser(vm, p, dir, { dir = it }, fq, { fq = it },
+                onOpen = { nav.navigate("file/$id?path=${Uri.encode(it)}") }, onDelete = { delPath = it })
+            item { Spacer(Modifier.height(16.dp)) }
+        }
     }
 }
