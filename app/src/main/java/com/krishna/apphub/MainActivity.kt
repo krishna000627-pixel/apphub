@@ -22,6 +22,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         hub.handleCallback(intent.data)
+        intent.getStringExtra("route")?.let { hub.openRoute = it }   // v27: tap on a build / download notification
     }
 
     private val askNotif = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -39,8 +40,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)   // v27: the last crash is saved to a file
         enableEdgeToEdge()
-        if (savedInstanceState == null) hub.handleCallback(intent?.data)
+        if (savedInstanceState == null) { hub.handleCallback(intent?.data); intent?.getStringExtra("route")?.let { hub.openRoute = it } }
         Sync.schedule(applicationContext, hub.prefs)
         // one-time: lets the login notification ("tap to return") show after approving on GitHub
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED

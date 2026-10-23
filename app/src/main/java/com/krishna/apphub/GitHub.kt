@@ -109,12 +109,28 @@ class GitHub(private val prefs: Prefs) {
     // GET with ETag: an unchanged answer is a 304 (free against the GitHub rate limit), so polling every few seconds is cheap.
     private val etags = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
 
+    /** v27: true while GitHub cannot be reached; limitUntil = when the API limit ends (millis, 0 = not limited). Both clear by themselves on the next good answer. */
+    @Volatile var offline = false
+    @Volatile var limitUntil = 0L
+
+    private fun noteLimit(r: Response) {
+        val left = r.header("X-RateLimit-Remaining")?.toIntOrNull()
+        val reset = r.header("X-RateLimit-Reset")?.toLongOrNull()
+        val retry = r.header("Retry-After")?.toLongOrNull()
+        val now = System.currentTimeMillis()
+        if ((r.code == 403 || r.code == 429) && (left == 0 || retry != null)) {
+            val until = if (retry != null) now + retry * 1000L else (reset ?: 0L) * 1000L
+            limitUntil = if (until > now) until else now + 60_000L
+        } else if (r.code in 200..399) limitUntil = 0L
+    }
+
     private suspend fun get(path: String): Pair<Int, String> = withContext(Dispatchers.IO) {
         val cached = etags[path]
         val b = rb(api + path)
         if (cached != null) b.header("If-None-Match", cached.first)
         try {
             http.newCall(b.build()).execute().use { r ->
+                offline = false; noteLimit(r)
                 if (r.code == 304 && cached != null) 200 to cached.second
                 else {
                     val body = r.body?.string() ?: ""
@@ -122,7 +138,7 @@ class GitHub(private val prefs: Prefs) {
                     r.code to body
                 }
             }
-        } catch (e: Exception) { 0 to (e.message ?: "network error") }
+        } catch (e: Exception) { offline = true; 0 to (e.message ?: "network error") }
     }
     private suspend fun send(method: String, path: String, body: JSONObject) =
         exec(rb(api + path).method(method, body.toString().toRequestBody("application/json".toMediaType())).build())

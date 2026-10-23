@@ -128,6 +128,24 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("wifi_only", true)
         set(v) { sp.edit().putBoolean("wifi_only", v).apply() }
 
+    // ---- v27 notifications (feature 3) ----
+    /** One notification when a build finishes and one when an update APK has been downloaded. */
+    var notifyOn: Boolean
+        get() = sp.getBoolean("notify_on", true)
+        set(v) { sp.edit().putBoolean("notify_on", v).apply() }
+    /** Newest finished run that was already announced (0 = nothing seen yet; the first sync only remembers, it never announces). */
+    fun notifiedRun(id: Long) = sp.getLong("nr_$id", 0L)
+    fun setNotifiedRun(id: Long, v: Long) { sp.edit().putLong("nr_$id", v).apply() }
+
+    // ---- v27 rollback (feature 5): release tag of the previous APK kept next to the latest one ----
+    fun prevTag(id: Long) = s("pt_$id")
+    fun setPrevTag(id: Long, v: String) = put("pt_$id", v)
+
+    // ---- v27 live sync (feature 6): seconds between silent syncs, 0 = off ----
+    var syncSecs: Int
+        get() = sp.getInt("sync_secs", 3)
+        set(v) { sp.edit().putInt("sync_secs", v).apply() }
+
     fun zipSeen(id: Long) = s("zs_$id")
     fun setZipSeen(id: Long, v: String) = put("zs_$id", v)
 
@@ -151,7 +169,7 @@ object Presets {
     val all = listOf(
         Preset("QuestBlock", "questblock", "", HOME + "QuestBlock", version = "v285"),
         Preset("BgBrowser", "bgbrowser", "com.bgbrowser", HOME + "BgBrowser"),
-        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v26"),
+        Preset("App Hub", "apphub", "com.krishna.apphub", HOME + "AppHub", "Kotlin • Compose • Room", "v27"),
         Preset("Videowall", "videowall", "", HOME + "Videowall")
     )
 }

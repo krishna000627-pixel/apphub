@@ -62,6 +62,16 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     val zipDismissed = mutableStateListOf<String>()   // "ask me later" for this session
     var refreshing by mutableStateOf(false)
 
+    // ---- v27 state ----
+    var notifyOn by mutableStateOf(prefs.notifyOn)          // feature 3: build / download notifications
+        private set
+    var syncSecs by mutableIntStateOf(prefs.syncSecs)        // feature 6: live sync every 3 s, 10 s, or 0 = off
+        private set
+    var netNote by mutableStateOf("")                        // feature 4: amber Dashboard note ("" = everything fine)
+    var loginBusy by mutableStateOf(false)                   // feature 1: "Finishing login…" is showing
+    var openRoute by mutableStateOf<String?>(null)           // feature 3: screen to open after a notification tap
+    var pendingBackup by mutableStateOf<Backup.Data?>(null)  // feature 2: a backup file waiting for the import confirmation
+
     var zipPack by mutableStateOf<Zipper.Pack?>(null)
     var deploying by mutableStateOf(false)
     var autoInstall by mutableStateOf(prefs.autoInstall)
@@ -162,8 +172,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun installSkipped(p: Project) = prefs.installTry(p.id) > 0L
 
     /** Downloads the release APK into the cache (via a .part file so a broken download is never installed). */
-    suspend fun fetchApk(p: Project, r: GitHub.Rel, onProgress: (Long, Long) -> Unit): Boolean {
-        val ok = ApkStore.fetch(getApplication<Application>(), gh, prefs, p, r, onProgress)
+    suspend fun fetchApk(p: Project, r: GitHub.Rel, announce: Boolean = false, onProgress: (Long, Long) -> Unit): Boolean {
+        val ok = ApkStore.fetch(getApplication<Application>(), gh, prefs, p, r, announce, onProgress)
         if (ok) cached[p.id] = r.tag
         return ok
     }
@@ -172,7 +182,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
      * Download with progress kept here in the ViewModel, so it keeps running and showing when the Install screen is left and reopened.
      * An interrupted download keeps its partial file and resumes on the next try.
      */
-    private suspend fun downloadTracked(p: Project, r: GitHub.Rel, onPct: (Int) -> Unit = {}): Boolean {
+    private suspend fun downloadTracked(p: Project, r: GitHub.Rel, announce: Boolean = false, onPct: (Int) -> Unit = {}): Boolean {
         if (dlProgress.containsKey(p.id)) {   // already running (started elsewhere): wait for it
             while (dlProgress.containsKey(p.id)) delay(300)
             return cachedTag(p.id) == r.tag && hasCached(p)
@@ -180,7 +190,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         dlError.remove(p.id); dlProgress[p.id] = 0f
         var last = -1
         val ok = try {
-            fetchApk(p, r) { d, t ->
+            fetchApk(p, r, announce) { d, t ->
                 if (t > 0) { val pc = (d * 100 / t).toInt(); if (pc != last) { last = pc; dlProgress[p.id] = pc / 100f; onPct(pc) } }
             }
         } finally { dlProgress.remove(p.id) }
@@ -213,6 +223,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     private fun pruneOne(p: Project) {
         val tag = cachedTag(p.id); if (tag.isBlank()) return
         val newer = latest[p.id]?.let { it != tag } == true
+        if (newer) ApkStore.archive(getApplication<Application>(), prefs, p.id)   // v27: the older APK becomes the "Previous build"
         if (newer || !apkFile(p).exists()) dropCache(p)
     }
 
@@ -287,7 +298,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 pruneOne(p)
             }
             // leftovers from older versions or deleted apps (finished downloads only, never a .part in progress)
-            val keep = list.filter { cachedTag(it.id).isNotBlank() }.map { apkFile(it).name }.toSet()
+            val app = getApplication<Application>()
+            val keep = list.filter { cachedTag(it.id).isNotBlank() }.map { apkFile(it).name }.toSet() +
+                list.filter { ApkStore.hasPrev(app, prefs, it.id) }.map { ApkStore.prev(app, it.id).name }
             apkDir.listFiles()?.filter { it.name !in keep && !it.name.endsWith(".part") }?.forEach { it.delete() }
             apkDir.listFiles()?.filter { it.name.endsWith(".part") && System.currentTimeMillis() - it.lastModified() > 7 * 86_400_000L }?.forEach { it.delete() }
         } finally { checking.set(false) }
@@ -432,7 +445,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun cancelLogin() {
         loginJob?.cancel()
         prefs.pendingState = ""; prefs.pendingVerifier = ""; prefs.pendingDevice = ""; prefs.pendingCode = ""
-        userCode = null; loginMsg = ""
+        userCode = null; loginMsg = ""; loginBusy = false
     }
 
     fun updateClientSecret(v: String) { clientSecret = v; prefs.clientSecret = v }
@@ -470,10 +483,10 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val code = uri.getQueryParameter("code")
         if (err != null) { loginMsg = "GitHub: ${uri.getQueryParameter("error_description") ?: err}"; toast(loginMsg); return }
         if (code.isNullOrBlank() || uri.getQueryParameter("state") != expected) { loginMsg = "Login link did not match, tap Login again"; toast(loginMsg); return }
+        loginMsg = "Finishing login…"; loginBusy = true   // shown at once, before the network call starts
         loginJob = viewModelScope.launch {
-            loginMsg = "Finishing login…"
             val e = gh.exchangeCode(code, verifier)
-            if (e == null) finishLogin() else { loginMsg = e; toast(e) }
+            if (e == null) finishLogin() else { loginMsg = e; loginBusy = false; toast(e) }
         }
     }
 
@@ -501,10 +514,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     private suspend fun pollDevice(immediate: Boolean) {
         val dc = prefs.pendingDevice
         if (dc.isBlank()) return
-        loginMsg = "Approve on GitHub, then come back here…"
+        if (immediate) {
+            loginMsg = "Finishing login…"; loginBusy = true
+            // the code is checked at once; if it was not approved yet, go back to the normal waiting text after a moment
+            viewModelScope.launch { delay(2_500); if (loginBusy && prefs.pendingDevice.isNotBlank()) { loginMsg = "Approve on GitHub, then come back here…"; loginBusy = false } }
+        } else loginMsg = "Approve on GitHub, then come back here…"
         val err = gh.pollToken(dc, prefs.pendingInterval, prefs.pendingExpiry, immediate)
         userCode = null; prefs.pendingDevice = ""; prefs.pendingCode = ""
-        if (err == null) finishLogin() else { loginMsg = err; toast(err) }
+        if (err == null) finishLogin() else { loginMsg = err; loginBusy = false; toast(err) }
     }
 
     /** On every return to the app: check at once whether the device-flow code was approved meanwhile. */
@@ -515,13 +532,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         }
         loginJob?.cancel()
         userCode = prefs.pendingCode.ifBlank { null }
+        loginMsg = "Finishing login…"; loginBusy = true   // shown immediately on return, the code is checked right away
         loginJob = viewModelScope.launch { pollDevice(true) }
     }
 
     private suspend fun finishLogin() {
         val u = gh.user()
-        if (u == null) { prefs.token = ""; loginMsg = "GitHub rejected the token (could not read your user)"; toast(loginMsg); return }
-        login = u; prefs.login = u; loginMsg = ""; sessionExpired = false; gh.authLost = false
+        if (u == null) { prefs.token = ""; loginMsg = "GitHub rejected the token (could not read your user)"; loginBusy = false; toast(loginMsg); return }
+        login = u; prefs.login = u; loginMsg = ""; loginBusy = false; sessionExpired = false; gh.authLost = false
         toast("Logged in as $u"); fixOwners(); refreshAll()
         if (!inForeground) comeBack(u)
     }
@@ -563,6 +581,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (runs[p.id] != real) { runs[p.id] = real; changed = true }
         val last = real.firstOrNull()
         val status = when { last == null -> "none"; last.ok == null -> "running"; last.ok == true -> "passed"; else -> "failed" }
+        notifyBuild(p, last)
         // the error text is read once per failed run, not on every poll
         val err = if (status == "failed" && last != null) {
             val old = errors[p.id].orEmpty()
@@ -581,7 +600,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (autoDownload && rel != null && (hasUpdate(p) || unknownBuild) && cachedTag(p.id) != rel.tag && !dlProgress.containsKey(p.id)
             && !(wifiOnly && onMetered()) && System.currentTimeMillis() - (autoTry[p.id] ?: 0L) > 300_000L) {
             autoTry[p.id] = System.currentTimeMillis()
-            viewModelScope.launch { downloadTracked(p, rel) }
+            viewModelScope.launch { downloadTracked(p, rel, announce = true) }
         }
         lock.withLock {
             val cur = projects.value.firstOrNull { it.id == p.id }
@@ -600,6 +619,21 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (changed) saveSnap(p)
     }
 
+    /** v27 feature 3: one notification per finished build. The first sync only remembers the newest run, and old runs are never announced. */
+    private fun notifyBuild(p: Project, last: GitHub.Run?) {
+        if (last == null || last.ok == null) return
+        val seen = prefs.notifiedRun(p.id)
+        if (seen == last.id) return
+        prefs.setNotifiedRun(p.id, last.id)
+        if (seen == 0L || !startedRecently(last.time)) return
+        Notifier.buildDone(getApplication<Application>(), prefs, p, last.number, last.ok == true)
+    }
+
+    private fun startedRecently(t: String): Boolean = runCatching {
+        val then = java.time.LocalDateTime.parse(t.replace(" ", "T")).toEpochSecond(java.time.ZoneOffset.UTC)
+        System.currentTimeMillis() / 1000 - then < 3600
+    }.getOrDefault(false)
+
     private val errRun = mutableMapOf<Long, Long>()       // app id -> run id the shown error belongs to
     private val autoTry = mutableMapOf<Long, Long>()      // app id -> last background download attempt (retry at most every 5 min)
     private val syncing = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -611,15 +645,28 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     /** Silent live sync, called every 3 s while App Hub is on screen and when a screen opens. No spinner, overlapping runs are skipped. */
     fun autoSync() {
         if (gh.authLost && !sessionExpired) sessionExpired = true
-        if (!inForeground || prefs.token.isBlank() || sessionExpired || !syncing.compareAndSet(false, true)) return
+        if (!inForeground || prefs.token.isBlank() || sessionExpired) return
+        if (System.currentTimeMillis() < gh.limitUntil) { updateNetNote(); return }   // API limit: wait quietly until it ends
+        if (!syncing.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
                 projects.value.map { refresh(it) }.forEach { it.join() }
                 scanZips(getApplication())
                 checkInstalls()
                 if (gh.authLost) sessionExpired = true
-            } finally { syncing.set(false) }
+            } finally { syncing.set(false); updateNetNote() }
         }
+    }
+
+    /** v27 feature 4: the amber Dashboard note. Computed after every sync, so it clears by itself when GitHub answers again. */
+    private fun updateNetNote() {
+        val now = System.currentTimeMillis()
+        val note = when {
+            gh.limitUntil > now -> "GitHub limit reached, retrying at ${java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(gh.limitUntil))}"
+            gh.offline -> "Offline, showing saved data"
+            else -> ""
+        }
+        if (netNote != note) netNote = note
     }
 
     /** The refresh button: same sync, with a spinner because you asked for it. */
@@ -629,6 +676,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         scanZips(getApplication())
         checkInstalls()
         refreshing = false
+        updateNetNote()
     }
 
     /** Repo info, recent commits and releases, fetched inside the app (silent; unchanged answers are free). */
@@ -654,7 +702,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun update(p: Project) = viewModelScope.launch {
         dao.save(p)
     }
-    fun delete(p: Project) = viewModelScope.launch { dropCache(p); ApkStore.clearParts(getApplication<Application>(), p.id); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
+    fun delete(p: Project) = viewModelScope.launch { dropCache(p); ApkStore.clearPrev(getApplication<Application>(), prefs, p.id); ApkStore.clearParts(getApplication<Application>(), p.id); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
 
     fun build(p: Project) = viewModelScope.launch {
         toast(if (gh.dispatch(p.repo)) "Build triggered on GitHub" else "Trigger failed — push the workflow first")
@@ -694,6 +742,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             val ver = pack.version.ifBlank { Commands.bump(p.version) }
             val msg = "$ver: ${note.replace("\n", " ").trim().ifBlank { "update from App Hub" }}"
             val before = gh.runs(p.repo).firstOrNull()?.id ?: 0L
+            if (prefs.notifiedRun(p.id) == 0L && before != 0L) prefs.setNotifiedRun(p.id, before)
             deployLog += "Pushing ${files.size} files to ${p.repo}…"
             val res = gh.pushFiles(p.repo, files, msg) { deployLog += it }
             if (res.ok) {
@@ -777,5 +826,83 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val id = dao.save(Project(name = name, repo = repo, packageName = pkg, version = version))
         selId = id
         log += "✓ Project added. Open Deploy and choose your zip to push and build."
+    }
+
+    // =====================================================================================
+    // v27 features
+    // =====================================================================================
+
+    // ---- feature 3: notifications switch ----
+    fun updateNotify(v: Boolean) { notifyOn = v; prefs.notifyOn = v }
+
+    // ---- feature 6: live sync choice + storage ----
+    fun updateSyncSecs(v: Int) { syncSecs = v; prefs.syncSecs = v }
+    val live: Boolean get() = syncSecs > 0
+    /** Delay between two silent syncs. When live sync is off the loops only wake up once a second to notice a change of the setting. */
+    val syncDelayMs: Long get() = if (syncSecs > 0) syncSecs * 1000L else 1000L
+
+    fun apkBytes(): Long = ApkStore.usedBytes(getApplication<Application>())
+
+    /** Deletes every saved APK (latest, previous and partial). Anything downloading right now is left alone. */
+    fun clearApks() = viewModelScope.launch(Dispatchers.IO) {
+        val app = getApplication<Application>()
+        dao.all().first().filter { !dlProgress.containsKey(it.id) }.forEach { p ->
+            dropCache(p); ApkStore.clearPrev(app, prefs, p.id); ApkStore.clearParts(app, p.id)
+        }
+        withContext(Dispatchers.Main) { toast("Saved APKs cleared") }
+    }
+
+    // ---- feature 5: rollback ----
+    fun hasPrev(p: Project) = ApkStore.hasPrev(getApplication<Application>(), prefs, p.id)
+    fun prevTag(p: Project): String = prefs.prevTag(p.id)
+
+    /** Opens the installer for the previous build. Android refuses an older versionCode over a newer one (the screen warns first). */
+    fun installPrevious(ctx: Context, p: Project) {
+        val app = getApplication<Application>()
+        if (!ApkStore.hasPrev(app, prefs, p.id)) { toast("No previous build saved"); return }
+        prefs.setInstallTry(p.id, 0L)   // so the "installer was opened" rule can never mark the newer saved APK as installed
+        gh.install(ctx, ApkStore.prev(app, p.id))
+    }
+
+    // ---- feature 7: release notes fall back to the commit message of the push that started the build ----
+    /** Notes of the release; when empty, the message of the build run with the same number (release tags are build-N); else the default line. */
+    fun notesFor(p: Project, tag: String, body: String): String {
+        if (body.isNotBlank()) return body.trim()
+        val num = Commands.num(tag).toIntOrNull()
+        val msg = runs[p.id]?.firstOrNull { it.number == num }?.msg?.trim().orEmpty()
+        return msg.ifBlank { DEFAULT_NOTES }
+    }
+
+    // ---- feature 2: backup ----
+    fun exportBackup(ctx: Context, uri: Uri) = viewModelScope.launch {
+        val list = projects.value
+        val txt = Backup.toJson(list) { prefs.keys(it) }
+        val ok = withContext(Dispatchers.IO) {
+            runCatching { ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(txt.toByteArray()) } }.isSuccess
+        }
+        toast(if (ok) "Backup saved (${list.size} apps)" else "Could not write the backup file")
+    }
+
+    fun readBackup(ctx: Context, uri: Uri) = viewModelScope.launch {
+        val txt = withContext(Dispatchers.IO) { runCatching { ctx.contentResolver.openInputStream(uri)!!.use { String(it.readBytes()) } }.getOrNull() }
+        val d = txt?.let { Backup.parse(it) }
+        if (d == null || d.apps.isEmpty()) toast("That file is not an App Hub backup") else pendingBackup = d
+    }
+
+    /** (apps that already exist and would be overwritten, keystores that would replace stored ones) */
+    fun backupClashes(d: Backup.Data): Pair<Int, Int> =
+        d.apps.count { a -> projects.value.any { it.repo.equals(a.repo, true) } } to d.keys.count { prefs.keys(it.key).isNotBlank() }
+
+    fun applyBackup(d: Backup.Data) = viewModelScope.launch {
+        val have = dao.all().first()
+        var added = 0; var replaced = 0
+        d.apps.forEach { a ->
+            val m = have.firstOrNull { it.repo.equals(a.repo, true) }
+            if (m != null) { dao.save(m.copy(name = a.name, packageName = a.pkg, version = a.version, stack = a.stack)); replaced++ }
+            else { dao.save(Project(name = a.name, repo = a.repo, packageName = a.pkg, version = a.version, stack = a.stack)); added++ }
+        }
+        d.keys.forEach { (repo, v) -> prefs.saveKeys(repo, v) }
+        pendingBackup = null
+        toast("Imported: $added new, $replaced updated")
     }
 }
