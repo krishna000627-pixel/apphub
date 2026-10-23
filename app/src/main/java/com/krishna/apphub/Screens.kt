@@ -51,7 +51,7 @@ import java.io.File
     Text(t, mod, color, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
 
 @Composable fun Pill(t: String, c: Color) =
-    Box(Modifier.border(1.dp, c, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp)) { Text(t, color = c, fontSize = 11.sp, maxLines = 1, softWrap = false) }
+    Box(Modifier.widthIn(max = 180.dp).border(1.dp, c, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp)) { Text(t, color = c, fontSize = 11.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
 
 @Composable fun Panel(mod: Modifier = Modifier, border: Color = Line, content: @Composable ColumnScope.() -> Unit) =
     Column(mod.fillMaxWidth().background(Surf, RoundedCornerShape(12.dp)).border(1.dp, border, RoundedCornerShape(12.dp)).padding(12.dp), content = content)
@@ -62,12 +62,12 @@ private val BtnPad = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
 
 /** v28: 0..100 while this app's APK is downloading, else null. The progress lives in the ViewModel, so every screen shows it. */
 fun dlPct(vm: HubVM, p: Project): Int? = vm.dlProgress[p.id]?.let { (it * 100).toInt().coerceIn(0, 100) }
-fun dlText(pct: Int) = if (pct <= 0) "Downloading…" else "Downloading $pct%"
+fun dlText(pct: Int) = "$pct%"
 /** v28: "Install" while the app is not on the phone, otherwise "Update". */
 fun installLabel(vm: HubVM, p: Project, upd: Boolean): String = when {
     vm.isInstalled(p) == false -> "Install"
-    vm.isInstalled(p) == true -> if (upd) "Update ready" else "Up to date"
-    else -> if (upd) "Update ready" else "Install / Update"
+    vm.isInstalled(p) == true -> if (upd) "Update" else "Latest"
+    else -> if (upd) "Update" else "Install"
 }
 
 @Composable fun BigButton(t: String, icon: ImageVector, onClick: () -> Unit) =
@@ -299,15 +299,15 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         }
         Spacer(Modifier.height(8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (p.lastStatus != "none") Pill(if (p.lastStatus == "passed") "✓ Build passed" else if (p.lastStatus == "failed") "✕ Build failed" else "… Running", statusColor(p.lastStatus))
-            else Pill("No builds yet", Muted)
+            if (p.lastStatus != "none") Pill(if (p.lastStatus == "passed") "✓ Passed" else if (p.lastStatus == "failed") "✕ Failed" else "… Running", statusColor(p.lastStatus))
+            else Pill("No builds", Muted)
             if (pend) Pill("+ Push ${vm.waitLabel(p)}", Amber)
             if (dl != null) Pill("↓ ${dlText(dl)}", Cyan)
-            else if (upd) Pill(if (vm.isInstalled(p) == false) "Ready to install" else "Update ready", Amber)
+            else if (upd) Pill(if (vm.isInstalled(p) == false) "Install" else "Update", Amber)
             when (vm.isInstalled(p)) {
-                true -> Pill("● On phone ${vm.onPhone[p.id] ?: ""}".trim(), Green)
+                true -> Pill("● ${vm.onPhone[p.id]?.ifBlank { null } ?: "On phone"}", Green)
                 false -> Pill("○ Not installed", Muted)
-                null -> if (p.packageName.isBlank()) Pill("? Package unknown", Muted)
+                null -> if (p.packageName.isBlank()) Pill("? No package", Muted)
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -365,7 +365,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = if (pend) Amber else Green, contentColor = Color.Black)) {
-                    Icon(if (pend) Icons.Default.AddCircle else Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText(if (pend) "Push ${vm.waitLabel(p)}" else "Deploy zip")
+                    Icon(if (pend) Icons.Default.AddCircle else Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText(if (pend) "Push ${vm.waitLabel(p)}" else "Deploy")
                 }
                 OutlinedButton({ nav.navigate("install/$id") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.outlinedButtonColors(contentColor = if (upd || dl != null) Amber else Cyan)) {
                     if (dl != null) { CircularProgressIndicator({ dl / 100f }, Modifier.size(14.dp), color = Amber, strokeWidth = 2.dp); Spacer(Modifier.width(6.dp)) }
@@ -374,7 +374,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
         }
         item {
-            HubTabs(listOf("Overview", "Builds", "Releases", "Files", "Settings"), tab) { tab = it }
+            HubTabs(listOf("Info", "Builds", "Releases", "Files", "Settings"), tab) { tab = it }
         }
         when (tab) {
             0 -> {
@@ -410,8 +410,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                             Box(Modifier.size(40.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Folder, null, tint = Amber) }
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Repository files", fontWeight = FontWeight.Bold)
-                                Text(if (all == null) "Tap to browse the repo" else "${all.size} files • ${fmtBytes(all.sumOf { it.size })}", fontSize = 12.sp, color = Muted)
+                                Text("Files", fontWeight = FontWeight.Bold)
+                                Text(if (all == null) "Browse" else "${all.size} files • ${fmtBytes(all.sumOf { it.size })}", fontSize = 12.sp, color = Muted)
                             }
                             Icon(Icons.Default.ChevronRight, null, tint = Muted)
                         }
@@ -633,14 +633,14 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
             Spacer(Modifier.height(8.dp))
             OutlinedButton({ pick.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) }) {
-                Icon(Icons.Default.FolderOpen, null, Modifier.size(16.dp)); Text(if (pack == null) " Choose zip" else " Change zip")
+                Icon(Icons.Default.FolderOpen, null, Modifier.size(16.dp)); Text(if (pack == null) " Pick zip" else " Change")
             }
         }
-        OutlinedTextField(note, { note = it }, label = { Text("Release note (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(note, { note = it }, label = { Text("Note") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         if (pack != null && p != null) Mono("commit : ${pack.version.ifBlank { Commands.bump(p.version) }}: ${note.ifBlank { "update from App Hub" }}", color = Muted)
-        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.autoInstall, { vm.updateAutoInstall(it) }); Text("  Open the installer when the build passes", fontSize = 12.sp) }
+        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.autoInstall, { vm.updateAutoInstall(it) }); Text("  Auto-install", fontSize = 12.sp) }
         if (pack != null && p != null) OutlinedButton({ vm.preview(p, pack) }, Modifier.fillMaxWidth(), enabled = !vm.deploying) {
-            Icon(Icons.Default.Compare, null, Modifier.size(16.dp)); Text(" Preview changes (nothing is pushed)", fontSize = 13.sp)
+            Icon(Icons.Default.Compare, null, Modifier.size(16.dp)); Text(" Preview", fontSize = 13.sp)
         }
         BigButton(if (vm.deploying) "Working…" else "Push + build", Icons.Default.CloudUpload) {
             if (pack != null && p != null) { if (vm.nameMatches(p, pack.name)) start(p, pack, note) else target = p }
@@ -1010,7 +1010,7 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
         }
         // v28: About, What's new, Crash log and Help moved to their own page so Settings stays short
         Panel {
-            SettingRow(Icons.Default.Info, "About App Hub", "Version $appVer • What's new • Crash log • Help", onClick = { nav.navigate("about") }) {
+            SettingRow(Icons.Default.Info, "About App Hub", "v$appVer", onClick = { nav.navigate("about") }) {
                 Icon(Icons.Default.ChevronRight, null, tint = Muted)
             }
         }
@@ -1089,11 +1089,11 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onSelected, Modifier.fillMaxWidth().height(46.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.7f)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Amber)) {
-                    Text("Push to ${selected.name} anyway", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Push to ${selected.name}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             } else {
                 Button(onSelected, Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) {
-                    Text("Push to ${selected.name} anyway", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Push to ${selected.name}", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             TextButton(onCancel, Modifier.fillMaxWidth()) { Text("Cancel", color = Muted) }
@@ -1127,13 +1127,13 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
             }
             Spacer(Modifier.height(16.dp))
             Button(onCancel, Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
-                Text("Cancel, keep ${pushedVer.ifBlank { "current" }}", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Cancel", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(onPush, Modifier.fillMaxWidth().height(46.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.7f)),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Amber)) {
                 Icon(Icons.Default.CloudUpload, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                Text("Push ${zipVer.ifBlank { "it" }} anyway", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Push ${zipVer.ifBlank { "it" }}", maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

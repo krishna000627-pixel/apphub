@@ -44,7 +44,7 @@ import androidx.navigation.NavHostController
             labels.forEachIndexed { i, t ->
                 val on = i == selected
                 Column(Modifier.weight(1f).clickable { onSelect(i) }.padding(top = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(t, fontSize = 12.sp, maxLines = 1, color = if (on) Green else Muted, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
+                    Text(t, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (on) Green else Muted, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
                     Spacer(Modifier.height(8.dp))
                     Box(Modifier.fillMaxWidth().height(2.dp).background(if (on) Green else Color.Transparent))
                 }
@@ -83,7 +83,7 @@ private fun listDir(all: List<GitHub.RepoFile>, dir: String): List<Node> {
 }
 
 @Composable private fun Crumb(t: String, last: Boolean, onClick: () -> Unit) =
-    Text(t, Modifier.clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 6.dp), fontSize = 12.sp, maxLines = 1,
+    Text(t, Modifier.clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 6.dp), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
         color = if (last) Green else Cyan, fontWeight = if (last) FontWeight.Bold else FontWeight.Normal)
 
 @Composable private fun NodeRow(n: Node, showPath: Boolean, busy: Boolean, canDelete: Boolean, onOpen: () -> Unit, onDelete: () -> Unit) {
@@ -113,7 +113,7 @@ fun LazyListScope.filesBrowser(
     val all = vm.repoFiles[p.id]
     item(key = "files-head") {
         Column {
-            OutlinedTextField(fq, onFq, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Search all files") },
+            OutlinedTextField(fq, onFq, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Search") },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 trailingIcon = { if (fq.isNotEmpty()) IconButton({ onFq("") }) { Icon(Icons.Default.Close, null) } })
             if (vm.filesLoading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp), color = Green)
@@ -229,7 +229,7 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
             if (ext.isNotEmpty() && ext != name) Pill(ext.uppercase(), Green)
         }
         if (find && body is Body.Txt) OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(bottom = 8.dp), singleLine = true,
-            placeholder = { Text("Find in this file") }, leadingIcon = { Icon(Icons.Default.Search, null) })
+            placeholder = { Text("Find") }, leadingIcon = { Icon(Icons.Default.Search, null) })
         Box(Modifier.weight(1f).fillMaxWidth().background(Surf, RoundedCornerShape(12.dp)).border(1.dp, Line, RoundedCornerShape(12.dp))) {
             when (body) {
                 is Body.Loading -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = Green)

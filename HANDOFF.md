@@ -12,6 +12,12 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v33
+- Pill (Screens.kt): max width 180dp, one line, ellipsis (last characters become "...") so text can never escape the border. HubTabs labels and breadcrumb crumbs also ellipsize.
+
+## v32
+- Rule from the user: UI words as SHORT as possible so nothing is cut or wrapped (no long labels). Only label text changed (Screens.kt, Files.kt, About.kt): Passed/Failed pills, "Install"/"Update"/"Latest" buttons, "37%" download text, tabs Info/Builds/Releases/Files/Settings, About tabs App/New/Crash/Help, dialog buttons "Cancel" / "Push vN" / "Push to X". Keep new labels this short.
+
 ## v31
 1. Files page (Files.kt, GitHub.files/readBlob, HubVM.loadFiles/readFile, Screens.kt Detail): the Files tab is a folder browser (breadcrumbs, folders first with file counts, file icons + sizes, search across the whole repo, Back goes up one folder). Tapping a file opens route file/{id}?path=... (FileViewerScreen): path, size, line count, line numbers, find in file with highlight, copy, open on GitHub, delete (shared DeleteFileDialog); images shown as images; binary/too-large files get a clear message (contents API, 1 MB).
 2. Overview: "Repository files" card (count + total size, opens the Files tab) with chips that open README / HANDOFF / manifest / build files directly. Files load quietly when Overview opens.

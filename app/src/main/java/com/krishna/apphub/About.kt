@@ -18,6 +18,8 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v33" to listOf("Pill text that does not fit ends with \"...\" instead of escaping the pill."),
+        "v32" to listOf("Shorter words on buttons, pills, tabs and dialogs so nothing is cut."),
         "v31" to listOf(
             "Files is a real browser: folders, breadcrumbs, file sizes and icons, search across the repo.",
             "Tap a file to open its own page: line numbers, find in file, copy, open on GitHub, delete. Images are shown as images.",
@@ -65,7 +67,7 @@ private val helpItems = listOf(
     var page by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header("About", nav)
-        HubTabs(listOf("App", "What's new", "Crash log", "Help"), page) { page = it }
+        HubTabs(listOf("App", "New", "Crash", "Help"), page) { page = it }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when (page) {
                 0 -> {
@@ -78,8 +80,8 @@ private val helpItems = listOf(
                     Panel {
                         Text("Links", fontWeight = FontWeight.Bold)
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TextButton({ openUrl(ctx, "https://github.com/krishna000627-pixel/apphub") }, contentPadding = PaddingValues(horizontal = 8.dp)) { BtnText("App Hub on GitHub") }
-                            if (vm.login.isNotBlank()) TextButton({ openUrl(ctx, "https://github.com/${vm.login}") }, contentPadding = PaddingValues(horizontal = 8.dp)) { BtnText("Your profile") }
+                            TextButton({ openUrl(ctx, "https://github.com/krishna000627-pixel/apphub") }, contentPadding = PaddingValues(horizontal = 8.dp)) { BtnText("GitHub") }
+                            if (vm.login.isNotBlank()) TextButton({ openUrl(ctx, "https://github.com/${vm.login}") }, contentPadding = PaddingValues(horizontal = 8.dp)) { BtnText("Profile") }
                         }
                     }
                     Panel {
@@ -100,7 +102,7 @@ private val helpItems = listOf(
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedButton({ vm.copy(crash) }, enabled = crash.isNotBlank()) {
-                            Icon(Icons.Default.BugReport, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Copy crash log")
+                            Icon(Icons.Default.BugReport, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Copy log")
                         }
                         TextButton({ CrashLog.clear(ctx); crash = "" }, enabled = crash.isNotBlank()) { BtnText("Clear") }
                     }
