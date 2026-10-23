@@ -18,6 +18,12 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v31" to listOf(
+            "Files is a real browser: folders, breadcrumbs, file sizes and icons, search across the repo.",
+            "Tap a file to open its own page: line numbers, find in file, copy, open on GitHub, delete. Images are shown as images.",
+            "Overview shows the repo file count and opens README, manifest and build files in one tap.",
+            "Tabs no longer cut their names; status pills and the download button no longer wrap or clip; \"Up to date\" instead of \"Update\" when current."
+        ),
         "v30" to listOf("The older-version warning is back to the same dialog style as the wrong-app dialog (v28 look)."),
         "v28" to listOf(
             "Asks before pushing a zip that is the same as or older than the version on GitHub.",
@@ -59,9 +65,7 @@ private val helpItems = listOf(
     var page by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header("About", nav)
-        TabRow(page, containerColor = Bg, contentColor = Green) {
-            listOf("App", "What's new", "Crash log", "Help").forEachIndexed { i, t -> Tab(page == i, { page = i }, text = { Text(t, fontSize = 11.sp, maxLines = 1) }) }
-        }
+        HubTabs(listOf("App", "What's new", "Crash log", "Help"), page) { page = it }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when (page) {
                 0 -> {

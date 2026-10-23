@@ -327,17 +327,20 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- v28: delete files on GitHub ----
-    val repoFiles = mutableStateMapOf<Long, List<String>>()
+    val repoFiles = mutableStateMapOf<Long, List<GitHub.RepoFile>>()
     var filesLoading by mutableStateOf(false)
     var deletingFile by mutableStateOf("")
 
-    fun loadFiles(p: Project) = viewModelScope.launch {
-        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Settings)"); return@launch }
+    fun loadFiles(p: Project, quiet: Boolean = false) = viewModelScope.launch {
+        if (!p.repo.contains("/")) { if (!quiet) toast("Log in with GitHub first (Settings)"); return@launch }
         filesLoading = true
         val l = gh.files(p.repo)
-        if (l != null) repoFiles[p.id] = l else toast("Could not read the file list")
+        if (l != null) repoFiles[p.id] = l else if (!quiet) toast("Could not read the file list")
         filesLoading = false
     }
+
+    /** v31: content of one repo file for the file page. */
+    suspend fun readFile(p: Project, path: String): GitHub.Blob = gh.readBlob(p.repo, path)
 
     /** One commit that removes the file. The message starts with the next vNNN, like every push, so the version label follows. */
     fun deleteFile(p: Project, path: String) = viewModelScope.launch {
@@ -351,7 +354,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             if (ok) {
                 projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
                 prefs.setPushedVer(p.id, ver); pushedV[p.id] = ver
-                repoFiles[p.id] = (repoFiles[p.id] ?: emptyList()).filter { it != path }
+                repoFiles[p.id] = (repoFiles[p.id] ?: emptyList()).filter { it.path != path }
                 toast("Deleted $path. A new build starts.")
                 delay(3_000); refresh(p)
             } else toast(m)

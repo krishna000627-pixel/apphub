@@ -297,13 +297,33 @@ class GitHub(private val prefs: Prefs) {
 
     suspend fun exists(repo: String, path: String) = get("/repos/$repo/contents/$path").first == 200
 
-    /** v28: every file path on the default branch (blobs only), sorted. null = could not be read. */
-    suspend fun files(repo: String): List<String>? {
+    data class RepoFile(val path: String, val size: Long)
+    /** A file's content (null bytes + err when it could not be read). */
+    class Blob(val bytes: ByteArray?, val size: Long = 0, val err: String = "")
+
+    /** v28/v31: every file on the default branch with its size (blobs only), sorted by path. null = could not be read. */
+    suspend fun files(repo: String): List<RepoFile>? {
         val (c0, b0) = get("/repos/$repo"); if (c0 != 200) return null
         val branch = JSONObject(b0).s("default_branch").ifBlank { "main" }
         val (c, b) = get("/repos/$repo/git/trees/$branch?recursive=1"); if (c != 200) return null
         val arr = JSONObject(b).optJSONArray("tree") ?: return emptyList()
-        return (0 until arr.length()).map { arr.getJSONObject(it) }.filter { it.optString("type") == "blob" }.map { it.getString("path") }.sorted()
+        return (0 until arr.length()).map { arr.getJSONObject(it) }.filter { it.optString("type") == "blob" }
+            .map { RepoFile(it.getString("path"), it.optLong("size")) }.sortedBy { it.path }
+    }
+
+    /** v31: one file's content through the contents API (GitHub returns it inline up to 1 MB). */
+    suspend fun readBlob(repo: String, path: String): Blob {
+        val enc = path.split("/").joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
+        val (c, b) = get("/repos/$repo/contents/$enc")
+        if (c == 404) return Blob(null, 0, "File not found. It may have been deleted.")
+        if (c != 200) return Blob(null, 0, "Could not open the file ($c).")
+        return try {
+            val j = JSONObject(b)
+            val size = j.optLong("size")
+            val content = j.optString("content")
+            if (j.optString("encoding") != "base64" || (content.isBlank() && size > 0)) Blob(null, size, "Too large to preview here (${size / 1024} KB). Open it on GitHub.")
+            else Blob(Base64.decode(content, Base64.DEFAULT), size)
+        } catch (e: Exception) { Blob(null, 0, "This is a folder or could not be read.") }
     }
 
     /**

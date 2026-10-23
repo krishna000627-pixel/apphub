@@ -12,6 +12,12 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v31
+1. Files page (Files.kt, GitHub.files/readBlob, HubVM.loadFiles/readFile, Screens.kt Detail): the Files tab is a folder browser (breadcrumbs, folders first with file counts, file icons + sizes, search across the whole repo, Back goes up one folder). Tapping a file opens route file/{id}?path=... (FileViewerScreen): path, size, line count, line numbers, find in file with highlight, copy, open on GitHub, delete (shared DeleteFileDialog); images shown as images; binary/too-large files get a clear message (contents API, 1 MB).
+2. Overview: "Repository files" card (count + total size, opens the Files tab) with chips that open README / HANDOFF / manifest / build files directly. Files load quietly when Overview opens.
+3. UI fixes from screenshots: HubTabs replaces TabRow (labels were cut to "Overvie"/"Settin"); Pill never wraps; card pills are a FlowRow; the card download button shows ring + percent only (the pill says Downloading); installed and current now says "Up to date" instead of "Update".
+No new dependencies.
+
 ## v30
 - OldVersionDialog is the v28 version again (same centered dialog style as ZipMismatchDialog); the v29 bottom sheet is removed. Everything else unchanged.
 No new dependencies.
