@@ -3,7 +3,9 @@ package com.krishna.apphub
 import android.content.Context
 import androidx.room.Room
 import androidx.work.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -16,16 +18,35 @@ object ApkStore {
 
     fun dir(ctx: Context) = File(ctx.filesDir, "apks")
     fun file(ctx: Context, id: Long) = File(dir(ctx), "app_$id.apk")
+    /** Partial download of one release. Named per release so a half file of an older build is never continued. */
+    fun part(ctx: Context, id: Long, tag: String) = File(dir(ctx), "app_${id}_${tag.filter { it.isLetterOrDigit() }}.part")
+    fun partBytes(ctx: Context, id: Long, tag: String): Long = part(ctx, id, tag).let { if (it.exists()) it.length() else 0L }
+    fun clearParts(ctx: Context, id: Long, except: File? = null) {
+        dir(ctx).listFiles()?.filter { it.name.startsWith("app_${id}_") && it.name.endsWith(".part") && it != except }?.forEach { it.delete() }
+    }
 
-    /** Downloads via a .part file so a broken download is never installed. */
+    /**
+     * Downloads via a .part file so a broken download is never installed. An interrupted download keeps its .part file
+     * and the next try resumes it. If another download of the same app is running (UI or worker) this waits for it.
+     */
     suspend fun fetch(ctx: Context, gh: GitHub, prefs: Prefs, p: Project, r: GitHub.Rel, onProgress: (Long, Long) -> Unit): Boolean =
         withContext(Dispatchers.IO) {
-            if (!busy.add(p.id)) return@withContext false
+            if (!busy.add(p.id)) {
+                while (busy.contains(p.id)) delay(500)
+                return@withContext prefs.cachedTag(p.id) == r.tag && file(ctx, p.id).exists()
+            }
             try {
-                val f = file(ctx, p.id); val part = File(f.path + ".part")
+                val f = file(ctx, p.id); val part = part(ctx, p.id, r.tag)
                 f.parentFile?.mkdirs()
-                val ok = runCatching { gh.download(r.assetUrl, part, onProgress) }.isSuccess && part.length() > 0 && run { f.delete(); part.renameTo(f) }
-                if (!ok) { part.delete(); return@withContext false }
+                clearParts(ctx, p.id, part)
+                try { gh.download(r.assetUrl, part, onProgress) }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) { return@withContext false }
+                // a complete download must be a readable APK, otherwise start over next time
+                val readable = part.length() > 0 && ctx.packageManager.getPackageArchiveInfo(part.path, 0) != null
+                if (!readable) { part.delete(); return@withContext false }
+                f.delete()
+                if (!part.renameTo(f)) { part.delete(); return@withContext false }
                 prefs.setCachedTag(p.id, r.tag); prefs.setInstallTry(p.id, 0L)
                 true
             } finally { busy.remove(p.id) }

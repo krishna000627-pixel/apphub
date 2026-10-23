@@ -12,6 +12,16 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v25
+- Live data: App() runs HubVM.autoSync() every 3 s while the app is on screen (and on resume / Dashboard open): runs, newest release, installed check, zip scan. Silent, no spinners (only the Refresh button shows one). The 10-minute staleness gate is gone; the snapshot cache (SnapCache) is only the first paint. GitHub.get caches ETags: a 304 answer is free against the rate limit, so polling is cheap. The error text is read once per failed run (errRun). Detail and Install screens also poll loadDetails every 3 s.
+- GitHub.latest now picks the newest APK release by published_at from /releases?per_page=20 (/releases/latest orders by commit date and kept returning a very old build); releases() is sorted the same way. GitHub.Rel carries time + sizeKb.
+- Download progress lives in the ViewModel (dlProgress / dlError, HubVM.downloadTracked / download), not in the Install screen, so leaving and reopening the page never shows "Download failed" and the download keeps running. Interrupted downloads keep app_<id>_<tag>.part and resume with HTTP Range (GitHub.download, ApkStore.fetch); a finished file must parse as an APK. ApkStore.fetch waits if the worker/UI is already downloading the same app.
+- Install screen redesigned: status card (up to date / update / not installed), from -> to, release age + size, progress with MB, Resume, Open app, What's new, Recent builds.
+- Version/push conflicts: pending() is true only while a zip in Downloads is newer than the last pushed build; the label always follows the newest pushed "vNNN:" commit (never kept ahead; manualVer is no longer used). With "Follow builds automatically" on, the Version field and +1 are disabled in app settings. A repeated +1 / re-push can no longer show "+ Push v27" when v24 is the latest build.
+- Installed check: one "installed:" line in Overview (yes + version + build / no / unknown). Apps installed outside App Hub are judged by versionCode of the saved APK (behind map, checkInstalls); the latest APK is saved in the background also for apps that are on the phone with an unknown build.
+- Prompt Maker step 4 is now a text box ("what do you want changed"); the prompt is built from it and only copied, not shown (HubVM.promptNote, Prompts.make(change)).
+- Setup project: no autofill at all (no repo/package/version defaults, no quick-fill chips); placeholders only. Package is found later automatically (v21). Version blank = v1.
+
 ## v24
 - Zip suggestion is by name and asked once: HubVM.projectFor(zipName) picks the ONE project a zip is named after (app name, then repo name; Downloads.baseOf strips _vN and " (1)"). scanZips only offers a zip to that project, and zipKey is per file, so duplicate/same-named projects no longer ask twice.
 - Deploy screen: choosing a zip (or the suggestion) selects the project it is named after. Push + build with a zip whose name does not match the selected project opens a dialog (push to the named project / push to the selected one anyway / cancel) instead of silently pushing to another repo.

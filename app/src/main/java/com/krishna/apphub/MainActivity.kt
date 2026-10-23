@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
         hub.resumeLogin()
         hub.scanZips(this)
         hub.checkInstalls()
+        hub.autoSync()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

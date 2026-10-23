@@ -33,7 +33,7 @@ class GitHub(private val prefs: Prefs) {
     data class Release(val tag: String, val time: String, val notes: String, val sizeKb: Long)
     data class Step(val name: String, val ok: Boolean?)
     data class Job(val id: Long, val name: String, val ok: Boolean?, val steps: List<Step>)
-    data class Rel(val tag: String, val body: String, val assetUrl: String)
+    data class Rel(val tag: String, val body: String, val assetUrl: String, val time: String = "", val sizeKb: Long = 0L)
 
     private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS).build()
     private val api = "https://api.github.com"
@@ -47,7 +47,24 @@ class GitHub(private val prefs: Prefs) {
         catch (e: Exception) { 0 to (e.message ?: "network error") }
     }
 
-    private suspend fun get(path: String) = exec(rb(api + path).build())
+    // GET with ETag: an unchanged answer is a 304 (free against the GitHub rate limit), so polling every few seconds is cheap.
+    private val etags = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
+
+    private suspend fun get(path: String): Pair<Int, String> = withContext(Dispatchers.IO) {
+        val cached = etags[path]
+        val b = rb(api + path)
+        if (cached != null) b.header("If-None-Match", cached.first)
+        try {
+            http.newCall(b.build()).execute().use { r ->
+                if (r.code == 304 && cached != null) 200 to cached.second
+                else {
+                    val body = r.body?.string() ?: ""
+                    if (r.code == 200) r.header("ETag")?.let { etags[path] = it to body }
+                    r.code to body
+                }
+            }
+        } catch (e: Exception) { 0 to (e.message ?: "network error") }
+    }
     private suspend fun send(method: String, path: String, body: JSONObject) =
         exec(rb(api + path).method(method, body.toString().toRequestBody("application/json".toMediaType())).build())
 
@@ -179,13 +196,13 @@ class GitHub(private val prefs: Prefs) {
     }
 
     suspend fun releases(repo: String): List<Release> {
-        val (c, b) = get("/repos/$repo/releases?per_page=6"); if (c != 200) return emptyList()
+        val (c, b) = get("/repos/$repo/releases?per_page=20"); if (c != 200) return emptyList()
         val a = JSONArray(b)
-        return (0 until a.length()).map {
-            val o = a.getJSONObject(it)
-            Release(o.s("tag_name"), o.s("published_at").replace("T", " ").take(16), o.s("body"),
-                (o.optJSONArray("assets")?.optJSONObject(0)?.optLong("size") ?: 0L) / 1024)
-        }
+        return (0 until a.length()).map { a.getJSONObject(it) }.filter { !it.optBoolean("draft") }
+            .sortedByDescending { it.s("published_at").ifBlank { it.s("created_at") } }.take(8).map { o ->
+                Release(o.s("tag_name"), o.s("published_at").ifBlank { o.s("created_at") }.replace("T", " ").take(16), o.s("body"),
+                    (o.optJSONArray("assets")?.optJSONObject(0)?.optLong("size") ?: 0L) / 1024)
+            }
     }
 
     suspend fun jobs(repo: String, runId: Long): List<Job> {
@@ -351,16 +368,27 @@ class GitHub(private val prefs: Prefs) {
     }
 
     // ---- install / update ----
+    /** Newest APK release by publish time. (/releases/latest orders by commit date and can keep returning a very old build.) */
     suspend fun latest(repo: String): Rel? {
-        val (c, b) = get("/repos/$repo/releases/latest")
+        val (c, b) = get("/repos/$repo/releases?per_page=20")
         if (c != 200) return null
-        val j = JSONObject(b)
-        val assets = j.getJSONArray("assets")
-        for (i in 0 until assets.length()) {
-            val a = assets.getJSONObject(i)
-            if (a.getString("name").endsWith(".apk")) return Rel(j.getString("tag_name"), j.optString("body"), a.getString("url"))
+        val a = JSONArray(b)
+        var best: Rel? = null; var bestKey = ""
+        for (i in 0 until a.length()) {
+            val j = a.getJSONObject(i)
+            if (j.optBoolean("draft")) continue
+            val assets = j.optJSONArray("assets") ?: continue
+            for (k in 0 until assets.length()) {
+                val x = assets.getJSONObject(k)
+                if (!x.s("name").endsWith(".apk")) continue
+                val t = j.s("published_at").ifBlank { j.s("created_at") }
+                val better = best == null || t > bestKey ||
+                    (t == bestKey && (Commands.num(j.s("tag_name")).toIntOrNull() ?: 0) > (Commands.num(best.tag).toIntOrNull() ?: 0))
+                if (better) { best = Rel(j.s("tag_name"), j.s("body"), x.s("url"), t.replace("T", " ").take(16), x.optLong("size") / 1024); bestKey = t }
+                break
+            }
         }
-        return null
+        return best
     }
 
     /** applicationId of the app, read from app/build.gradle(.kts) in the repo. "" when not found. */
@@ -373,14 +401,22 @@ class GitHub(private val prefs: Prefs) {
         return ""
     }
 
+    /** Downloads into dest. A partial file is resumed (HTTP Range); if the server ignores Range the file starts over. */
     suspend fun download(url: String, dest: File, onProgress: (Long, Long) -> Unit) = withContext(Dispatchers.IO) {
-        val r = rb(url).header("Accept", "application/octet-stream").build()
-        http.newCall(r).execute().use { resp ->
+        val partial = if (dest.exists()) dest.length() else 0L
+        val rq = rb(url).header("Accept", "application/octet-stream")
+        if (partial > 0) rq.header("Range", "bytes=$partial-")
+        http.newCall(rq.build()).execute().use { resp ->
+            if (resp.code == 416) { dest.delete(); error("stale partial file, try again") }
             if (!resp.isSuccessful) error("HTTP ${resp.code}")
             val body = resp.body ?: error("empty response")
-            val total = body.contentLength()
-            body.byteStream().use { i -> dest.outputStream().use { o ->
-                val buf = ByteArray(16384); var done = 0L
+            val append = resp.code == 206 && partial > 0
+            val base = if (append) partial else 0L
+            val len = body.contentLength()
+            val total = if (len >= 0) base + len else -1L
+            body.byteStream().use { i -> java.io.FileOutputStream(dest, append).use { o ->
+                val buf = ByteArray(16384); var done = base
+                onProgress(done, total)
                 while (true) { val n = i.read(buf); if (n < 0) break; o.write(buf, 0, n); done += n; onProgress(done, total) }
             } }
         }

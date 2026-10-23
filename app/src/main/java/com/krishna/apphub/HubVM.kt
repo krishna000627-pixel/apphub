@@ -15,6 +15,7 @@ import android.net.Uri
 import android.util.Base64
 import android.widget.Toast
 import androidx.compose.runtime.*
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
@@ -41,6 +42,10 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     val errors = mutableStateMapOf<Long, String>()
     val log = mutableStateListOf<String>()
     val latest = mutableStateMapOf<Long, String>()
+    val latestRel = mutableStateMapOf<Long, GitHub.Rel>()   // newest APK release per app (tag, notes, size, time)
+    val dlProgress = mutableStateMapOf<Long, Float>()       // 0..1 while an APK downloads; kept here so leaving the Install screen never loses it
+    val dlError = mutableStateMapOf<Long, String>()         // last real download failure (cleared on the next try)
+    val behind = mutableStateMapOf<Long, Boolean>()         // installed outside App Hub and older than the newest saved APK
     val pins = mutableStateMapOf<Long, Boolean>()
     val installed = mutableStateMapOf<Long, String>()
     val pushedV = mutableStateMapOf<Long, String>()
@@ -81,17 +86,16 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var ideaPitch by mutableStateOf("")
     var ideaNotes by mutableStateOf("")
     var draftName by mutableStateOf("")
+    var promptNote by mutableStateOf("")   // "what do you want changed" text of the Prompt Maker, kept across tabs
 
     // full build-log viewer
     var logTitle by mutableStateOf("")
     var logLines by mutableStateOf<List<String>>(emptyList())
     var logLoading by mutableStateOf(false)
 
-    // ---- local snapshot: last known GitHub data, so the UI is filled instantly and only syncs when stale ----
+    // ---- local snapshot: last known GitHub data, only for the first paint. Live data replaces it within 3 s (autoSync). ----
     private val snapDir get() = File(getApplication<Application>().cacheDir, "snap")
     private val snapped = mutableSetOf<Long>()
-    private val staleMs = 10 * 60_000L
-    private fun fresh(at: Long) = System.currentTimeMillis() - at < staleMs
 
     private fun loadSnaps() {
         snapDir.listFiles()?.forEach { f ->
@@ -134,7 +138,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun hasUpdate(p: Project): Boolean {
         val l = latest[p.id] ?: return false
         val i = installedTag(p.id)
-        return i.isNotBlank() && i != l
+        if (i.isNotBlank()) return i != l
+        return behind[p.id] == true   // installed outside App Hub: judged by the versionCode of the saved APK
     }
 
     // ---- APK cache: downloaded -> installed -> cleared ----
@@ -162,6 +167,33 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         return ok
     }
 
+    /**
+     * Download with progress kept here in the ViewModel, so it keeps running and showing when the Install screen is left and reopened.
+     * An interrupted download keeps its partial file and resumes on the next try.
+     */
+    private suspend fun downloadTracked(p: Project, r: GitHub.Rel, onPct: (Int) -> Unit = {}): Boolean {
+        if (dlProgress.containsKey(p.id)) {   // already running (started elsewhere): wait for it
+            while (dlProgress.containsKey(p.id)) delay(300)
+            return cachedTag(p.id) == r.tag && hasCached(p)
+        }
+        dlError.remove(p.id); dlProgress[p.id] = 0f
+        var last = -1
+        val ok = try {
+            fetchApk(p, r) { d, t ->
+                if (t > 0) { val pc = (d * 100 / t).toInt(); if (pc != last) { last = pc; dlProgress[p.id] = pc / 100f; onPct(pc) } }
+            }
+        } finally { dlProgress.remove(p.id) }
+        if (ok) dlError.remove(p.id) else dlError[p.id] = "Download interrupted. Tap Resume to continue where it stopped."
+        return ok
+    }
+
+    /** Install button: download (or resume), then open the installer. Runs in the ViewModel, not in the screen. */
+    fun download(ctx: Context, p: Project, r: GitHub.Rel, thenInstall: Boolean) = viewModelScope.launch {
+        if (dlProgress.containsKey(p.id)) return@launch
+        val ok = downloadTracked(p, r)
+        if (ok && thenInstall) installCached(ctx, p)
+    }
+
     /** Opens the system installer for the cached APK. The app is marked installed only once Android confirms it (checkInstalls). */
     fun installCached(ctx: Context, p: Project) {
         if (!hasCached(p)) { dropCache(p); toast("Cached APK is gone, download again"); return }
@@ -172,7 +204,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     }
 
     fun dropCache(p: Project) {
-        apkFile(p).delete(); File(apkFile(p).path + ".part").delete()
+        apkFile(p).delete(); File(apkFile(p).path + ".part").delete()   // partial downloads are kept: the next try resumes them
         prefs.setCachedTag(p.id, ""); prefs.setInstallTry(p.id, 0L); cached.remove(p.id)
     }
 
@@ -186,6 +218,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     /** Confirms installs that finished (package updated after the installer was opened), then clears used or stale APKs. */
     private val checking = java.util.concurrent.atomic.AtomicBoolean(false)
     private val detecting = mutableSetOf<Long>()   // apps whose package name was already looked up online this session
+
+    private val apkCodes = mutableMapOf<Long, Pair<String, Long>>()   // app id -> (release tag, versionCode of the saved APK)
+    private fun apkCodeOf(id: Long, tag: String, pm: PackageManager): Long? {
+        apkCodes[id]?.let { if (it.first == tag) return it.second }
+        val p = projects.value.firstOrNull { it.id == id } ?: return null
+        val info = runCatching { pm.getPackageArchiveInfo(apkFile(p).path, 0) }.getOrNull() ?: return null
+        return PackageInfoCompat.getLongVersionCode(info).also { apkCodes[id] = tag to it }
+    }
 
     /** Package name of an app that has none yet: from its saved APK, else from applicationId in the repo's app/build.gradle(.kts). */
     private suspend fun detectPackage(p: Project, pm: PackageManager): String {
@@ -222,9 +262,20 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 prefs.cachedTag(p.id).let { if (it.isBlank()) cached.remove(p.id) else if (cached[p.id] != it) cached[p.id] = it }
                 // is the app on this phone? an uninstalled app also clears its installed marker
                 if (p.packageName.isNotBlank()) {
-                    val ver = runCatching { pm.getPackageInfo(p.packageName, 0).versionName ?: "?" }.getOrNull()
-                    onPhone[p.id] = ver ?: ""
-                    if (ver == null && installedTag(p.id).isNotBlank()) markInstalled(p.id, "")
+                    val info = runCatching { pm.getPackageInfo(p.packageName, 0) }.getOrNull()
+                    val ver = info?.let { it.versionName ?: "?" }
+                    if (onPhone[p.id] != (ver ?: "")) onPhone[p.id] = ver ?: ""
+                    if (info == null && installedTag(p.id).isNotBlank()) markInstalled(p.id, "")
+                    // Which build is on the phone? Compare its versionCode with the saved APK (also when it was installed outside App Hub).
+                    val cTag0 = cachedTag(p.id)
+                    val aCode = if (info != null && cTag0.isNotBlank() && apkFile(p).exists()) apkCodeOf(p.id, cTag0, pm) else null
+                    if (info != null && aCode != null) {
+                        val code = PackageInfoCompat.getLongVersionCode(info)
+                        if (code >= aCode && installedTag(p.id) != cTag0) markInstalled(p.id, cTag0)
+                        else if (code < aCode && installedTag(p.id) == cTag0) markInstalled(p.id, "")
+                        val isBehind = code < aCode && cTag0 == latest[p.id]
+                        if (isBehind) { if (behind[p.id] != true) behind[p.id] = true } else behind.remove(p.id)
+                    } else if (info == null) behind.remove(p.id)
                 }
                 val tag = cachedTag(p.id)
                 val tried = prefs.installTry(p.id)
@@ -237,14 +288,19 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             // leftovers from older versions or deleted apps (finished downloads only, never a .part in progress)
             val keep = list.filter { cachedTag(it.id).isNotBlank() }.map { apkFile(it).name }.toSet()
             apkDir.listFiles()?.filter { it.name !in keep && !it.name.endsWith(".part") }?.forEach { it.delete() }
+            apkDir.listFiles()?.filter { it.name.endsWith(".part") && System.currentTimeMillis() - it.lastModified() > 7 * 86_400_000L }?.forEach { it.delete() }
         } finally { checking.set(false) }
     }
 
-    /** True when the version label is ahead of what was last pushed (an update waiting to be pushed). */
+    /**
+     * True only while a zip in Downloads is newer than the last pushed build. The version label alone never makes it true,
+     * so a repeated "+1" or a re-push of the same version can no longer show "+ Push v27" when v24 is the latest build.
+     */
     fun pending(p: Project): Boolean {
-        if (zipFound.containsKey(p.id)) return true
-        val pv = pushedV[p.id] ?: prefs.pushedVer(p.id)
-        return pv.isNotBlank() && n(p.version) > n(pv)
+        val z = zipFound[p.id] ?: return false
+        val zv = Zipper.versionOf(z.name)
+        val pv = (pushedV[p.id] ?: prefs.pushedVer(p.id)).ifBlank { p.version }
+        return zv.isBlank() || n(zv) > n(pv)
     }
 
     /** What the + icon is waiting to push: the new zip's version, or the bumped label. */
@@ -465,7 +521,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val u = gh.user()
         if (u == null) { prefs.token = ""; loginMsg = "GitHub rejected the token (could not read your user)"; toast(loginMsg); return }
         login = u; prefs.login = u; loginMsg = ""
-        toast("Logged in as $u"); fixOwners(); refreshAll(true)
+        toast("Logged in as $u"); fixOwners(); refreshAll()
         if (!inForeground) comeBack(u)
     }
 
@@ -494,62 +550,92 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     // ---- projects ----
     /**
-     * Pulls build runs and keeps the version label in step automatically, however the build was triggered
-     * (app push, GitHub website, re-run, Build button): a pushed "vNNN:" message sets the version, anything else bumps it by one.
+     * Pulls build runs and the newest release, silently (no spinner). The version label follows the newest pushed "vNNN:" commit,
+     * so it is never ahead of the latest build. Unchanged answers cost nothing (ETag), so this can run every 3 seconds.
      */
-    fun refresh(p: Project, force: Boolean = true) = viewModelScope.launch {
+    fun refresh(p: Project) = viewModelScope.launch {
         if (!p.repo.contains("/")) return@launch
-        // fresh local snapshot and no build in progress: nothing to fetch
-        if (!force && p.id in snapped && p.lastStatus != "running" && fresh(prefs.syncedAt(p.id))) return@launch
         val r = gh.runs(p.repo)
-        if (r.isEmpty() && runs[p.id] != null) return@launch   // offline or API error: keep what is cached
+        if (r.isEmpty() && runs[p.id] != null) return@launch   // offline or API error: keep what is shown
         val real = r.filter { !it.cancelled }   // a run you cancelled is not a result: it never shows as failed
-        runs[p.id] = real
+        var changed = false
+        if (runs[p.id] != real) { runs[p.id] = real; changed = true }
         val last = real.firstOrNull()
         val status = when { last == null -> "none"; last.ok == null -> "running"; last.ok == true -> "passed"; else -> "failed" }
-        val err = if (status == "failed") gh.errorOf(p.repo, last!!.id) else ""
-        errors[p.id] = err
+        // the error text is read once per failed run, not on every poll
+        val err = if (status == "failed" && last != null) {
+            val old = errors[p.id].orEmpty()
+            if (errRun[p.id] == last.id && old.isNotBlank()) old else gh.errorOf(p.repo, last.id).also { if (it.isNotBlank()) errRun[p.id] = last.id }
+        } else ""
+        if (errors[p.id] != err) { errors[p.id] = err; changed = true }
         val rel = gh.latest(p.repo)
-        rel?.let { latest[p.id] = it.tag }
+        if (rel != null) {
+            if (latestRel[p.id] != rel) latestRel[p.id] = rel
+            if (latest[p.id] != rel.tag) { latest[p.id] = rel.tag; changed = true }
+        }
         pruneOne(p)
-        // a newer release than the installed one: save its APK in the app now, so Update is one tap
-        if (autoDownload && rel != null && hasUpdate(p) && cachedTag(p.id) != rel.tag && downloading.add(p.id)) {
-            viewModelScope.launch { try { fetchApk(p, rel) { _, _ -> } } finally { downloading.remove(p.id) } }
+        // a newer build than the one on the phone: save its APK now (Wi-Fi rules apply), so Update is one tap.
+        // Also for an app that is on the phone but whose build is unknown (installed outside App Hub): the saved APK settles which build it is.
+        val unknownBuild = installedTag(p.id).isBlank() && isInstalled(p) == true
+        if (autoDownload && rel != null && (hasUpdate(p) || unknownBuild) && cachedTag(p.id) != rel.tag && !dlProgress.containsKey(p.id)
+            && !(wifiOnly && onMetered()) && System.currentTimeMillis() - (autoTry[p.id] ?: 0L) > 300_000L) {
+            autoTry[p.id] = System.currentTimeMillis()
+            viewModelScope.launch { downloadTracked(p, rel) }
         }
         lock.withLock {
             val cur = projects.value.firstOrNull { it.id == p.id }
             if (cur != null) {
-                // The label is the newest "vNNN:" commit that was pushed. Merge commits, cancelled runs, re-runs and
-                // manual dispatches never change it (they used to bump it by one, which gave v23 after a v22 push).
+                // The label is the newest "vNNN:" commit that was pushed. Merge commits, cancelled runs, re-runs and manual
+                // dispatches never change it, and it is never kept ahead of the latest build (that gave "v27" after a v24 push).
                 val pushed = r.sortedByDescending { it.id }.firstNotNullOfOrNull { vOf(it.msg) }
                     ?: prefs.pushedVer(p.id).ifBlank { cur.version }
                 if (r.isNotEmpty()) prefs.setLastRun(p.id, r.maxOf { it.id })
-                prefs.setPushedVer(p.id, pushed); pushedV[p.id] = pushed
-                val manual = prefs.manualVer(p.id)
-                val keep = !prefs.autoVer(p.id) || (manual.isNotBlank() && manual == cur.version && n(cur.version) > n(pushed))
-                val label = if (keep) cur.version else pushed
-                dao.save(cur.copy(version = label, lastStatus = status, lastError = err))
+                if (pushedV[p.id] != pushed) { prefs.setPushedVer(p.id, pushed); pushedV[p.id] = pushed }
+                val label = if (prefs.autoVer(p.id)) pushed else cur.version
+                val next = cur.copy(version = label, lastStatus = status, lastError = err)
+                if (next != cur) { dao.save(next); changed = true }
             }
         }
-        prefs.setSyncedAt(p.id, System.currentTimeMillis()); saveSnap(p)
+        if (changed) saveSnap(p)
     }
 
-    fun refreshAll(force: Boolean = false) = viewModelScope.launch {
+    private val errRun = mutableMapOf<Long, Long>()       // app id -> run id the shown error belongs to
+    private val autoTry = mutableMapOf<Long, Long>()      // app id -> last background download attempt (retry at most every 5 min)
+    private val syncing = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun onMetered(): Boolean = runCatching {
+        (getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered
+    }.getOrDefault(false)
+
+    /** Silent live sync, called every 3 s while App Hub is on screen and when a screen opens. No spinner, overlapping runs are skipped. */
+    fun autoSync() {
+        if (!inForeground || prefs.token.isBlank() || !syncing.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            try {
+                projects.value.map { refresh(it) }.forEach { it.join() }
+                scanZips(getApplication())
+                checkInstalls()
+            } finally { syncing.set(false) }
+        }
+    }
+
+    /** The refresh button: same sync, with a spinner because you asked for it. */
+    fun refreshAll() = viewModelScope.launch {
         refreshing = true
-        projects.value.map { refresh(it, force) }.forEach { it.join() }
+        projects.value.map { refresh(it) }.forEach { it.join() }
         scanZips(getApplication())
         checkInstalls()
         refreshing = false
     }
 
-    /** Repo info, recent commits and releases, fetched inside the app. */
-    fun loadDetails(p: Project, force: Boolean = true) = viewModelScope.launch {
+    /** Repo info, recent commits and releases, fetched inside the app (silent; unchanged answers are free). */
+    fun loadDetails(p: Project) = viewModelScope.launch {
         if (!p.repo.contains("/")) return@launch
-        if (!force && p.id in snapped && infos[p.id] != null && fresh(prefs.detailsAt(p.id))) return@launch
-        gh.info(p.repo)?.let { infos[p.id] = it }
-        gh.commits(p.repo).let { if (it.isNotEmpty()) commits[p.id] = it }
-        gh.releases(p.repo).let { if (it.isNotEmpty()) releases[p.id] = it }
-        prefs.setDetailsAt(p.id, System.currentTimeMillis()); saveSnap(p)
+        var changed = false
+        gh.info(p.repo)?.let { if (infos[p.id] != it) { infos[p.id] = it; changed = true } }
+        gh.commits(p.repo).let { if (it.isNotEmpty() && commits[p.id] != it) { commits[p.id] = it; changed = true } }
+        gh.releases(p.repo).let { if (it.isNotEmpty() && releases[p.id] != it) { releases[p.id] = it; changed = true } }
+        if (changed) saveSnap(p)
     }
 
     fun openLog(p: Project, j: GitHub.Job) = viewModelScope.launch {
@@ -563,11 +649,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun loadJobs(p: Project, runId: Long) = viewModelScope.launch { jobs[runId] = gh.jobs(p.repo, runId) }
 
     fun update(p: Project) = viewModelScope.launch {
-        val old = projects.value.firstOrNull { it.id == p.id }
-        if (old != null && old.version != p.version) prefs.setManualVer(p.id, p.version)
         dao.save(p)
     }
-    fun delete(p: Project) = viewModelScope.launch { dropCache(p); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
+    fun delete(p: Project) = viewModelScope.launch { dropCache(p); ApkStore.clearParts(getApplication<Application>(), p.id); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
 
     fun build(p: Project) = viewModelScope.launch {
         toast(if (gh.dispatch(p.repo)) "Build triggered on GitHub" else "Trigger failed — push the workflow first")
@@ -656,12 +740,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (rel == null) { deployLog += "• No APK release found yet. Tap Install this build below."; return }
         deployLog += "Downloading ${rel.tag}…"
         val idx = deployLog.lastIndex
-        var last = 0
-        val ok = fetchApk(p, rel) { d, t ->
-            if (t > 0 && gen == deployGen) {
-                val pc = (d * 100 / t).toInt()
-                if (pc >= last + 10) { last = pc; if (idx in deployLog.indices) deployLog[idx] = "Downloading ${rel.tag}… $pc%" }
-            }
+        var shown = 0
+        val ok = downloadTracked(p, rel) { pc ->
+            if (gen == deployGen && pc >= shown + 10) { shown = pc; if (idx in deployLog.indices) deployLog[idx] = "Downloading ${rel.tag}… $pc%" }
         }
         if (gen != deployGen) return
         if (!ok) { deployLog += "✗ Download failed. Tap Install this build below."; return }

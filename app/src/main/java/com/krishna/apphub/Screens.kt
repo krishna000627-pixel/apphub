@@ -34,6 +34,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -126,6 +127,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val ctx = LocalContext.current
     val ps by vm.projects.collectAsState()
     LaunchedEffect(ps.size) { vm.scanZips(ctx) }
+    // everything stays live: silent sync every 3 s while App Hub is on screen (no spinners)
+    LaunchedEffect(Unit) { while (true) { vm.autoSync(); delay(3_000) } }
     val waiting = vm.zipFound.entries.firstOrNull { e -> vm.zipKey(e.key, e.value) !in vm.zipDismissed }
     val waitProj = waiting?.let { w -> ps.firstOrNull { it.id == w.key } }
     if (waiting != null && waitProj != null) {
@@ -172,7 +175,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val ps by vm.projects.collectAsState()
     var f by remember { mutableStateOf("All") }
     var q by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { vm.refreshAll() }   // cached data shows at once; syncs only when older than 10 min
+    LaunchedEffect(Unit) { vm.autoSync() }   // fresh data at once, silently
     val ctx = LocalContext.current
     fun hit(p: Project, k: String) = when (k) {
         "Pinned" -> vm.isPinned(p.id); "To push" -> vm.pending(p); "Errors" -> p.lastStatus == "failed"; "Updates" -> vm.hasUpdate(p); else -> true
@@ -181,7 +184,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         .sortedWith(compareByDescending<Project> { vm.isPinned(it.id) }.thenBy { it.name.lowercase() })
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header("App Hub") {
-            IconButton({ vm.refreshAll(true) }, Modifier.size(40.dp)) {
+            IconButton({ vm.refreshAll() }, Modifier.size(40.dp)) {
                 if (vm.refreshing) CircularProgressIndicator(Modifier.size(18.dp), color = Green, strokeWidth = 2.dp) else Icon(Icons.Default.Refresh, null)
             }
             IconButton({ nav.navigate("add") }, Modifier.size(40.dp)) { Icon(Icons.Default.Add, null, tint = Green) }
@@ -281,7 +284,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val err = vm.errors[id] ?: ""
     val upd = vm.hasUpdate(p)
     val pend = vm.pending(p)
-    LaunchedEffect(id) { vm.refresh(p, false); vm.loadDetails(p, false); vm.checkInstalls() }
+    LaunchedEffect(id, p.repo) { vm.refresh(p); vm.checkInstalls(); while (true) { vm.loadDetails(p).join(); delay(3_000) } }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Header(p.name, nav) {
@@ -326,9 +329,14 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                         }
                         Spacer(Modifier.height(6.dp))
                         Mono("status   : ${p.lastStatus}", color = statusColor(p.lastStatus))
-                        Mono("installed: ${vm.installedTag(id).ifBlank { "-" }}"); Mono("latest   : ${vm.latest[id] ?: "-"}")
-                        Mono("on phone : ${vm.isInstalled(p).let { if (it == null) "unknown" else if (it) (vm.onPhone[id] ?: "yes") else "not installed" }}",
-                            color = if (vm.isInstalled(p) == false) Amber else Color.Unspecified)
+                        val inst = vm.installedTag(id); val phone = vm.isInstalled(p)
+                        Mono("installed: ${when {
+                            phone == false -> "no (not on this phone)"
+                            phone == true -> "yes, ${vm.onPhone[id] ?: "?"}" + if (inst.isNotBlank()) " ($inst)" else ""
+                            inst.isNotBlank() -> inst
+                            else -> "unknown"
+                        }}", color = if (phone == false) Amber else Color.Unspecified)
+                        Mono("latest   : ${vm.latest[id] ?: "-"}")
                         if (vm.waitingInstall(p)) Mono("saved apk: ${vm.cachedTag(id)} (not installed yet)", color = Amber)
                         else if (vm.hasCached(p)) Mono("saved apk: ${vm.cachedTag(id)}")
                     }
@@ -449,10 +457,11 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         Panel {
             SectionTitle(Icons.Default.Tag, "Version")
             Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(ver, { ver = it }, Modifier.weight(1f), label = { Text("Version") }, singleLine = true)
+                OutlinedTextField(ver, { ver = it }, Modifier.weight(1f), label = { Text("Version") }, singleLine = true, enabled = !vm.isAuto(p.id))
                 Spacer(Modifier.width(8.dp))
-                OutlinedButton({ ver = Commands.bump(ver) }) { Text("+1 → ${Commands.bump(ver)}", fontSize = 12.sp) }
+                OutlinedButton({ ver = Commands.bump(ver) }, enabled = !vm.isAuto(p.id)) { Text("+1 → ${Commands.bump(ver)}", fontSize = 12.sp) }
             }
+            if (vm.isAuto(p.id)) Text("Follows the latest pushed build, so it can never run ahead of it. Turn the switch off to type a version by hand.", fontSize = 11.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
             Mono("last pushed: ${vm.pushedV[p.id] ?: "-"}", Modifier.padding(top = 4.dp), Muted)
             SettingRow(Icons.Default.Sync, "Follow builds automatically", "Label updates on every new build, however it was started") {
                 HubSwitch(vm.isAuto(p.id), { vm.setAuto(p.id, it) })
@@ -502,7 +511,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     // a chosen zip selects the project it is named after
     LaunchedEffect(pack?.name) { pack?.let { pk -> vm.projectFor(pk.name)?.let { if (it.id != vm.selId) vm.selId = it.id } } }
     val last = p?.let { vm.runs[it.id]?.firstOrNull() }
-    LaunchedEffect(p?.id) { p?.let { vm.refresh(it, false) } }
+    LaunchedEffect(p?.id) { p?.let { vm.refresh(it) } }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Deploy")
         Text("Pick your zip and App Hub pushes it to GitHub and builds it. Nothing else needed.", fontSize = 12.sp, color = Muted)
@@ -604,7 +613,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     var stack by remember(p?.id) { mutableStateOf(p?.stack ?: "") }
     var deliver by remember { mutableStateOf(true) }
     val isNew = vm.task == "New app"
-    val text = if (p == null || isNew) "" else Prompts.make(vm.task, p, stack, vm.errors[p.id] ?: p.lastError, deliver)
+    val err = if (p == null) "" else (vm.errors[p.id] ?: p.lastError)
+    val text = if (p == null || isNew) "" else Prompts.make(vm.task, p, stack, err, deliver, vm.promptNote)
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Prompt Maker")
         if (!isNew) { Text("1. Select Project", color = Color.Gray); ProjectPicker(ps, p) { vm.selId = it.id } }
@@ -614,9 +624,18 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             Text("3. Tech Stack", color = Color.Gray)
             OutlinedTextField(stack, { stack = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(deliver, { deliver = it }); Text("  Add zip name + version bump rules", fontSize = 12.sp) }
-            Text("4. Generated Prompt", color = Color.Gray)
-            Panel { Mono(text.ifBlank { "Add a project first." }) }
-            BigButton("Copy prompt", Icons.Default.ContentCopy) { if (text.isNotBlank()) vm.copy(text) }
+            Text("4. What do you want changed?", color = Color.Gray)
+            OutlinedTextField(vm.promptNote, { vm.promptNote = it }, Modifier.fillMaxWidth(), minLines = 4, label = { Text(Prompts.hint(vm.task)) })
+            if (vm.task == "Fix error") Mono(if (err.isBlank()) "No build error on record for ${p?.name ?: "this app"}." else "Build error included (${err.lines().count { it.isNotBlank() }} lines)", color = Muted)
+            if (p != null) Mono("${vm.task} • ${p.name} ${p.version}${if (deliver) " • delivery rules" else ""}", color = Muted)
+            BigButton("Copy prompt", Icons.Default.ContentCopy) {
+                when {
+                    text.isBlank() -> vm.toast("Add a project first")
+                    vm.promptNote.isBlank() && vm.task != "Fix error" -> vm.toast("Write what you want changed first")
+                    else -> vm.copy(text)
+                }
+            }
+            Text("The full prompt is not shown here. Copy it and check it in Claude.", fontSize = 11.sp, color = Muted)
         }
         Spacer(Modifier.height(12.dp))
     }
@@ -678,46 +697,95 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
 }
 
 // ---------- install / update ----------
+private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
+    val i = ctx.packageManager.getLaunchIntentForPackage(p.packageName)
+    if (i == null) vm.toast("${p.name} can't be opened") else ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+}
+
 @Composable fun InstallScreen(vm: HubVM, nav: NavHostController, id: Long) {
     val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var rel by remember { mutableStateOf<GitHub.Rel?>(null) }
-    var loaded by remember { mutableStateOf(false) }
-    var prog by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(id) { val x = vm.gh.latest(p.repo); rel = x; if (x != null) vm.latest[id] = x.tag; loaded = true }
+    var checked by remember { mutableStateOf(false) }
+    // live: the app-wide 3 s sync keeps the release current; this makes the first answer immediate
+    LaunchedEffect(id) { vm.refresh(p).join(); checked = true }
+    LaunchedEffect(id, p.repo) { while (true) { vm.loadDetails(p).join(); delay(3_000) } }
+    val rel = vm.latestRel[id]
+    val inst = vm.installedTag(id)
+    val phone = vm.isInstalled(p)
+    val prog = vm.dlProgress[id]          // null = nothing downloading; lives in the ViewModel, so it survives leaving this page
+    val err = vm.dlError[id]
+    val ready = rel != null && vm.cachedTag(id) == rel.tag && vm.hasCached(p)
+    val partial = rel?.let { ApkStore.partBytes(ctx, id, it.tag) } ?: 0L
+    val current = rel != null && inst == rel.tag && phone != false
+    val behind = vm.hasUpdate(p)
+    val (title, tone) = when {
+        rel == null -> (if (checked) "No APK release yet" else "Checking releases…") to Muted
+        current -> "Up to date" to Green
+        phone == false -> "Not installed" to Cyan
+        behind || (inst.isNotBlank() && inst != rel.tag) -> "Update available" to Amber
+        else -> "Latest build available" to Cyan
+    }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header(p.name, nav)
-        Panel {
-            val r = rel
-            val inst = vm.installedTag(id)
-            when {
-                !loaded -> Text("Checking GitHub releases…")
-                r == null -> Text("No APK release found yet. Deploy a zip and wait for the build to pass.", color = Amber)
-                else -> {
-                    Text(if (inst == r.tag) "Up to date" else if (inst.isBlank()) "Latest build available" else "Update available", color = Cyan, fontWeight = FontWeight.Bold)
-                    Text("${inst.ifBlank { if (vm.isInstalled(p) == true) "installed" else "not installed here" }} → ${r.tag}", fontSize = 18.sp, fontFamily = FontFamily.Monospace)
-                    if (vm.cachedTag(id) == r.tag && vm.hasCached(p) && inst != r.tag) Mono("Downloaded and waiting for install", color = Amber)
-                }
+        Panel(border = tone.copy(alpha = 0.7f)) {
+            Text(title, color = tone, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            if (rel != null) {
+                val from = when { phone == false -> "not installed"; inst.isNotBlank() -> inst; phone == true -> "installed"; else -> "unknown" }
+                Spacer(Modifier.height(4.dp))
+                Text("$from → ${rel.tag}", fontSize = 20.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                Mono(listOfNotNull("released ${ago(rel.time)}", if (rel.sizeKb > 0) "${"%.1f".format(rel.sizeKb / 1024.0)} MB" else null,
+                    if (phone == true) "on phone ${vm.onPhone[id] ?: ""}".trim() else null).joinToString(" • "), color = Muted)
+            } else if (checked) Text("Deploy a zip and wait for the build to pass.", fontSize = 12.sp, color = Muted)
+        }
+        when {
+            prog != null -> Panel(border = Cyan) {
+                Text("Downloading ${(prog * 100).toInt()}%", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green)
+                rel?.let { if (it.sizeKb > 0) Mono("${"%.1f".format(it.sizeKb * prog / 1024.0)} / ${"%.1f".format(it.sizeKb / 1024.0)} MB", Modifier.padding(top = 4.dp), Muted) }
+                Text("Keeps going if you leave this page.", fontSize = 11.sp, color = Muted)
+            }
+            ready && !current -> Panel(border = Amber.copy(alpha = 0.7f)) { Text("Downloaded and waiting for install", color = Amber, fontSize = 13.sp) }
+            err != null && !ready -> Panel(border = Red.copy(alpha = 0.7f)) {
+                Text(err, color = Red, fontSize = 13.sp)
+                if (partial > 0) Mono("${"%.1f".format(partial / 1048576.0)} MB already saved", Modifier.padding(top = 2.dp), Muted)
+            }
+            partial > 0 && !ready -> Panel {
+                Text("Download paused", fontWeight = FontWeight.Bold)
+                Mono("${"%.1f".format(partial / 1048576.0)} MB already saved. Resume continues from there.", color = Muted)
             }
         }
-        if (prog > 0f) { LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green); Mono("${(prog * 100).toInt()}%") }
         rel?.let { r ->
-            Panel { Text("What's new", fontWeight = FontWeight.Bold); Mono(notesOrDefault(r.body)) }
-            val inst = vm.installedTag(id)
-            val ready = vm.cachedTag(id) == r.tag && vm.hasCached(p)
-            BigButton(if (inst == r.tag) "Reinstall" else if (ready) "Install downloaded APK" else "Download & Install", Icons.Default.Download) {
-                scope.launch {
-                    if (!ready) {
-                        prog = 0.01f
-                        val ok = vm.fetchApk(p, r) { d, t -> if (t > 0) prog = d.toFloat() / t }
-                        prog = 0f
-                        if (!ok) { vm.toast("Download failed"); return@launch }
-                    }
-                    vm.installCached(ctx, p)
+            val label = when {
+                prog != null -> "Downloading… ${(prog * 100).toInt()}%"
+                ready && current -> "Reinstall"
+                ready -> if (phone == false || (inst.isBlank() && phone != true)) "Install" else "Install update"
+                partial > 0 -> "Resume download"
+                current -> "Download & reinstall"
+                else -> "Download & install"
+            }
+            Button({ if (ready) vm.installCached(ctx, p) else vm.download(ctx, p, r, true) }, Modifier.fillMaxWidth().height(48.dp), enabled = prog == null,
+                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+                Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp)); Text(label, fontWeight = FontWeight.Bold)
+            }
+            if (phone == true && p.packageName.isNotBlank()) OutlinedButton({ openApp(ctx, vm, p) }, Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.OpenInNew, null, Modifier.size(16.dp)); Text(" Open ${p.name}")
+            }
+            Panel { Text("What's new in ${r.tag}", fontWeight = FontWeight.Bold); Spacer(Modifier.height(4.dp)); Mono(notesOrDefault(r.body)) }
+        }
+        val rl = vm.releases[id].orEmpty()
+        if (rl.isNotEmpty()) Panel {
+            Text("Recent builds", fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            rl.take(5).forEach { x ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Mono(x.tag, Modifier.weight(1f), if (x.tag == inst) Green else Cyan)
+                    if (x.tag == inst) Mono("installed  ", color = Green)
+                    Mono(ago(x.time), color = Muted)
                 }
             }
         }
+        Spacer(Modifier.height(12.dp))
     }
 }
 
@@ -766,27 +834,21 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
 
 // ---------- add project ----------
 @Composable fun AddScreen(vm: HubVM, nav: NavHostController) {
-    val slug = vm.draftName.lowercase().filter { it.isLetterOrDigit() }
-    var name by remember { mutableStateOf(vm.draftName) }; var repo by remember { mutableStateOf(slug) }
-    var pkg by remember { mutableStateOf(if (slug.isBlank()) "" else "com.krishna.$slug") }; var ver by remember { mutableStateOf("v1") }
+    // Nothing is filled in for you. Only an app name you carried over from the idea picker is kept.
+    var name by remember { mutableStateOf(vm.draftName) }; var repo by remember { mutableStateOf("") }
+    var pkg by remember { mutableStateOf("") }; var ver by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { vm.draftName = "" }
     var create by remember { mutableStateOf(true) }; var keys by remember { mutableStateOf(true) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
-        Text("Quick fill", color = Color.Gray)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Presets.all.forEach { pr ->
-                AssistChip({ name = pr.name; repo = pr.repo; pkg = pr.pkg; ver = pr.version; create = false; keys = false }, { Text(pr.name) })
-            }
-        }
-        OutlinedTextField(name, { name = it; if (repo.isBlank() || repo == name.dropLast(1)) repo = it }, label = { Text("App name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(repo, { repo = it }, label = { Text("Repo name (or owner/name)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(ver, { ver = it }, label = { Text("Version") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(name, { name = it }, label = { Text("App name") }, placeholder = { Text("e.g. My App") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(repo, { repo = it }, label = { Text("Repo name (or owner/name)") }, placeholder = { Text("e.g. myapp") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name (optional)") }, placeholder = { Text("found automatically if left empty") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text("v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(create, { create = it }); Text("  Create GitHub repo (private)") }
         Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it }); Text("  Generate signing keys + set secrets") }
         BigButton("Create project", Icons.Default.PlayArrow) {
-            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim(), create, keys) else vm.toast("Name and repo required")
+            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, create, keys) else vm.toast("Name and repo required")
         }
         if (vm.log.isNotEmpty()) {
             Panel { vm.log.forEach { Mono(it) } }

@@ -35,23 +35,34 @@ object Prompts {
             "After the zip, list every file you created or changed (path + one short note)."
     }
 
-    fun make(task: String, p: Project, stack: String, error: String, deliver: Boolean = false): String =
-        body(task, p, stack, error) + if (deliver) delivery(p) else ""
+    /** What the text box under step 4 asks for, per task. */
+    fun hint(task: String) = when (task) {
+        "Fix error" -> "Extra notes (optional). The latest build error is added automatically."
+        "Add feature" -> "Describe the feature you want"
+        "Improve UI" -> "Which screens or problems should be better?"
+        "Refactor" -> "What should be cleaned up?"
+        "Release notes" -> "List what changed"
+        else -> "Describe what you want done"
+    }
 
-    private fun body(task: String, p: Project, stack: String, error: String): String {
+    fun make(task: String, p: Project, stack: String, error: String, deliver: Boolean = false, change: String = ""): String =
+        body(task, p, stack, error, change.trim()) + if (deliver) delivery(p) else ""
+
+    private fun body(task: String, p: Project, stack: String, error: String, change: String): String {
         val tail = "Please keep the solution simple and production ready."
+        fun fill(placeholder: String) = change.ifBlank { placeholder }
         return when (task) {
-            "Improve UI" -> "Improve the UI and UX of my Android project ${p.name} (${p.version}).\n\nFocus:\n<screens or problems to improve>\n\n" +
+            "Improve UI" -> "Improve the UI and UX of my Android project ${p.name} (${p.version}).\n\nFocus:\n${fill("<screens or problems to improve>")}\n\n" +
                 "Project stack: $stack.\n\nKeep the existing dark green/cyan style, reduce wasted padding, and show a preview before large visual changes. $tail"
             "Fix error" -> "Fix the following build error in my Android project ${p.name} (${p.version}).\n\nError:\n" +
-                "${error.ifBlank { "<paste error here>" }}\n\nProject stack: $stack.\n\nPlease analyze the error, explain the cause, " +
+                "${error.ifBlank { "<paste error here>" }}\n\n" + (if (change.isBlank()) "" else "Extra notes:\n$change\n\n") + "Project stack: $stack.\n\nPlease analyze the error, explain the cause, " +
                 "and provide the exact code changes with updated files. $tail"
-            "Add feature" -> "Add a new feature to my Android project ${p.name} (${p.version}).\n\nFeature:\n<describe the feature>\n\n" +
+            "Add feature" -> "Add a new feature to my Android project ${p.name} (${p.version}).\n\nFeature:\n${fill("<describe the feature>")}\n\n" +
                 "Project stack: $stack.\n\nProvide complete updated files and any new dependencies. $tail"
-            "Refactor" -> "Refactor my Android project ${p.name} (${p.version}).\n\nTarget:\n<describe what to clean up>\n\n" +
+            "Refactor" -> "Refactor my Android project ${p.name} (${p.version}).\n\nTarget:\n${fill("<describe what to clean up>")}\n\n" +
                 "Project stack: $stack.\n\nKeep behavior identical and list every file you change. $tail"
-            "Release notes" -> "Write short, user-friendly release notes for ${p.name} ${p.version}.\n\nChanges:\n<list changes>\n\nUse 3-5 bullets."
-            else -> "Project: ${p.name} (${p.version})\nStack: $stack\n\nTask:\n<describe your task>\n\n$tail"
+            "Release notes" -> "Write short, user-friendly release notes for ${p.name} ${p.version}.\n\nChanges:\n${fill("<list changes>")}\n\nUse 3-5 bullets."
+            else -> "Project: ${p.name} (${p.version})\nStack: $stack\n\nTask:\n${fill("<describe your task>")}\n\n$tail"
         }
     }
 }
