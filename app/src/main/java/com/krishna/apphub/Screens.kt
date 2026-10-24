@@ -183,7 +183,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     }
     // contentWindowInsets = 0 so the status bar inset is applied exactly once (statusBarsPadding below)
     // v63/v64: the project pages (project, builds, releases, settings, info, files, file, env, install) are sub pages with a back arrow, so the app bar is hidden there
-    val onProject = route != null && listOf("detail/", "builds/", "releases/", "psettings/", "info/", "files/", "file/", "env/", "install/").any { route.startsWith(it) }
+    val onProject = route != null && listOf("detail/", "builds/", "releases/", "psettings/", "aprompt/", "info/", "files/", "file/", "env/", "install/").any { route.startsWith(it) }
     Scaffold(containerColor = Bg, contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
         if (!onProject) NavigationBar(containerColor = Surf) {
             tabs.forEach { (r, l, i) ->
@@ -195,7 +195,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     }) { pad ->
         NavHost(nav, "dash", Modifier.padding(pad).statusBarsPadding().then(if (onProject) Modifier.navigationBarsPadding() else Modifier)) {
             composable("dash") { Dashboard(vm, nav) }
-            composable("prompt") { PromptScreen(vm, nav) }
+            composable("prompt") { NewProjectScreen(vm, nav) }
+            composable("aprompt/{id}", listOf(navArgument("id") { type = NavType.LongType })) { AppPromptScreen(vm, nav, it.arguments!!.getLong("id")) }   // v65
             composable("log") { LogScreen(vm, nav) }
             composable("deploy") { DeployScreen(vm, nav) }
             composable("settings") { SettingsScreen(vm, nav) }
@@ -587,7 +588,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                         val e = vm.errors[p.id].orEmpty().ifBlank { p.lastError }
                         if (e.isNotBlank()) vm.copy(e) else vm.toast("No error text yet")
                     }) { Icon(Icons.Default.ContentCopy, null, Modifier.size(16.dp)); Text(" Copy errors", fontSize = 12.sp) }
-                    OutlinedButton({ vm.selId = p.id; vm.task = "Fix error"; nav.navigate("prompt") }) {
+                    OutlinedButton({ vm.selId = p.id; vm.task = "Fix error"; nav.navigate("aprompt/${p.id}") }) {
                         Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp), tint = Cyan); Text(" AI prompt", fontSize = 12.sp)
                     }
                 }
@@ -604,41 +605,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
 }
 
 // ---------- prompt maker ----------
-@Composable fun PromptScreen(vm: HubVM, nav: NavHostController) {
-    val ps by vm.projects.collectAsState()
-    val p = vm.sel()
-    var stack by remember(p?.id) { mutableStateOf(p?.stack ?: "") }
-    var deliver by remember { mutableStateOf(vm.prefs.promptDeliver) }   // v40: remembered
-    val selKind = p?.kind ?: ProjectType.APP
-    val tasks = Prompts.tasksFor(selKind)
-    val task = if (vm.task in tasks) vm.task else tasks.first()   // v41: a task of another project type falls back to the first one
-    val err = if (p == null) "" else (vm.errors[p.id] ?: p.lastError)
-    val text = if (p == null) "" else Prompts.make(task, p, stack, err, deliver, vm.promptNote, vm.isVercel(p))
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Header("Prompt Maker")
-        Text("1. Select Project", color = Color.Gray); ProjectPicker(ps, p) { vm.selId = it.id }
-        Text("2. What do you want to do?", color = Color.Gray)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { tasks.forEach { FilterChip(task == it, { vm.task = it }, { Text(it) }) } }
-        run {
-            Text("3. Tech Stack", color = Color.Gray)
-            OutlinedTextField(stack, { stack = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(deliver, { deliver = it; vm.prefs.promptDeliver = it }); Text("  Add zip name + version bump rules", fontSize = 12.sp) }
-            Text("4. What do you want changed?", color = Color.Gray)
-            OutlinedTextField(vm.promptNote, { vm.promptNote = it }, Modifier.fillMaxWidth(), minLines = 4, label = { Text(Prompts.hint(task, selKind)) })
-            if (task == "Fix error") Mono(if (err.isBlank()) "No build error on record for ${p?.name ?: "this app"}." else "Build error included (${err.lines().count { it.isNotBlank() }} lines)", color = Muted)
-            if (p != null) Mono("$task • ${p.name} ${p.version}${if (deliver) " • delivery rules" else ""}", color = Muted)
-            BigButton("Copy prompt", Icons.Default.ContentCopy) {
-                when {
-                    text.isBlank() -> vm.toast("Add a project first")
-                    vm.promptNote.isBlank() && task != "Fix error" -> vm.toast("Write what you want changed first")
-                    else -> vm.copy(text)
-                }
-            }
-            Text("The full prompt is not shown here. Copy it and check it in Claude.", fontSize = 11.sp, color = Muted)
-        }
-        Spacer(Modifier.height(12.dp))
-    }
-}
+// v65: the old Prompt Maker screen is split: PromptPages.kt (AppPromptScreen for one project, NewProjectScreen for new ones)
 
 // ---------- full build log ----------
 @Composable fun LogScreen(vm: HubVM, nav: NavHostController) {

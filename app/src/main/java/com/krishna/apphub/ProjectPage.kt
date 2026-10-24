@@ -218,7 +218,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton({ vm.copy(err) }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("Copy log") }
-                    OutlinedButton({ vm.selId = p.id; vm.task = "Fix error"; nav.navigate("prompt") }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("AI prompt") }
+                    OutlinedButton({ vm.selId = p.id; vm.task = "Fix error"; nav.navigate("aprompt/${p.id}") }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("AI prompt") }
                     last?.let { r -> if (r.ok == false) OutlinedButton({ vm.rerun(p, r.id) }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("Re-run") } }
                 }
             }
@@ -240,7 +240,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                 RowLine()
                 NavRow(Icons.Default.Info, Cyan, "Info", "Status, versions, addresses") { nav.navigate("info/$id") }
                 RowLine()
-                NavRow(Icons.Default.AutoAwesome, Cyan, "Prompt", "Ask AI about this ${p.kind.label.lowercase()}") { vm.selId = id; nav.navigate("prompt") }
+                NavRow(Icons.Default.AutoAwesome, Cyan, "Prompt", "Fix, add, improve, adopt") { vm.selId = id; vm.task = if (err.isNotBlank()) "Fix error" else "Add feature"; nav.navigate("aprompt/$id") }
                 RowLine()
                 NavRow(Icons.Default.Tune, Muted, "Settings", "Repo, hosting, signing, alerts") { nav.navigate("psettings/$id") }
             }

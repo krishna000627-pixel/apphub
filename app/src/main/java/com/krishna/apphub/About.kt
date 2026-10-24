@@ -18,6 +18,7 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v65" to listOf("Prompts split in two. Each project has its own Prompt page (task chips, one box, Copy; Adopt is a task there). The Prompt tab is now only for a NEW app, website or server, one page at a time: type, idea, setup, ready."),
         "v64" to listOf("Project page is now a hub with sub pages (Builds, Releases, Files, Info, Prompt, Settings), each with a back arrow. No bottom bar and no tabs on any project page. A failed-build notification opens the build list on top of the project."),
         "v63" to listOf("Project page redesigned: one navigation (its own bottom bar: Overview, Builds, Releases, Settings; the app bar is hidden there), new Overview with status, actions, attention cards, Files/Info/Prompt tiles. Builds: filters, durations, Re-run and Cancel. Notifications: separate channels (failed builds loud, passed quiet), commit and duration in the text, Builds and Install buttons, grouped, Mute alerts per app. Share and copy link from the menu."),
         "v62" to listOf("A changed address shows at once (unlink Vercel = GitHub Pages address right away, Pages off = its address gone right away). The note under Create GitHub repo is removed. Hosting settings moved to their own file."),

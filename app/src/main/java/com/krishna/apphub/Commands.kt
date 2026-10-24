@@ -16,12 +16,54 @@ object Prompts {
         else -> listOf("Fix error", "Add feature", "Improve UI", "Refactor", "Release notes", "Other")
     }
 
-    fun ideasPrompt(cat: String, notes: String): String =
-        "I want to build a new Android app in the \"$cat\" area." + (if (notes.isBlank()) "" else " My interests and must-haves: $notes.") +
-        "\n\nDo NOT write any code yet.\n\nStep 1 - Ideas: suggest 8 distinct app ideas. For each give: a name, a one-line pitch, the 3 main screens, " +
-        "the one feature that makes it special, and effort (small / medium / large).\n\nThen stop and ask me to pick one (or mix two). " +
-        "Only after I choose: ask up to 3 short questions, show a one-screen plan, and wait for my OK before building. " +
-        PREVIEW
+    fun ideasPrompt(cat: String, notes: String, kind: ProjectType = ProjectType.APP): String {
+        val what = when (kind) {
+            ProjectType.APP -> "a new Android app in the \"$cat\" area"
+            ProjectType.WEBSITE -> "a new website"
+            ProjectType.SERVER -> "a new server (an API or a bot backend)"
+        }
+        val parts = when (kind) { ProjectType.APP -> "the 3 main screens"; ProjectType.WEBSITE -> "the 3 main pages"; ProjectType.SERVER -> "the main endpoints" }
+        return "I want to build $what." + (if (notes.isBlank()) "" else " My interests and must-haves: $notes.") +
+            "\n\nDo NOT write any code yet.\n\nStep 1 - Ideas: suggest 8 distinct ideas. For each give: a name, a one-line pitch, $parts, " +
+            "the one feature that makes it special, and effort (small / medium / large).\n\nThen stop and ask me to pick one (or mix two). " +
+            "Only after I choose: ask up to 3 short questions, show a one-screen plan, and wait for my OK before building. " +
+            PREVIEW
+    }
+
+    /** v65: stack and host choices of the new project wizard (apps have fixed ones). */
+    fun stacksFor(kind: ProjectType): List<String> = when (kind) {
+        ProjectType.WEBSITE -> listOf("HTML + CSS + JS", "React + Vite", "Next.js")
+        ProjectType.SERVER -> listOf("Node + Express", "Python + FastAPI", "Go")
+        ProjectType.APP -> emptyList()
+    }
+    fun hostsFor(kind: ProjectType): List<String> = when (kind) {
+        ProjectType.WEBSITE -> listOf("GitHub Pages", "Vercel")
+        ProjectType.SERVER -> listOf("Render", "Vercel", "Docker")
+        ProjectType.APP -> emptyList()
+    }
+
+    /** v65: build prompt for a new website or server. (A new app uses [buildPrompt].) */
+    fun newProject(kind: ProjectType, name: String, pitch: String, stack: String, host: String): String {
+        val base = name.filter { it.isLetterOrDigit() }.ifBlank { "NewProject" }
+        val site = kind == ProjectType.WEBSITE
+        val hostText = when (host) {
+            "GitHub Pages" -> "GitHub Pages: add .github/workflows/deploy.yml that publishes the site on every push to main (Pages source = GitHub Actions)."
+            "Vercel" -> if (site) "Vercel: it deploys from the GitHub repo on every push to main. Add a vercel.json only if it is needed."
+                else "Vercel: serverless functions under /api, deployed from the GitHub repo on every push to main."
+            "Render" -> "Render: it deploys from the GitHub repo on every push to main and must listen on the PORT environment variable. Say which build and start commands to enter."
+            else -> "Docker: a Dockerfile that runs the server on the PORT environment variable, and a GitHub Actions workflow that builds the image."
+        }
+        val needs = if (site) "Responsive, accessible, clean dark UI with compact spacing. Show the version in the site footer."
+            else "GET /health answers 200 with {\"status\":\"ok\",\"version\":\"v1\"}. Clear JSON errors and input validation. Configuration only through environment variables (list them in the README, no secrets in the repo)."
+        return "Build a new ${kind.label.lowercase()} called $name: $pitch\n\nStack: $stack.\n\n$needs\n\nHosting: $hostText\n\n" +
+            "Before coding: ask me up to 3 short questions if anything is unclear, then show a short plan and wait for my OK.\n\n" +
+            (if (site) "$PREVIEW\n\n" else "") +
+            "Delivery: zip the whole project as ${base}_v1.zip with a top-level folder ${base}_v1/. Version v1. " +
+            "On every later change always bump the version, even for a string-only change. After the zip, list every file you created (path + one short note)."
+    }
+
+    /** v65: tasks of the per-app prompt page: the project tasks plus Adopt (before Other). */
+    fun appTasks(kind: ProjectType): List<String> = tasksFor(kind).toMutableList().also { it.add(it.size - 1, "Adopt") }
 
     fun buildPrompt(name: String, pitch: String): String {
         val base = name.filter { it.isLetterOrDigit() }.ifBlank { "NewApp" }
@@ -77,9 +119,11 @@ object Prompts {
     }
 
     /** [vercel] = the project deploys on Vercel (websites / servers only). */
-    fun make(task: String, p: Project, stack: String, error: String, deliver: Boolean = false, change: String = "", vercel: Boolean = false): String =
-        (if (p.kind == ProjectType.APP) body(task, p, stack, error, change.trim()) else webBody(task, p, stack, error, change.trim(), vercel)) +
+    fun make(task: String, p: Project, stack: String, error: String, deliver: Boolean = false, change: String = "", vercel: Boolean = false): String {
+        if (task == "Adopt") return adopt(p)   // v65: already ends with the delivery rules
+        return (if (p.kind == ProjectType.APP) body(task, p, stack, error, change.trim()) else webBody(task, p, stack, error, change.trim(), vercel)) +
             if (deliver) delivery(p) else ""
+    }
 
     /** Prompts for an existing website or server. */
     private fun webBody(task: String, p: Project, stack: String, error: String, change: String, vercel: Boolean): String {
@@ -126,6 +170,20 @@ object Prompts {
 }
 
 object Ideas {
+    val web: List<Pair<String, String>> = listOf(
+        "Portfolio" to "Personal portfolio with projects, about and contact",
+        "LinkPage" to "Link-in-bio page with buttons and a clean theme",
+        "Landing" to "One-page product landing with features and signup",
+        "DocsSite" to "Documentation site with search and a side menu",
+        "BlogLite" to "Small blog from markdown files",
+        "MenuCard" to "Restaurant menu with prices and a call button")
+    val server: List<Pair<String, String>> = listOf(
+        "Notes API" to "REST API for notes with tags and search",
+        "ShortLink" to "URL shortener with click counts",
+        "Webhook Relay" to "Receives webhooks and forwards them to Telegram",
+        "BotBack" to "Backend for a Telegram bot with commands and storage",
+        "FileDrop" to "Upload API with size limits and expiring links",
+        "StatusPing" to "Pings a list of sites and reports their status")
     val cats = listOf("Productivity", "Games", "Tools", "Health", "Money", "Learning", "Creative")
     val list: Map<String, List<Pair<String, String>>> = mapOf(
         "Productivity" to listOf(
