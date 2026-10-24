@@ -12,6 +12,26 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v57
+- Repo visibility in the app Settings tab ("Repository" panel, all types): `GitHub.repoInfo(repo)` (id, private), `GitHub.updateVisibility(repo, makePrivate)` (PATCH /repos/{repo}), `HubVM.loadVisibility/changeVisibility` (`repoPrivate` map, `repoBusy`, `repoMsg`); making public asks first. Setup chips from v56 stay.
+- Vercel address: the guessed `name.vercel.app` is gone (`Vercel.domainOf` and `projects()` return "" when unknown). `Vercel.liveHost(projectId)` = GET /v9/projects/{id} targets.production.alias (shortest .vercel.app), else /domains. `HubVM.fixVercelAddress` saves it as liveUrl when a deployment passed (from `vercelState`, once per deployment, and from `watchVercel`) if liveUrl is empty or already a vercel.app address.
+- Vercel not started by the push: `watchVercel` waits ~24 s, then calls `startVercel` once (`Vercel.deployFromGit`: POST /v13/deployments?forceNew=1 with gitSource github repoId + ref main, repo id from `GitHub.repoInfo`). Same call from the Vercel panel row "Deploy now" (`HubVM.deployVercelNow`). Needs the Vercel GitHub app to have access to the repo; the error text says so.
+- versionCode 57, versionName "57.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
+## v56
+- Repo visibility: `GitHub.createRepo(name, private)`; `HubVM.setup(..., isPrivate)`. AddScreen `vis` (null = automatic: Website public, App/Server private; a tap on Private/Public chip is kept when the type changes). Chips and a note show under the Create GitHub repo row when it is usable. The row title says (private) or (public). Existing repos are never changed.
+- versionCode 56, versionName "56.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
+## v55
+- Setup, Server: "Host on" chips (Vercel | Render, single choice, tap again = none) and "Database" chip (Supabase, toggle); each needs its account connected, else the chip reads "(log in)" and opens Accounts. `HubVM.setup(..., target, db)`: host first (`vercel.link` / `render.create(website=false)`; ids kept in hostVercelId/hostRenderId), then `supabase.create(name)`; with a host, SUPABASE_URL (https://<id>.supabase.co) is set via `Vercel.envSet` / new `RenderApi.setEnv` (PUT /v1/services/{id}/env-vars/{name}). Supabase keys and the DB password are NOT set (password random, not kept; keys need the project ACTIVE). The server's liveUrl = host address; Supabase address only when there is no host.
+- Hosting panel (server Settings tab) also lists "Open on Vercel" (when linked).
+- App and Website Deploy to unchanged. versionCode 55, versionName "55.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
+## v54
+- Setup: Deploy to is hidden for a Server (shown for App = disabled GitHub Releases chip, Website = GitHub Pages | Vercel | Render | Supabase). `vm.setup` target is only passed for Websites. Servers are added/linked from Accounts > Open Render / Supabase / Vercel (`importProject`) or the Vercel panel in app Settings.
+- App Settings tab (SERVER): Hosting panel, `HubVM.renderFor(p)` (service whose repo = project repo) and `supabaseFor(p)` (liveUrl contains <id>.supabase.co, or project name = app name / repo name); rows "Open on Render" (`Svc.dashboardUrl`) and "Open on Supabase" (dashboard/project/<id>). Lists load when the tab opens if the account is connected and the list is empty.
+- versionCode 54, versionName "54.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
 ## v53
 - GitHub Pages: `GitHub.enablePages(repo)` (POST /repos/{repo}/pages build_type=workflow; 409 = already on, then PUT to make the source GitHub Actions; plan/private-repo errors give a plain message), `GitHub.dispatchDeploy(repo)` (workflow deploy.yml, ref main), top-level `pagesUrl(repo)` (ProjectStatus.kt).
 - Setup: "GitHub Pages" chip under Deploy to for Website only (target "pages" in `HubVM.setup`; fills liveUrl). App's Settings tab: Website panel "GitHub Pages" with `HubVM.enablePages(p)` (enable, dispatch deploy, fill liveUrl if empty; `pagesBusy/pagesMsg`).

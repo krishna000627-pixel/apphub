@@ -103,6 +103,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     private var vercelRev by mutableIntStateOf(0)            // bumped when a link changes, so screens reading isVercel redraw
     private val vercelAt = mutableMapOf<Long, Long>()
     private val vercelLast = mutableMapOf<Long, Pair<String, String>>()   // last (status, error) per project
+    private val vercelLiveFor = mutableMapOf<Long, String>()   // v57: deployment whose real address was already saved
     private val vercelErrFor = mutableMapOf<Long, String>()   // deployment whose error text is in vercelLast
     private val vercelVer = mutableMapOf<Long, String>()      // newest "vNNN" seen in a Vercel commit message
 
@@ -655,6 +656,13 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         toast("Linked to Vercel")
     }
 
+    // ---- v54: where a server is hosted (read from the lists the Render / Supabase pages already load) ----
+    fun renderFor(p: Project): RenderApi.Svc? = renderServices.firstOrNull { it.repo.equals(p.repo, true) }
+    fun supabaseFor(p: Project): SupabaseApi.Proj? {
+        val repoName = p.repo.substringAfter("/")
+        return supabaseProjects.firstOrNull { pr -> (p.liveUrl.isNotBlank() && p.liveUrl.contains("${pr.id}.supabase.co")) || pr.name.equals(p.name, true) || pr.name.equals(repoName, true) }
+    }
+
     // ---- v53: GitHub Pages for an existing website ----
     var pagesBusy by mutableStateOf(false)
     var pagesMsg by mutableStateOf("")
@@ -740,8 +748,55 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+        // v57: once a deployment passed, save the real address (replaces a missing or guessed *.vercel.app)
+        if (res.first == "passed" && dep != null && vercelLiveFor[p.id] != dep.id) {
+            vercelLiveFor[p.id] = dep.id
+            fixVercelAddress(p, vid)
+        }
         vercelLast[p.id] = res
         return res
+    }
+
+    /** v57: puts Vercel's real *.vercel.app host in the project's address when it is empty or already a vercel.app one. */
+    private suspend fun fixVercelAddress(p: Project, vid: String) {
+        val host = vercel.liveHost(vid) ?: return
+        val now = projects.value.firstOrNull { it.id == p.id } ?: return
+        val want = "https://$host"
+        if (now.liveUrl != want && (now.liveUrl.isBlank() || now.liveUrl.contains(".vercel.app"))) dao.save(now.copy(liveUrl = want))
+    }
+
+    /** v57: asks Vercel to deploy main now. Returns "" or the reason. */
+    private suspend fun startVercel(p: Project): String {
+        val vid = prefs.vercelId(p.repo)
+        if (vid.isBlank()) return "not linked to Vercel"
+        val info = gh.repoInfo(p.repo) ?: return "could not read the GitHub repo"
+        return vercel.deployFromGit(vid, Vercel.projectName(p.repo.substringAfter("/")), info.first)
+    }
+
+    /** Settings tab button: Deploy now. */
+    fun deployVercelNow(p: Project) = viewModelScope.launch {
+        vercelBusy = true; vercelMsg = ""
+        val e = startVercel(p)
+        vercelBusy = false
+        vercelMsg = if (e.isBlank()) "Vercel deployment started. The address shows here when it is live." else "Vercel: $e"
+        if (e.isBlank()) { vercelAt.remove(p.id); delay(20_000); vercelAt.remove(p.id); refresh(p) }
+    }
+
+    // ---- v57: repo visibility (Settings tab) ----
+    val repoPrivate = mutableStateMapOf<Long, Boolean>()
+    var repoBusy by mutableStateOf(false)
+    var repoMsg by mutableStateOf("")
+
+    fun loadVisibility(p: Project) = viewModelScope.launch {
+        if (!p.repo.contains("/")) return@launch
+        gh.repoInfo(p.repo)?.let { repoPrivate[p.id] = it.second }
+    }
+
+    fun changeVisibility(p: Project, makePrivate: Boolean) = viewModelScope.launch {
+        repoBusy = true; repoMsg = ""
+        val e = gh.updateVisibility(p.repo, makePrivate)
+        repoBusy = false
+        if (e.isBlank()) { repoPrivate[p.id] = makePrivate; repoMsg = if (makePrivate) "Now private." else "Now public." } else repoMsg = "GitHub: $e"
     }
 
     /** Follows the Vercel deployment started by a push, like [watch] follows a CI run. [since] = when the push started (phone clock). */
@@ -751,14 +806,25 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         fun setLive(t: String) { if (liveIdx in deployLog.indices) deployLog[liveIdx] = t else { deployLog += t; liveIdx = deployLog.lastIndex } }
         val vid = prefs.vercelId(p.repo)
         val t0 = System.currentTimeMillis()
+        var kicked = false
         repeat(135) {
             delay(4_000)
             if (gen != deployGen) return@launch
-            val d = vercel.latest(vid).dep ?: return@repeat
-            if (d.created < since - 30_000L) return@repeat   // still the deployment from before this push
+            val d0 = vercel.latest(vid).dep
+            if (d0 == null || d0.created < since - 30_000L) {   // nothing new from this push yet
+                if (!kicked && System.currentTimeMillis() - t0 > 24_000L) {   // v57: Vercel did not pick the push up: start it ourselves, once
+                    kicked = true
+                    deployLog += "Vercel did not start by itself. Starting it…"
+                    val e = startVercel(p)
+                    deployLog += if (e.isBlank()) "✓ Vercel deployment started" else "✗ Vercel: $e"
+                }
+                return@repeat
+            }
+            val d = d0
             val secs = (System.currentTimeMillis() - t0) / 1000
             when (Vercel.statusOf(d.state)) {
                 "passed" -> {
+                    fixVercelAddress(p, vid)   // v57: the real address, not a guess
                     vercelAt.remove(p.id); refresh(p).join()
                     setLive("✓ Vercel deployed  ${secs}s")
                     toast("${p.name} deployed")
@@ -1260,27 +1326,28 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /** Setup wizard: repo -> keystore -> secrets -> save project, all in-app via OAuth. */
     fun setup(name: String, repoName: String, pkg: String, version: String, create: Boolean, keys: Boolean,
-              type: ProjectType = ProjectType.APP, liveUrl: String = "", target: String = "") = viewModelScope.launch {
+              type: ProjectType = ProjectType.APP, liveUrl: String = "", target: String = "", db: Boolean = false, isPrivate: Boolean = true) = viewModelScope.launch {
         log.clear()
         if (login.isBlank() && !repoName.contains("/")) { log += "✗ Log in with GitHub (Accounts) or enter owner/name"; return@launch }
         val repo = if (repoName.contains("/")) repoName else "$login/$repoName"
         if (create) {
-            log += "Creating repo $repo…"
-            val c = gh.createRepo(repo.substringAfter("/")).first
+            log += "Creating ${if (isPrivate) "private" else "public"} repo $repo…"
+            val c = gh.createRepo(repo.substringAfter("/"), isPrivate).first
             log += when (c) { 201 -> "✓ repo created"; 422 -> "• repo already exists"; else -> "✗ repo failed ($c)" }
         }
         var liveAddr = if (type == ProjectType.APP) "" else cleanUrl(liveUrl)
         // v52: Deploy to (websites and servers only). A failed target never stops the project from being saved.
+        var hostVercelId = ""; var hostRenderId = ""
+        val plain = name.trim()
         if (type != ProjectType.APP && target.isNotBlank()) {
-            val plain = name.trim()
             when (target) {
                 "vercel" -> {
                     log += "Linking Vercel…"
                     val (lk, err) = vercel.link(repo)
                     if (lk == null) log += "✗ Vercel: $err" else {
-                        prefs.setVercelId(repo, lk.id); vercelRev++
+                        prefs.setVercelId(repo, lk.id); vercelRev++; hostVercelId = lk.id
                         if (liveAddr.isBlank()) liveAddr = lk.url
-                        log += "✓ Vercel project linked (${lk.url})"
+                        log += "✓ Vercel project linked" + if (lk.url.isNotBlank()) " (${lk.url})" else ". Its address is filled in after the first deployment"
                     }
                 }
                 "pages" -> {
@@ -1296,6 +1363,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                     val (sv, err) = render.create(plain, repo, type == ProjectType.WEBSITE)
                     if (sv == null) log += "✗ Render: $err" else {
                         if (liveAddr.isBlank()) liveAddr = sv.url
+                        hostRenderId = sv.id
                         log += "✓ Render service created (${if (type == ProjectType.WEBSITE) "static site" else "web service"})"
                         loadRender()
                     }
@@ -1309,6 +1377,26 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                         loadSupabase()
                     }
                 }
+            }
+        }
+        // v55: Supabase as the database of a server (after the host, so its address can be passed on)
+        if (type == ProjectType.SERVER && db) {
+            log += "Creating Supabase database…"
+            val (pj, err) = supabase.create(plain)
+            if (pj == null) log += "✗ Supabase: $err" else {
+                val sbUrl = "https://${pj.id}.supabase.co"
+                if (liveAddr.isBlank() && hostVercelId.isBlank() && hostRenderId.isBlank()) liveAddr = sbUrl
+                log += "✓ Supabase project created (database password not kept)"
+                if (hostVercelId.isNotBlank()) {
+                    val e = vercel.envSet(hostVercelId, "SUPABASE_URL", sbUrl)
+                    log += if (e.isBlank()) "✓ SUPABASE_URL set on Vercel" else "✗ SUPABASE_URL on Vercel: $e"
+                }
+                if (hostRenderId.isNotBlank()) {
+                    val e = render.setEnv(hostRenderId, "SUPABASE_URL", sbUrl)
+                    log += if (e.isBlank()) "✓ SUPABASE_URL set on Render" else "✗ SUPABASE_URL on Render: $e"
+                }
+                if (hostVercelId.isNotBlank() || hostRenderId.isNotBlank()) log += "• Add the Supabase keys yourself when the project is ready (Supabase dashboard > API keys)"
+                loadSupabase()
             }
         }
         if (keys && type == ProjectType.APP) {

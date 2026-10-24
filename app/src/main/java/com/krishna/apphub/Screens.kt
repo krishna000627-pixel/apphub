@@ -599,6 +599,40 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
             OutlinedTextField(stack, { stack = it }, label = { Text("Tech stack") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
         }
+        // v57: repo visibility, simply from Settings
+        if (p.repo.contains("/")) {
+            LaunchedEffect(p.id) { vm.repoMsg = ""; vm.loadVisibility(p) }
+            var askPublic by remember { mutableStateOf(false) }
+            val priv = vm.repoPrivate[p.id]
+            Panel {
+                SectionTitle(Icons.Default.Lock, "Repository")
+                Text(p.repo + when (priv) { true -> " is private"; false -> " is public"; null -> "" }, fontSize = 12.sp, color = Muted)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    HubSwitch(priv == false, { if (priv != null && !vm.repoBusy) { if (it) askPublic = true else vm.changeVisibility(p, true) } })
+                    Text(if (vm.repoBusy) "  Changing…" else "  Public repo", fontSize = 13.sp)
+                }
+                Text("GitHub Pages on the free plan needs a public repo. Vercel works with either.", fontSize = 11.sp, color = Muted)
+                if (vm.repoMsg.isNotBlank()) Text(vm.repoMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
+            }
+            if (askPublic) AlertDialog(onDismissRequest = { askPublic = false },
+                title = { Text("Make ${p.repo} public?") },
+                text = { Text("Anyone can see the code and its history, including anything secret that was ever pushed. You can make it private again later.") },
+                confirmButton = { TextButton({ askPublic = false; vm.changeVisibility(p, false) }) { Text("Make public") } },
+                dismissButton = { TextButton({ askPublic = false }) { Text("Cancel") } })
+        }
+        if (p.kind == ProjectType.SERVER) {
+            LaunchedEffect(p.id) {
+                if (vm.renderUser.isNotBlank() && vm.renderServices.isEmpty()) vm.loadRender()
+                if (vm.supabaseOn && vm.supabaseProjects.isEmpty()) vm.loadSupabase()
+            }
+            val rs = vm.renderFor(p); val sb = vm.supabaseFor(p); val onVercel = vm.isVercel(p)
+            if (rs != null || sb != null || onVercel) Panel {
+                SectionTitle(Icons.Default.Storage, "Hosting")
+                if (onVercel) SettingRow(Icons.Default.OpenInNew, "Open on Vercel", "Dashboard", Cyan, { openUrl(ctx, "https://vercel.com/dashboard") })
+                rs?.let { SettingRow(Icons.Default.OpenInNew, "Open on Render", it.name, Cyan, { openUrl(ctx, it.dashboardUrl) }) }
+                sb?.let { SettingRow(Icons.Default.OpenInNew, "Open on Supabase", it.name, Cyan, { openUrl(ctx, "https://supabase.com/dashboard/project/${it.id}") }) }
+            }
+        }
         if (p.kind == ProjectType.WEBSITE) Panel {
             SectionTitle(Icons.Default.Public, "GitHub Pages")
             Text("Turns Pages on for ${p.repo} with GitHub Actions as the source, then starts the deploy workflow. Needed once, before the first deploy works.", fontSize = 11.sp, color = Muted)
@@ -611,6 +645,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 Text("Linked. Every push deploys by itself and the status follows the Vercel deployment.", fontSize = 11.sp, color = Muted)
                 SettingRow(Icons.Default.VpnKey, "Environment variables", "Names only, values stay hidden", Cyan, { nav.navigate("env/${p.id}") })
                 SettingRow(Icons.Default.OpenInNew, "Open on Vercel", "Dashboard", Muted, { openUrl(ctx, "https://vercel.com/dashboard") })
+                SettingRow(Icons.Default.CloudUpload, if (vm.vercelBusy) "Starting…" else "Deploy now", "Asks Vercel to deploy the latest main", Green, { if (!vm.vercelBusy) vm.deployVercelNow(p) })
                 SettingRow(Icons.Default.LinkOff, "Unlink", "Only forgets the link, the Vercel project stays", Amber, { vm.unlinkVercel(p) })
             } else {
                 Text(if (vm.vercelUser.isBlank()) "Log in to Vercel in Accounts first." else "Not linked. Link creates the Vercel project from ${p.repo}.", fontSize = 11.sp, color = Muted)
@@ -1173,6 +1208,8 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     var name by remember { mutableStateOf(vm.draftName) }; var repo by remember { mutableStateOf("") }
     var pkg by remember { mutableStateOf("") }; var ver by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(ProjectType.APP) }; var url by remember { mutableStateOf("") }   // v38: what kind of project (v39: may come from the Prompt Maker)
+    var vis by remember { mutableStateOf<Boolean?>(null) }   // v56: repo private? null = automatic (public for a Website, private otherwise)
+    var host by remember { mutableStateOf("") }; var db by remember { mutableStateOf(false) }   // v55: server: Host on (vercel | render) and Database (Supabase)
     var target by remember { mutableStateOf("") }   // v52: Deploy to: "", vercel, render or supabase (kept only while its account is connected)
     LaunchedEffect(Unit) { vm.draftName = "" }
     // v40: the three switches keep the position you left them in (saved on tap); Vercel stays off until you turn it on
@@ -1184,11 +1221,35 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         Header("Setup project", nav)
         // v52: "Deploy to" replaces "Import from" (existing repos are still added from Accounts > Open ...)
         val toAccounts = { nav.navigate("accounts") { launchSingleTop = true }; Unit }
-        Text("Deploy to", fontSize = 12.sp, color = Muted)
-        val targets = listOfNotNull(
-            if (type == ProjectType.WEBSITE) Triple("GitHub Pages", "pages", githubUsable) else null,
+        val targets = listOf(Triple("GitHub Pages", "pages", githubUsable),
             Triple("Vercel", "vercel", vm.vercelUser.isNotBlank()), Triple("Render", "render", vm.renderUser.isNotBlank()), Triple("Supabase", "supabase", vm.supabaseOn))
-        if (type == ProjectType.APP) {
+        if (type != ProjectType.SERVER) Text("Deploy to", fontSize = 12.sp, color = Muted)
+        if (type == ProjectType.SERVER) {
+            // v55: a server is created with its repo: Host on Vercel or Render, and a Supabase database
+            val hosts = listOf(Triple("Vercel", "vercel", vm.vercelUser.isNotBlank()), Triple("Render", "render", vm.renderUser.isNotBlank()))
+            val hostOk = hosts.any { it.second == host && it.third }
+            Text("Host on", fontSize = 12.sp, color = Muted)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                hosts.forEach { (label, key, on) ->
+                    val sel = host == key && on
+                    FilterChip(sel, { if (!on) toAccounts() else host = if (host == key) "" else key },
+                        { Text(if (on) label else "$label (log in)") },
+                        leadingIcon = if (sel) ({ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }) else null)
+                }
+            }
+            Text(when (if (hostOk) host else "") {
+                "vercel" -> "Creates the Vercel project from the repo and fills in the endpoint address."
+                "render" -> "Creates a free Render Node web service from the repo (npm install, npm start) and fills in the endpoint address. Render's GitHub app must be able to see the repo."
+                else -> "Pick one to host it, or none to only push to GitHub."
+            }, fontSize = 12.sp, color = Muted)
+            Text("Database", fontSize = 12.sp, color = Muted)
+            val dbSel = db && vm.supabaseOn
+            FilterChip(dbSel, { if (!vm.supabaseOn) toAccounts() else db = !db },
+                { Text(if (vm.supabaseOn) "Supabase" else "Supabase (log in)") },
+                leadingIcon = if (dbSel) ({ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }) else null)
+            Text(if (dbSel) "Creates a Supabase project in your first organization. If the server is hosted here too, SUPABASE_URL is set on it. The database password is random and not kept; add the keys from the Supabase dashboard." else "Optional. Creates a Supabase project for this server.",
+                fontSize = 12.sp, color = Muted)
+        } else if (type == ProjectType.APP) {
             FilterChip(true, {}, { Text("GitHub Releases") }, enabled = false, leadingIcon = { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) })
             Text("Apps build on GitHub Actions and the signed APK is released on GitHub. Vercel, Render and Supabase are for websites and servers.", fontSize = 12.sp, color = Muted)
         } else {
@@ -1215,17 +1276,31 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         else OutlinedTextField(url, { url = it }, label = { Text(if (type == ProjectType.WEBSITE) "Live URL (optional)" else "Endpoint URL (optional)") },
             placeholder = { Text(if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text("v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        ConnRow(Icons.Default.Code, "Create GitHub repo (private)",
+        val isPrivate = vis ?: (type != ProjectType.WEBSITE)
+        ConnRow(Icons.Default.Code, "Create GitHub repo (${if (isPrivate) "private" else "public"})",
             if (githubUsable) "Logged in as ${vm.login}" else if (vm.login.isNotBlank()) "Session expired. Tap to log in again" else "Not logged in. Tap to log in",
             if (githubUsable) Green else Amber, createUsable) {
             if (githubUsable) { create = !create; vm.prefs.setupCreate = create } else toAccounts()
+        }
+        if (createUsable) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(isPrivate, { vis = true }, { Text("Private") }, leadingIcon = { Icon(Icons.Default.Lock, null, Modifier.size(16.dp)) })
+                FilterChip(!isPrivate, { vis = false }, { Text("Public") }, leadingIcon = { Icon(Icons.Default.Public, null, Modifier.size(16.dp)) })
+            }
+            Text(if (type == ProjectType.WEBSITE && !isPrivate) "Public so GitHub Pages works on the free plan. Do not put secrets in the zip."
+                else if (type == ProjectType.WEBSITE) "GitHub Pages on a private repo needs a paid GitHub plan. Vercel works with a private repo."
+                else "Anyone can see a public repo. Private is the safe default for apps and servers.", fontSize = 11.sp, color = Muted)
         }
         if (type == ProjectType.APP) Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it; vm.prefs.setupKeys = it }); Text("  Generate signing keys + set secrets") }
         else Text(if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
             else "Your zip needs its own .github/workflows deploy. The status shows Running once the endpoint answers.", fontSize = 12.sp, color = Muted)
         BigButton("Create project", Icons.Default.PlayArrow) {
             if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, createUsable, keys && type == ProjectType.APP, type, url,
-                if (type == ProjectType.APP || targets.none { it.second == target && it.third }) "" else target) else vm.toast("Name and repo required")
+                when (type) {
+                    ProjectType.WEBSITE -> if (targets.none { it.second == target && it.third }) "" else target
+                    ProjectType.SERVER -> if ((host == "vercel" && vm.vercelUser.isNotBlank()) || (host == "render" && vm.renderUser.isNotBlank())) host else ""
+                    else -> ""
+                }, type == ProjectType.SERVER && db && vm.supabaseOn, isPrivate) else vm.toast("Name and repo required")
         }
         if (vm.log.isNotEmpty()) {
             Panel { vm.log.forEach { Mono(it) } }

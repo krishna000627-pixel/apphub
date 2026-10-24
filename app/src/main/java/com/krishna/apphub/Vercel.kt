@@ -82,16 +82,34 @@ class Vercel(private val prefs: Prefs) {
         return Linked(id, name, domainOf(id, name)) to ""
     }
 
-    /** The project's *.vercel.app address (Vercel adds it by itself); falls back to name.vercel.app. */
-    private suspend fun domainOf(id: String, name: String): String {
-        val (c, b) = call("GET", "/v9/projects/$id/domains")
-        val found = if (c == 200) runCatching {
+    /**
+     * v57: the project's real *.vercel.app host, or null while Vercel has not given it yet. Never guessed:
+     * name.vercel.app belongs to whoever took it first, so yours is often name-something.vercel.app.
+     */
+    suspend fun liveHost(projectId: String): String? {
+        val (pc, pb) = call("GET", "/v9/projects/$projectId")
+        if (pc == 200) {
+            val al = runCatching { JSONObject(pb).optJSONObject("targets")?.optJSONObject("production")?.optJSONArray("alias") }.getOrNull()
+            val h = al?.let { (0 until it.length()).map { i -> it.optString(i) }.filter { x -> x.endsWith(".vercel.app") }.minByOrNull { x -> x.length } }
+            if (h != null) return h
+        }
+        val (c, b) = call("GET", "/v9/projects/$projectId/domains")
+        return if (c == 200) runCatching {
             val a = JSONObject(b).optJSONArray("domains") ?: JSONArray()
             (0 until a.length()).map { a.getJSONObject(it) }
-                .filter { it.optString("redirect").isBlank() && it.optString("name").endsWith(".vercel.app") }
+                .filter { it.optString("redirect").isBlank() && it.optString("name").endsWith(".vercel.app") && it.optBoolean("verified", true) }
                 .minByOrNull { it.optString("name").length }?.optString("name")
         }.getOrNull() else null
-        return "https://${found ?: "$name.vercel.app"}"
+    }
+
+    private suspend fun domainOf(id: String, @Suppress("UNUSED_PARAMETER") name: String): String = liveHost(id)?.let { "https://$it" } ?: ""
+
+    /** v57: starts a production deployment of the repo's main branch by hand (when the GitHub push did not start one). Returns "" or the reason. */
+    suspend fun deployFromGit(projectId: String, name: String, githubRepoId: Long): String {
+        val body = JSONObject().put("name", name).put("project", projectId).put("target", "production")
+            .put("gitSource", JSONObject().put("type", "github").put("repoId", githubRepoId).put("ref", "main"))
+        val (c, b) = call("POST", "/v13/deployments", body, mapOf("forceNew" to "1", "skipAutoDetectionConfirmation" to "1"))
+        return if (c in 200..299) "" else errorOf(c, b)
     }
 
     /** Newest production deployment of the project. */
@@ -124,7 +142,7 @@ class Vercel(private val prefs: Prefs) {
                 val alias = o.optJSONObject("targets")?.optJSONObject("production")?.optJSONArray("alias")
                 val host = alias?.let { (0 until it.length()).map { i -> it.optString(i) }.filter { h -> h.endsWith(".vercel.app") }.minByOrNull { h -> h.length } }
                 val dep = o.optJSONArray("latestDeployments")?.optJSONObject(0)
-                Proj(o.optString("id"), name, repo, "https://${host ?: "$name.vercel.app"}", dep?.optString("readyState").orEmpty())
+                Proj(o.optString("id"), name, repo, host?.let { "https://$it" } ?: "", dep?.optString("readyState").orEmpty())
             }.filter { it.id.isNotBlank() }.sortedBy { it.name.lowercase() }
             list to ""
         }.getOrElse { null to "Vercel answered in an unexpected way" }

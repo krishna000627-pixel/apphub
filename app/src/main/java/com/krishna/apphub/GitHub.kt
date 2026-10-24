@@ -217,8 +217,23 @@ class GitHub(private val prefs: Prefs) {
     suspend fun user(): String? = get("/user").let { (c, b) -> if (c == 200) JSONObject(b).getString("login") else null }
 
     // ---- repo / secrets ----
-    suspend fun createRepo(name: String) =
-        send("POST", "/user/repos", JSONObject().put("name", name).put("private", true))
+    suspend fun createRepo(name: String, private: Boolean = true) =
+        send("POST", "/user/repos", JSONObject().put("name", name).put("private", private))
+
+    /** v57: (numeric id, is private) of a repo, or null. */
+    suspend fun repoInfo(repo: String): Pair<Long, Boolean>? {
+        val (c, b) = get("/repos/$repo")
+        if (c != 200) return null
+        return runCatching { JSONObject(b).let { it.getLong("id") to it.optBoolean("private") } }.getOrNull()
+    }
+
+    /** v57: makes the repo private or public. Returns "" or the reason. */
+    suspend fun updateVisibility(repo: String, makePrivate: Boolean): String {
+        val (c, b) = send("PATCH", "/repos/$repo", JSONObject().put("private", makePrivate))
+        if (c in 200..299) return ""
+        val msg = runCatching { JSONObject(b).optString("message") }.getOrDefault("")
+        return when { c == 0 -> "no network"; c == 401 -> "GitHub session expired. Log in again in Accounts"; msg.isNotBlank() -> msg; else -> "HTTP $c" }
+    }
 
     suspend fun setSecret(repo: String, name: String, value: String): Boolean {
         val (c, b) = get("/repos/$repo/actions/secrets/public-key")

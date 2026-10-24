@@ -63,6 +63,16 @@ class RenderApi(private val prefs: Prefs) {
         } catch (e: Exception) { 0 to (e.message ?: "no network") }
     }
 
+    /** v55: adds or replaces one environment variable of a service. Returns "" or the reason. */
+    suspend fun setEnv(id: String, name: String, value: String, key: String = prefs.renderKey): String = withContext(Dispatchers.IO) {
+        try {
+            val req = Request.Builder().url("https://api.render.com/v1/services/$id/env-vars/$name")
+                .header("Authorization", "Bearer $key").header("Accept", "application/json")
+                .put(JSONObject().put("value", value).toString().toRequestBody("application/json".toMediaType())).build()
+            http.newCall(req).execute().use { if (it.code in 200..299) "" else errorOf(it.code, it.body?.string().orEmpty()) }
+        } catch (e: Exception) { e.message ?: "no network" }
+    }
+
     /** v45: newest deploy status of a service (live, build_in_progress, update_in_progress, build_failed, ...), "" when unknown. */
     suspend fun lastDeploy(id: String, key: String = prefs.renderKey): String {
         val (c, b) = get("/services/$id/deploys?limit=1", key)
