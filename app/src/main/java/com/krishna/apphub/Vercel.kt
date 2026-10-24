@@ -108,6 +108,28 @@ class Vercel(private val prefs: Prefs) {
         }.getOrDefault(Latest(false))
     }
 
+    /** v46: one of your Vercel projects. [repo] is the linked GitHub repo (owner/name), empty when none is linked. */
+    data class Proj(val id: String, val name: String, val repo: String, val url: String, val state: String)
+
+    /** v46: your projects (newest 100) with the linked repo and the state of the newest deployment. */
+    suspend fun projects(): Pair<List<Proj>?, String> {
+        val (c, b) = call("GET", "/v9/projects", query = mapOf("limit" to "100"))
+        if (c != 200) return null to errorOf(c, b)
+        return runCatching {
+            val a = JSONObject(b).optJSONArray("projects") ?: JSONArray()
+            val list = (0 until a.length()).mapNotNull { a.optJSONObject(it) }.map { o ->
+                val l = o.optJSONObject("link")
+                val repo = if (l != null && l.optString("type") == "github" && l.optString("repo").isNotBlank()) "${l.optString("org")}/${l.optString("repo")}" else ""
+                val name = o.optString("name")
+                val alias = o.optJSONObject("targets")?.optJSONObject("production")?.optJSONArray("alias")
+                val host = alias?.let { (0 until it.length()).map { i -> it.optString(i) }.filter { h -> h.endsWith(".vercel.app") }.minByOrNull { h -> h.length } }
+                val dep = o.optJSONArray("latestDeployments")?.optJSONObject(0)
+                Proj(o.optString("id"), name, repo, "https://${host ?: "$name.vercel.app"}", dep?.optString("readyState").orEmpty())
+            }.filter { it.id.isNotBlank() }.sortedBy { it.name.lowercase() }
+            list to ""
+        }.getOrElse { null to "Vercel answered in an unexpected way" }
+    }
+
     /** Names of the project's environment variables (never the values). */
     suspend fun envList(projectId: String): Pair<List<Env>?, String> {
         val (c, b) = call("GET", "/v10/projects/$projectId/env")

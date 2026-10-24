@@ -204,13 +204,6 @@ class Prefs(ctx: Context) {
     var setupKeys: Boolean              // Setup: Generate signing keys + set secrets
         get() = sp.getBoolean("su_keys", true)
         set(v) { sp.edit().putBoolean("su_keys", v).apply() }
-    var setupVercel: Boolean            // Setup: Deploy on Vercel (off until tapped)
-        get() = sp.getBoolean("su_vercel", false)
-        set(v) { sp.edit().putBoolean("su_vercel", v).apply() }
-    /** v45: where Setup deploys a website/server: "" (nowhere), "vercel", "render" or "supabase". Old Vercel switch carries over. */
-    var setupTarget: String
-        get() = sp.getString("su_target", null) ?: if (sp.getBoolean("su_vercel", false)) "vercel" else ""
-        set(v) { sp.edit().putString("su_target", v).apply() }
     // ---- v42: server down / up alerts. State per server: 0 unknown, 1 up, 2 down (never announced), 3 down (announced) ----
     var serverAlerts: Boolean
         get() = sp.getBoolean("srv_alerts", true)

@@ -12,6 +12,13 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v46
+- Provider pages (`Pages.kt`): `GitHubScreen` (route `github`), `VercelScreen` (`vercel`), `SupabaseScreen` (`supabase`); Render page (`render`) got the same Add. Opened from Accounts ("Open GitHub/Vercel/Supabase/Render") and from the "Import from" chips on Setup. Shared `ImportCard` (title, pill, type chips, Open / Add). `HubVM.importProject(name, repo, type, liveUrl, vercelId)` saves the Project directly (no setup form), skips repos already added, and stores the Vercel project id for Website/Server so the Vercel status works.
+- Default type on Add: Vercel = Website, Render = Server, Supabase = Server, GitHub = none (Add stays off until a type is picked). Repo source: Vercel project link, Render service `repo`, Supabase = GitHub repo with the same name (else a dialog asks owner/name), GitHub = the repo itself.
+- Lists: `GitHub.repos()` (GET /user/repos, first 100, shows 40 + search), `Vercel.projects()` (GET /v9/projects: link, production alias, latest deployment state), `RenderApi.Svc.repo`, `SupabaseApi.projects()`.
+- Removed: Supabase legacy test and project creation, Render service creation, the Setup "Deploy on" picker and `Prefs.setupTarget/setupVercel`, `HubVM.setup` vercelOn/target. Vercel linking for an existing project is still in the app's Settings tab and on import.
+- Not compiled here: CI is the first build, paste errors back.
+
 ## v45
 - Render page: `RenderScreen.kt` (route `render`, opened from Accounts > Render > Open Render). Summary + one card per service (kind icon, status pill from the newest deploy, Open / Site / Deploy). `HubVM.refreshRender` (on open, every 20 s while open), `renderDeploys` map, `renderDeploy(sv)` = POST /v1/services/{id}/deploys. Accounts Render panel is now just connect / Open Render / Disconnect.
 - Setup "Deploy on": one choice Vercel | Render | Supabase | none (`Prefs.setupTarget`, old `su_vercel` carries over as vercel). `HubVM.setup(..., vercelOn, target)`. Render: `RenderApi.create` (POST /v1/services; website = static_site, server = Node web service, free plan, repo default branch). Supabase: `SupabaseApi.create` makes a project and fills liveUrl with https://ref.supabase.co. Only for Website/Server.

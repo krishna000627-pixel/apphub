@@ -200,6 +200,20 @@ class GitHub(private val prefs: Prefs) {
         }
     }
 
+    /** v46: one of your repos, for the GitHub page. */
+    data class Repo(val name: String, val full: String, val priv: Boolean, val desc: String, val lang: String)
+
+    /** v46: your repos (own, collaborator, organisation), newest push first. Null and the reason on failure. */
+    suspend fun repos(): Pair<List<Repo>?, String> {
+        val (c, b) = get("/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member")
+        if (c != 200) return null to (if (c == 0) "no network" else if (c == 401) "session expired" else "HTTP $c")
+        val a = runCatching { JSONArray(b) }.getOrNull() ?: return null to "GitHub answered in an unexpected way"
+        val list = (0 until a.length()).mapNotNull { a.optJSONObject(it) }.map {
+            Repo(it.s("name"), it.s("full_name"), it.optBoolean("private"), it.s("description"), it.s("language"))
+        }.filter { it.full.isNotBlank() }
+        return list to ""
+    }
+
     suspend fun user(): String? = get("/user").let { (c, b) -> if (c == 200) JSONObject(b).getString("login") else null }
 
     // ---- repo / secrets ----

@@ -200,6 +200,9 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             composable("info/{id}", listOf(navArgument("id") { type = NavType.LongType })) { InfoScreen(vm, nav, it.arguments!!.getLong("id")) }
             composable("accounts") { AccountsScreen(vm, nav) }   // v43
             composable("render") { RenderScreen(vm, nav) }   // v45
+            composable("github") { GitHubScreen(vm, nav) }   // v46
+            composable("vercel") { VercelScreen(vm, nav) }
+            composable("supabase") { SupabaseScreen(vm, nav) }
             composable("add") { AddScreen(vm, nav) }
             composable("env/{id}", listOf(navArgument("id") { type = NavType.LongType })) { EnvScreen(vm, nav, it.arguments!!.getLong("id")) }   // v42
             composable("detail/{id}", listOf(navArgument("id") { type = NavType.LongType })) { Detail(vm, nav, it.arguments!!.getLong("id")) }
@@ -931,7 +934,10 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
                 OutlinedTextField(vm.clientSecret, { vm.updateClientSecret(it) }, label = { Text("Client secret (optional)") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                 Text("With a secret, GitHub sends you straight back to App Hub (set the OAuth app Callback URL to apphub://oauth) and the web login is used by default. Without it, a code is used and you switch back yourself.", fontSize = 11.sp, color = Muted)
-            } else OutlinedButton({ vm.logout() }) { Text("Log out") }
+            } else {
+                BigButton("Open GitHub", Icons.Default.Code) { nav.navigate("github") { launchSingleTop = true } }
+                OutlinedButton({ vm.logout() }) { Text("Log out") }
+            }
         }
         // ---- v39: Vercel login (token) for websites and servers ----
         Panel {
@@ -951,6 +957,7 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
                 Text("Logged in as ${vm.vercelUser}", color = Green)
                 if (vm.vercelTeam.isNotBlank()) Text("Team ${vm.vercelTeam}", fontSize = 12.sp, color = Muted)
                 Spacer(Modifier.height(8.dp))
+                BigButton("Open Vercel", Icons.Default.Public) { nav.navigate("vercel") { launchSingleTop = true } }
                 OutlinedButton({ vm.vercelLogout() }) { Text("Log out") }
             }
         }
@@ -970,18 +977,9 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
             } else {
                 Text("Connected", color = Green)
                 if (vm.supabaseMsg.isNotBlank()) Text(vm.supabaseMsg, fontSize = 12.sp, color = Amber)
-                Text("${vm.supabaseProjects.size} project(s). Tap one to open it on Supabase.", fontSize = 12.sp, color = Muted)
-                vm.supabaseProjects.forEach { pr ->
-                    Column(Modifier.fillMaxWidth().clickable { openUrl(ctx, "https://supabase.com/dashboard/project/${pr.id}") }.padding(vertical = 4.dp)) {
-                        Mono(pr.name, color = Cyan)
-                        Mono("${pr.status.lowercase().replace('_', ' ')} • ${pr.region}", color = if (pr.status.startsWith("ACTIVE")) Green else Amber)
-                    }
-                }
+                Text("${vm.supabaseProjects.size} project(s)", fontSize = 12.sp, color = Muted)
                 Spacer(Modifier.height(8.dp))
-                // v45: one test project to check legacy API key access
-                OutlinedButton({ vm.supabaseTest() }, Modifier.fillMaxWidth()) { BtnText(if (vm.supabaseTesting) "Testing…" else "Test legacy API") }
-                if (vm.supabaseLog.isNotEmpty()) { Spacer(Modifier.height(6.dp)); vm.supabaseLog.forEach { Mono(it, color = if (it.startsWith("✗")) Red else if (it.startsWith("✓")) Green else Color.Unspecified) } }
-                Spacer(Modifier.height(8.dp))
+                BigButton("Open Supabase", Icons.Default.Storage) { nav.navigate("supabase") { launchSingleTop = true } }
                 OutlinedButton({ vm.supabaseLogout() }) { Text("Disconnect") }
             }
         }
@@ -1151,52 +1149,36 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     LaunchedEffect(Unit) { vm.draftName = "" }
     // v40: the three switches keep the position you left them in (saved on tap); Vercel stays off until you turn it on
     var create by remember { mutableStateOf(vm.prefs.setupCreate) }; var keys by remember { mutableStateOf(vm.prefs.setupKeys) }
-    var target by remember { mutableStateOf(vm.prefs.setupTarget) }   // v45: "", vercel, render, supabase
-    // v44: a choice only counts while its account is connected (the saved position is kept for when you log in)
-    val targetOk = when (target) { "vercel" -> vm.vercelUser.isNotBlank(); "render" -> vm.renderUser.isNotBlank(); "supabase" -> vm.supabaseOn; else -> false }
-    val vercelUsable = target == "vercel" && targetOk
+    // v44: a switch only counts while its account is connected (the saved position is kept for when you log in)
     val githubUsable = vm.login.isNotBlank() && !vm.sessionExpired
     val createUsable = create && githubUsable
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
+        // v46: repos that already exist are added in one tap from the provider pages
+        Text("Import from", fontSize = 12.sp, color = Muted)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("GitHub" to "github", "Vercel" to "vercel", "Render" to "render", "Supabase" to "supabase").forEach { (label, route) ->
+                AssistChip({ nav.navigate(route) { launchSingleTop = true } }, { Text(label) })
+            }
+        }
         TypePicker(type) { type = it }
         OutlinedTextField(name, { name = it }, label = { Text("${type.label} name") }, placeholder = { Text(when (type) { ProjectType.APP -> "e.g. My App"; ProjectType.WEBSITE -> "e.g. My Site"; ProjectType.SERVER -> "e.g. My API" }) }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(repo, { repo = it }, label = { Text("Repo name (or owner/name)") }, placeholder = { Text("e.g. myapp") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         if (type == ProjectType.APP) OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name (optional)") }, placeholder = { Text("found automatically if left empty") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         else OutlinedTextField(url, { url = it }, label = { Text(if (type == ProjectType.WEBSITE) "Live URL (optional)" else "Endpoint URL (optional)") },
-            placeholder = { Text(if (vercelUsable) "set from Vercel automatically" else if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            placeholder = { Text(if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text("v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        // v39: Deploy on Vercel sits above Create GitHub repo (websites and servers). v44: both are tappable rows that show who is connected.
         val toAccounts = { nav.navigate("accounts") { launchSingleTop = true }; Unit }
-        if (type != ProjectType.APP) {
-            Panel {
-                Text("Deploy on", fontWeight = FontWeight.Bold)
-                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(Triple("vercel", "Vercel", vm.vercelUser.isNotBlank()), Triple("render", "Render", vm.renderUser.isNotBlank()), Triple("supabase", "Supabase", vm.supabaseOn)).forEach { (k, label, ok) ->
-                        FilterChip(target == k, { if (ok) { target = if (target == k) "" else k; vm.prefs.setupTarget = target } else toAccounts() },
-                            { Text(label, maxLines = 1, softWrap = false) })
-                    }
-                }
-                Text(when {
-                    target.isBlank() -> "Nowhere. Tap one to pick it."
-                    targetOk -> "Connected. Tap again to turn off."
-                    else -> "Not connected. Tap to log in"
-                }, fontSize = 12.sp, color = if (target.isBlank() || targetOk) Muted else Amber)
-            }
-        }
         ConnRow(Icons.Default.Code, "Create GitHub repo (private)",
             if (githubUsable) "Logged in as ${vm.login}" else if (vm.login.isNotBlank()) "Session expired. Tap to log in again" else "Not logged in. Tap to log in",
             if (githubUsable) Green else Amber, createUsable) {
             if (githubUsable) { create = !create; vm.prefs.setupCreate = create } else toAccounts()
         }
         if (type == ProjectType.APP) Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it; vm.prefs.setupKeys = it }); Text("  Generate signing keys + set secrets") }
-        else Text(if (vercelUsable) "Vercel builds every push by itself, no workflow needed. The status follows the Vercel deployment."
-            else if (targetOk && target == "render") "Render builds every push by itself. See it on the Render page (Accounts)."
-            else if (targetOk && target == "supabase") "A Supabase project is created for it. The project needs its own deploy for code."
-            else if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
+        else Text(if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
             else "Your zip needs its own .github/workflows deploy. The status shows Running once the endpoint answers.", fontSize = 12.sp, color = Muted)
         BigButton("Create project", Icons.Default.PlayArrow) {
-            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, createUsable, keys && type == ProjectType.APP, type, url, vercelUsable && type != ProjectType.APP, if (targetOk && type != ProjectType.APP) target else "") else vm.toast("Name and repo required")
+            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, createUsable, keys && type == ProjectType.APP, type, url) else vm.toast("Name and repo required")
         }
         if (vm.log.isNotEmpty()) {
             Panel { vm.log.forEach { Mono(it) } }

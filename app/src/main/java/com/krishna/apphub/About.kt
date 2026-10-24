@@ -18,6 +18,7 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v46" to listOf("GitHub, Vercel and Supabase have their own pages like Render (Accounts > Open ...). Each lists what you have and adds it as a project in one tap: pick the type only. Vercel starts on Website, Render and Supabase on Server, GitHub has none selected. Setup: Import from chips. Removed the Deploy on picker and the Supabase test."),
         "v45" to listOf("Render has its own page with a card per service (last deploy, Open, Site, Deploy). Setup: Deploy on picks Vercel, Render or Supabase. Supabase: Test legacy API creates one test project and checks its legacy keys."),
         "v44" to listOf("Setup: Deploy on Vercel and Create GitHub repo are now tappable rows that show who is connected. A switch only counts while its account is logged in; tapping a row that is not connected opens Accounts."),
         "v43" to listOf(

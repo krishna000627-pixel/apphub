@@ -92,7 +92,10 @@ private fun deployLook(st: String): Pair<String, Color> = when (st) {
 }
 
 @Composable private fun RenderCard(vm: HubVM, sv: RenderApi.Svc, open: (String) -> Unit) {
+    val ps by vm.projects.collectAsState()
     val (dl, dc) = deployLook(vm.renderDeploys[sv.id].orEmpty())
+    var type by remember(sv.id) { mutableStateOf<ProjectType?>(ProjectType.SERVER) }   // Render starts on Server
+    val added = sv.repo.isNotBlank() && ps.any { it.repo.equals(sv.repo, true) }
     Panel(border = if (dl == "Failed") Red else Line) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(36.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
@@ -103,18 +106,26 @@ private fun deployLook(st: String): Pair<String, Color> = when (st) {
                 Text(sv.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(kindLabel(sv.kind) + " • " + if (sv.suspended) "suspended" else "active", fontSize = 12.sp, color = if (sv.suspended) Amber else Muted)
             }
-            if (dl.isNotBlank()) Pill(dl, dc)
+            if (added) Pill("Added", Green) else if (dl.isNotBlank()) Pill(dl, dc)
         }
         if (sv.url.isNotBlank()) {
             Spacer(Modifier.height(6.dp))
             Mono(sv.url.removePrefix("https://"), Modifier.clickable { open(sv.url) }, Cyan)
         }
+        if (sv.repo.isBlank()) { Spacer(Modifier.height(4.dp)); Text("No GitHub repo linked", fontSize = 11.sp, color = Amber) }
+        if (!added && sv.repo.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ProjectType.values().forEach { t -> FilterChip(type == t, { type = t }, { Text(t.label, maxLines = 1, softWrap = false) }) }
+            }
+        }
         Spacer(Modifier.height(8.dp))
+        val pad = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton({ open(sv.dashboardUrl) }, Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)) { BtnText("Open") }
-            if (sv.url.isNotBlank()) OutlinedButton({ open(sv.url) }, Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)) { BtnText("Site") }
-            if (!sv.suspended) Button({ vm.renderDeploy(sv) }, Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { BtnText("Deploy") }
+            OutlinedButton({ open(sv.dashboardUrl) }, Modifier.weight(1f), contentPadding = pad) { BtnText("Open") }
+            if (!sv.suspended) OutlinedButton({ vm.renderDeploy(sv) }, Modifier.weight(1f), contentPadding = pad) { BtnText("Deploy") }
+            if (!added && sv.repo.isNotBlank()) Button({ type?.let { vm.importProject(sv.name, sv.repo, it, sv.url) } }, Modifier.weight(1f), contentPadding = pad,
+                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { BtnText("Add") }
         }
     }
 }
