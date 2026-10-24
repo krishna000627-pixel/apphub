@@ -12,6 +12,19 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v64
+- Project pages are sub pages, not tabs (replaces the v63 tab bar): `detail/{id}` = hub (`ProjectScreen`: header, hero, Update/Build-failed cards, one Panel of `NavRow`s: Builds, Releases (apps), Files, Info, Prompt, Settings, then latest 3 builds and 5 commits). Sub routes: `builds/{id}` (`BuildsScreen`), `releases/{id}` (`ReleasesScreen`), `psettings/{id}` (`ProjectSettingsScreen` = `AppSettings`), plus the existing `files/{id}`, `info/{id}`, `file/{id}`, `env/{id}`, `install/{id}`. All use `Header(..., nav)` (back arrow). `KeepFresh` is the shared refresh loop.
+- `App` hides the global bottom bar for all of those prefixes (`onProject`) and adds `navigationBarsPadding()` there so content clears the gesture bar. `openRoute` "builds/ID" / "releases/ID" first navigates to `detail/ID`, then the sub page (back = project).
+- Notifier: failed build opens `builds/ID` (was `detail/ID?tab=builds`); the `tab` argument and tab bar are gone.
+- versionCode 64, versionName "64.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
+## v63
+- Project page = `ProjectPage.kt` (`ProjectScreen(vm, nav, id, startTab)`), replaces `Detail` in Screens.kt. Route `detail/{id}?tab={tab}` (tab: overview|builds|releases|settings, default overview). One navigation: `App` hides the global bottom bar for routes starting with detail/, info/, files/, file/, env/, install/ (`onProject`); the project has its own NavigationBar (Overview, Builds + red badge when the newest run failed, Releases for apps only, Settings = `AppSettings` unchanged). BackHandler: other tab -> Overview first.
+- Overview: hero card (version, stack, status/installed|live/last build with duration, Deploy|Push + Install|Open), "Update ready" card, "Build failed" card (Copy log, AI prompt, Re-run), tiles Files / Info / Prompt, latest 3 builds, 5 commits. Header: back, name+repo, stage pill, pin, menu (Open on GitHub, Copy link, Share).
+- Builds: filter chips All/Passed/Failed, expandable run (Re-run or Cancel build, steps, View full log), Load older, Copy. `GitHub.Run.sec` (duration from run_started_at/updated_at; not stored in SnapCache), `GitHub.rerun/cancel`, `HubVM.rerun/cancelRun`.
+- Notifier rewritten: channels build_failed (high), build_ok (low), server_down (high), server_up (low), updates (default); the old builds/servers/apks channels are deleted. Failed build text = commit message + duration, opens `detail/ID?tab=builds`; buttons Builds / Install; one group summary; `Prefs.muted(id)` per app (Settings > Shortcuts > Mute alerts, `HubVM.isMuted/toggleMute`).
+- versionCode 63, versionName "63.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
 ## v62
 - New file `HostingPage.kt`: `ColumnScope.HostingPanels(vm, nav, p)` = the app Settings panels that were inline in `AppSettings` (Repository visibility, server Hosting, GitHub Pages, Vercel), plus `HubVM.siteLink(p)` / `HubVM.siteName(p)` as extensions (removed from HubVM.kt). `AppSettings` just calls `HostingPanels(vm, nav, p)`.
 - `siteLink` is state-only (vercelRev via `isVercel`, `pagesOn`, liveUrl): Vercel linked -> liveUrl (github.io ignored); else Pages on -> `pagesUrl(repo)`; else a vercel.app liveUrl -> `pagesUrl(repo)`; a github.io liveUrl with `pagesOn == false` -> ""; else liveUrl. `unlinkVercel` also reads `gh.pagesState` at once.

@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit
 private fun JSONObject.s(k: String): String = if (isNull(k)) "" else optString(k, "")
 
 class GitHub(private val prefs: Prefs) {
-    data class Run(val id: Long, val number: Int, val ok: Boolean?, val time: String, val msg: String, val event: String = "", val cancelled: Boolean = false)
+    data class Run(val id: Long, val number: Int, val ok: Boolean?, val time: String, val msg: String, val event: String = "", val cancelled: Boolean = false, val sec: Int = 0)
     data class Info(val desc: String, val lang: String, val branch: String, val sizeKb: Int, val issues: Int, val priv: Boolean, val pushed: String, val stars: Int)
     data class Commit(val sha: String, val msg: String, val author: String, val time: String)
     data class Release(val tag: String, val time: String, val notes: String, val sizeKb: Long)
@@ -284,6 +284,10 @@ class GitHub(private val prefs: Prefs) {
         send("POST", "/repos/$repo/actions/workflows/deploy.yml/dispatches", JSONObject().put("ref", "main")).first == 204
 
     // ---- builds ----
+    /** v63: run a finished build again / stop a running one. */
+    suspend fun rerun(repo: String, runId: Long) = send("POST", "/repos/$repo/actions/runs/$runId/rerun", JSONObject()).first in 200..299
+    suspend fun cancel(repo: String, runId: Long) = send("POST", "/repos/$repo/actions/runs/$runId/cancel", JSONObject()).first in 200..299
+
     suspend fun dispatch(repo: String) =
         send("POST", "/repos/$repo/actions/workflows/build.yml/dispatches", JSONObject().put("ref", "main")).first == 204
 
@@ -295,7 +299,12 @@ class GitHub(private val prefs: Prefs) {
             o.getString("created_at").replace("T", " ").take(16),
             o.optJSONObject("head_commit")?.optString("message")?.lineSequence()?.first() ?: "",
             o.optString("event"),
-            o.optString("conclusion") == "cancelled"
+            o.optString("conclusion") == "cancelled",
+            // v63: how long a finished run took
+            runCatching {
+                if (o.isNull("conclusion")) 0
+                else (java.time.Instant.parse(o.getString("updated_at")).epochSecond - java.time.Instant.parse(o.getString("run_started_at")).epochSecond).toInt().coerceAtLeast(0)
+            }.getOrDefault(0)
         )
     }
 

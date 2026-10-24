@@ -103,6 +103,9 @@ class Prefs(ctx: Context) {
         set(v) { sp.edit().putBoolean("seeded_v1", v).apply() }
 
     fun pinned(id: Long) = sp.getBoolean("pin_$id", false)
+    /** v63: no build / server alerts for this app. */
+    fun muted(id: Long) = sp.getBoolean("mute_$id", false)
+    fun setMuted(id: Long, v: Boolean) { sp.edit().putBoolean("mute_$id", v).apply() }
     fun setPinned(id: Long, v: Boolean) { sp.edit().putBoolean("pin_$id", v).apply() }
     fun installed(id: Long) = s("inst_$id")
     fun setInstalled(id: Long, v: String) = put("inst_$id", v)

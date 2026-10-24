@@ -158,7 +158,11 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     // (v27: the interval is the "Live sync" choice in Settings: 3 s, 10 s or off)
     LaunchedEffect(Unit) { while (true) { if (vm.live) vm.autoSync(); delay(vm.syncDelayMs) } }
     // v27: a tap on a build / download notification opens that app's page
-    LaunchedEffect(vm.openRoute) { vm.openRoute?.let { r -> nav.navigate(r) { launchSingleTop = true }; vm.openRoute = null } }
+    LaunchedEffect(vm.openRoute) { vm.openRoute?.let { r ->
+        // v64: builds/ID and releases/ID open on top of the project home, so back goes to the project
+        Regex("^(builds|releases)/(\\d+)$").find(r)?.let { m -> nav.navigate("detail/${m.groupValues[2]}") { launchSingleTop = true } }
+        nav.navigate(r) { launchSingleTop = true }; vm.openRoute = null
+    } }
     val waiting = vm.zipFound.entries.firstOrNull { e -> vm.zipKey(e.key, e.value) !in vm.zipDismissed }
     val waitProj = waiting?.let { w -> ps.firstOrNull { it.id == w.key } }
     if (waiting != null && waitProj != null) {
@@ -178,8 +182,10 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             dismissButton = { TextButton({ vm.skipZip(waitProj, f) }) { Text("Skip this zip") } })
     }
     // contentWindowInsets = 0 so the status bar inset is applied exactly once (statusBarsPadding below)
+    // v63/v64: the project pages (project, builds, releases, settings, info, files, file, env, install) are sub pages with a back arrow, so the app bar is hidden there
+    val onProject = route != null && listOf("detail/", "builds/", "releases/", "psettings/", "info/", "files/", "file/", "env/", "install/").any { route.startsWith(it) }
     Scaffold(containerColor = Bg, contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
-        NavigationBar(containerColor = Surf) {
+        if (!onProject) NavigationBar(containerColor = Surf) {
             tabs.forEach { (r, l, i) ->
                 NavigationBarItem(selected = route == r, onClick = { nav.navigate(r) { popUpTo("dash"); launchSingleTop = true } },
                     icon = { Icon(i, null) }, label = { Text(l, fontSize = 10.sp) },
@@ -187,7 +193,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
         }
     }) { pad ->
-        NavHost(nav, "dash", Modifier.padding(pad).statusBarsPadding()) {
+        NavHost(nav, "dash", Modifier.padding(pad).statusBarsPadding().then(if (onProject) Modifier.navigationBarsPadding() else Modifier)) {
             composable("dash") { Dashboard(vm, nav) }
             composable("prompt") { PromptScreen(vm, nav) }
             composable("log") { LogScreen(vm, nav) }
@@ -206,7 +212,10 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             composable("supabase") { SupabaseScreen(vm, nav) }
             composable("add") { AddScreen(vm, nav) }
             composable("env/{id}", listOf(navArgument("id") { type = NavType.LongType })) { EnvScreen(vm, nav, it.arguments!!.getLong("id")) }   // v42
-            composable("detail/{id}", listOf(navArgument("id") { type = NavType.LongType })) { Detail(vm, nav, it.arguments!!.getLong("id")) }
+            composable("detail/{id}", listOf(navArgument("id") { type = NavType.LongType })) { ProjectScreen(vm, nav, it.arguments!!.getLong("id")) }
+            composable("builds/{id}", listOf(navArgument("id") { type = NavType.LongType })) { BuildsScreen(vm, nav, it.arguments!!.getLong("id")) }   // v64
+            composable("releases/{id}", listOf(navArgument("id") { type = NavType.LongType })) { ReleasesScreen(vm, nav, it.arguments!!.getLong("id")) }
+            composable("psettings/{id}", listOf(navArgument("id") { type = NavType.LongType })) { ProjectSettingsScreen(vm, nav, it.arguments!!.getLong("id")) }
             composable("install/{id}", listOf(navArgument("id") { type = NavType.LongType })) { InstallScreen(vm, nav, it.arguments!!.getLong("id")) }
         }
     }
@@ -360,170 +369,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
 }
 
 // ---------- project detail (everything fetched in-app) ----------
-@Composable fun Detail(vm: HubVM, nav: NavHostController, id: Long) {
-    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
-    val ctx = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) }
-    var openRun by remember { mutableStateOf<Long?>(null) }
-    val runs = vm.runs[id] ?: emptyList()
-    val err = vm.errors[id] ?: ""
-    val upd = vm.hasUpdate(p)
-    val pend = vm.pending(p)
-    val dl = dlPct(vm, p)
-    LaunchedEffect(id) { if (vm.repoFiles[id] == null) vm.loadFiles(p, quiet = true) }   // file count for the Files box
-    LaunchedEffect(id, p.repo) { vm.refresh(p); vm.checkInstalls(); vm.loadDetails(p).join(); while (true) { delay(vm.syncDelayMs); if (vm.live) vm.loadDetails(p).join() } }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
-            Header(p.name, nav) {
-                IconButton({ openUrl(ctx, "https://github.com/${p.repo}") }, Modifier.size(40.dp)) { Icon(Icons.Default.OpenInNew, null, tint = Muted) }
-                IconButton({ vm.togglePin(p) }, Modifier.size(40.dp)) {
-                    Icon(if (vm.isPinned(id)) Icons.Default.Star else Icons.Default.StarBorder, null, tint = if (vm.isPinned(id)) Amber else Muted)
-                }
-            }
-        }
-        item {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(p.version, fontSize = 36.sp, color = Cyan, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.padding(bottom = 6.dp)) { Text(p.stack, fontSize = 12.sp, color = Muted); Text(p.repo, fontSize = 12.sp, color = Muted) }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = if (pend) Amber else Green, contentColor = Color.Black)) {
-                    Icon(if (pend) Icons.Default.AddCircle else Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText(if (pend) "Push ${vm.waitLabel(p)}" else "Deploy")
-                }
-                if (p.kind == ProjectType.APP) OutlinedButton({ nav.navigate("install/$id") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.outlinedButtonColors(contentColor = if (upd || dl != null) Amber else Cyan)) {
-                    if (dl != null) { CircularProgressIndicator({ dl / 100f }, Modifier.size(14.dp), color = Amber, strokeWidth = 2.dp); Spacer(Modifier.width(6.dp)) }
-                    BtnText(if (dl != null) dlText(dl) else installLabel(vm, p, upd))
-                }
-                else OutlinedButton({ vm.siteLink(p).let { if (it.isBlank()) vm.toast("Set the live URL in Settings") else openUrl(ctx, it) } }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)) {
-                    Icon(Icons.Default.OpenInNew, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText(if (p.kind == ProjectType.WEBSITE) "Open site" else "Open server")
-                }
-            }
-        }
-        item {
-            HubTabs(listOf("Info", "Builds", "Releases", "Settings"), tab) { tab = it }
-        }
-        when (tab) {
-            0 -> {
-                item {
-                    // v34: short overview; tap it for everything else (InfoScreen)
-                    val (instText, instColor) = installedLine(vm, p)
-                    Panel(Modifier.clickable { nav.navigate("info/$id") }) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                val st = vm.stage(p)
-                                Mono("status   : ${st.label.lowercase()}", color = st.color())
-                                if (p.kind == ProjectType.APP) Mono("installed: $instText", color = instColor)
-                                else Mono("live     : ${vm.siteLink(p).ifBlank { "-" }}")
-                                Mono("version  : ${p.version}")
-                            }
-                            Icon(Icons.Default.ChevronRight, null, tint = Muted)
-                        }
-                    }
-                }
-                item {
-                    // v31: the repo's files, one tap away; common files open straight on their own page
-                    val all = vm.repoFiles[id]
-                    val key = all?.let { l -> listOf("README.md", "HANDOFF.md", "app/src/main/AndroidManifest.xml", "app/build.gradle.kts", "build.gradle.kts", ".github/workflows/build.yml").filter { k -> l.any { it.path == k } } } ?: emptyList()
-                    Panel(Modifier.clickable { nav.navigate("files/$id") }) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(40.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Folder, null, tint = Amber) }
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Files", fontWeight = FontWeight.Bold)
-                                Text(if (all == null) "Browse" else "${all.size} files • ${fmtBytes(all.sumOf { it.size })}", fontSize = 12.sp, color = Muted)
-                            }
-                            Icon(Icons.Default.ChevronRight, null, tint = Muted)
-                        }
-                        if (key.isNotEmpty()) {
-                            Spacer(Modifier.height(8.dp))
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                key.forEach { k ->
-                                    AssistChip({ nav.navigate("file/$id?path=${Uri.encode(k)}") }, { Text(k.substringAfterLast('/'), fontSize = 11.sp, maxLines = 1) },
-                                        leadingIcon = { Icon(fileIcon(k), null, Modifier.size(14.dp)) })
-                                }
-                            }
-                        }
-                    }
-                }
-                item { Text("Recent commits", color = Muted, fontSize = 12.sp) }
-                items(vm.commits[id] ?: emptyList()) { c ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                        Mono(c.sha, color = Cyan); Spacer(Modifier.width(8.dp))
-                        Column { Text(c.msg.lineSequence().first().take(70), fontSize = 13.sp); Mono("${c.author} • ${ago(c.time)}", color = Muted) }
-                    }
-                }
-            }
-            1 -> {
-                val all = (runs + (vm.olderRuns[id] ?: emptyList())).distinctBy { it.id }   // v49: the whole history, newest first
-                if (all.isNotEmpty()) item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Mono("${all.size} builds", Modifier.weight(1f), Muted)
-                        TextButton({ vm.copy(vm.historyText(p, all)) }) { Text("Copy history", fontSize = 12.sp, color = Cyan) }
-                    }
-                }
-                items(all) { r ->
-                    val st = when (r.ok) { true -> "passed"; false -> "failed"; else -> "running" }
-                    Column(Modifier.fillMaxWidth().clickable {
-                        if (openRun == r.id) openRun = null else { openRun = r.id; vm.loadJobs(p, r.id) }
-                    }.padding(vertical = 4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(10.dp).background(okColor(r.ok), CircleShape))
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) { Mono("#${r.number}  ${r.msg.take(34)}"); Mono(ago(r.time), color = Color.Gray) }
-                            Text(st, color = statusColor(st), fontSize = 12.sp)
-                        }
-                        if (openRun == r.id) {
-                            val js = vm.jobs[r.id]
-                            if (js == null) Mono("  loading steps…", color = Muted) else js.forEach { j ->
-                                Mono("  ${mark(j.ok)} ${j.name}", color = okColor(j.ok))
-                                j.steps.forEach { s -> Mono("     ${mark(s.ok)} ${s.name}", color = if (s.ok == false) Red else Muted) }
-                                TextButton({ vm.openLog(p, j); nav.navigate("log") }) { Text("View full log", fontSize = 12.sp, color = Cyan) }
-                            }
-                        }
-                    }
-                }
-                if ((runs.size >= 15 || vm.olderRuns[id] != null) && vm.olderMore[id] != false) item {
-                    OutlinedButton({ vm.loadOlder(p) }, Modifier.fillMaxWidth()) { BtnText(if (vm.olderLoading[id] == true) "Loading…" else "Load older builds") }
-                }
-                if (runs.isEmpty()) item {
-                    EmptyState(Icons.Default.Build, "No builds yet", "Deploy a zip and the first build starts on GitHub.") {
-                        Button({ goDeploy(vm, nav, p) }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { Text("Deploy a zip") }
-                    }
-                }
-                if (err.isNotBlank()) item {
-                    Panel(border = Red) {
-                        Text("Build Error", color = Red, fontWeight = FontWeight.Bold); Mono(err)
-                        Text("Tap the build above, then View full log.", fontSize = 11.sp, color = Muted)
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton({ vm.copy(err) }, Modifier.weight(1f)) { Icon(Icons.Default.ContentCopy, null, Modifier.size(16.dp)); Text(" Copy log", fontSize = 12.sp) }
-                            OutlinedButton({ vm.selId = p.id; vm.task = "Fix error"; nav.navigate("prompt") }, Modifier.weight(1f)) { Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp), tint = Cyan); Text(" AI prompt", fontSize = 12.sp) }
-                        }
-                    }
-                }
-            }
-            2 -> {
-                val rl = vm.releases[id] ?: emptyList()
-                items(rl) { r ->
-                    Panel {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(r.tag, Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Cyan)
-                            Text(ago(r.time), fontSize = 12.sp, color = Muted)
-                        }
-                        Mono(vm.notesFor(p, r.tag, r.notes).take(300))
-                        if (r.sizeKb > 0) Mono("APK ${"%.1f".format(r.sizeKb / 1024.0)} MB", color = Muted)
-                    }
-                }
-                if (rl.isEmpty()) item { EmptyState(Icons.Default.Download, "No releases yet", "A release with the APK appears here once a build passes.") }
-            }
-            else -> item { AppSettings(vm, nav, p) }
-        }
-        item { Spacer(Modifier.height(16.dp)) }
-    }
-}
+// v63: the project page moved to ProjectPage.kt (ProjectScreen)
 
 // ---------- per-app settings ----------
 @Composable fun SectionTitle(icon: ImageVector, t: String) =
@@ -634,6 +480,9 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             SectionTitle(Icons.Default.Tune, "Shortcuts")
             SettingRow(Icons.Default.Star, "Pin to top", "Pinned apps sort first on the dashboard", Amber) {
                 HubSwitch(vm.isPinned(p.id), { vm.togglePin(p) })
+            }
+            SettingRow(Icons.Default.NotificationsOff, "Mute alerts", "No build or server notifications for this app", Muted) {
+                HubSwitch(vm.isMuted(p.id), { vm.toggleMute(p) })
             }
             SettingRow(Icons.Default.Restore, "Reset installed marker", "Now: ${vm.installedTag(p.id).ifBlank { "none" }}. Clears the update check.", Cyan, { vm.clearInstalled(p.id) })
             SettingRow(Icons.Default.AutoAwesome, "Copy adopt prompt", "Send it to Claude with the project", Cyan, { vm.copy(Prompts.adopt(p)) })

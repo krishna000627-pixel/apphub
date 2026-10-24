@@ -282,6 +282,18 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     fun isPinned(id: Long) = pins[id] ?: prefs.pinned(id)
     fun togglePin(p: Project) { val v = !isPinned(p.id); pins[p.id] = v; prefs.setPinned(p.id, v) }
+    // v63: mute the alerts of one app; re-run or cancel a build
+    private val mutes = mutableStateMapOf<Long, Boolean>()
+    fun isMuted(id: Long) = mutes[id] ?: prefs.muted(id)
+    fun toggleMute(p: Project) { val v = !isMuted(p.id); mutes[p.id] = v; prefs.setMuted(p.id, v) }
+    fun rerun(p: Project, runId: Long) = viewModelScope.launch {
+        toast(if (gh.rerun(p.repo, runId)) "Build restarted" else "Could not restart this build")
+        delay(1500); refresh(p)
+    }
+    fun cancelRun(p: Project, runId: Long) = viewModelScope.launch {
+        toast(if (gh.cancel(p.repo, runId)) "Build cancelled" else "Could not cancel this build")
+        delay(1500); refresh(p)
+    }
     fun isAuto(id: Long) = autoV[id] ?: prefs.autoVer(id)
     fun setAuto(id: Long, v: Boolean) { autoV[id] = v; prefs.setAutoVer(id, v) }
     fun clearInstalled(id: Long) { installed[id] = ""; prefs.setInstalled(id, ""); toast("Installed marker cleared") }
@@ -1113,7 +1125,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (seen == last.id) return
         prefs.setNotifiedRun(p.id, last.id)
         if (seen == 0L || !startedRecently(last.time)) return
-        Notifier.buildDone(getApplication<Application>(), prefs, p, last.number, last.ok == true)
+        Notifier.buildDone(getApplication<Application>(), prefs, p, last.number, last.ok == true, last.msg, last.sec)
     }
 
     private fun startedRecently(t: String): Boolean = runCatching {
