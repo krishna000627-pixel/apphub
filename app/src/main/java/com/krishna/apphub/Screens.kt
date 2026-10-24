@@ -10,6 +10,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -216,6 +217,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val ps by vm.projects.collectAsState()
     var f by remember { mutableStateOf("All") }
     var q by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.autoSync() }   // fresh data at once, silently
     val ctx = LocalContext.current
     fun hit(p: Project, k: String) = when (k) {
@@ -225,11 +227,19 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val shown = ps.filter { hit(it, f) && (q.isBlank() || it.name.contains(q, true) || it.repo.contains(q, true)) }
         .sortedWith(compareByDescending<Project> { vm.isPinned(it.id) }.thenBy { it.name.lowercase() })
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Header("App Hub") {
-            IconButton({ vm.refreshAll() }, Modifier.size(40.dp)) {
-                if (vm.refreshing) CircularProgressIndicator(Modifier.size(18.dp), color = Green, strokeWidth = 2.dp) else Icon(Icons.Default.Refresh, null)
+        // v47: tap the name to refresh, search sits where the refresh icon was (opens in the header, no box above the list)
+        BackHandler(searching) { searching = false; q = "" }
+        Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 4.dp).height(40.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (searching) {
+                SearchField(q, { q = it }, { searching = false }, Modifier.weight(1f))
+            } else {
+                Row(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).clickable { vm.refreshAll() }.padding(vertical = 8.dp, horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("App Hub", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Green, maxLines = 1)
+                    if (vm.refreshing) { Spacer(Modifier.width(10.dp)); CircularProgressIndicator(Modifier.size(14.dp), color = Green, strokeWidth = 2.dp) }
+                }
+                IconButton({ searching = true }, Modifier.size(40.dp)) { Icon(Icons.Default.Search, null) }
+                IconButton({ nav.navigate("add") }, Modifier.size(40.dp)) { Icon(Icons.Default.Add, null, tint = Green) }
             }
-            IconButton({ nav.navigate("add") }, Modifier.size(40.dp)) { Icon(Icons.Default.Add, null, tint = Green) }
         }
         if (vm.sessionExpired) Panel(Modifier.padding(bottom = 6.dp), border = Red.copy(alpha = 0.7f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -277,9 +287,6 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 FilterChip(f == k, { f = k }, { Text("$k (${ps.count { hit(it, k) }})", fontSize = 12.sp) })
             }
         }
-        if (ps.size > 5) OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(top = 6.dp), singleLine = true,
-            placeholder = { Text("Search apps") }, leadingIcon = { Icon(Icons.Default.Search, null) },
-            trailingIcon = { if (q.isNotEmpty()) IconButton({ q = "" }) { Icon(Icons.Default.Close, null) } })
         if (ps.isEmpty()) EmptyState(Icons.Default.Apps, "No apps yet", "Add your own app, or bring back the preset apps.", Modifier.padding(top = 12.dp)) {
             Button({ vm.restorePresets() }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { Text("Add presets") }
             OutlinedButton({ nav.navigate("add") }) { Text("Add app") }

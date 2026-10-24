@@ -12,6 +12,14 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v48
+- Shared `SearchField` + `SearchHeader` (Pages.kt). Provider pages (GitHub, Vercel, Supabase, Render) use `SearchHeader`: back arrow, title (tap = refresh, spinner while loading), search icon that opens the field in place (x clears, then closes; back closes). Lists filter on name (and repo). The dashboard uses the same `SearchField`. The GitHub page's own search box and the private `Refresh` icon helper are removed.
+No new dependencies.
+
+## v47
+- Dashboard header (Screens.kt `Dashboard`): own Row instead of `Header`. Tap "App Hub" = `vm.refreshAll()` (small spinner next to the name while refreshing). The refresh icon became a search icon; it swaps the header for a `BasicTextField` (same 40dp height, so nothing jumps), closes with x (clears first) or back (`BackHandler`). The old `Search apps` box above the list (shown from 6 projects) is removed; `q` still filters the list.
+No new dependencies.
+
 ## v46
 - Provider pages (`Pages.kt`): `GitHubScreen` (route `github`), `VercelScreen` (`vercel`), `SupabaseScreen` (`supabase`); Render page (`render`) got the same Add. Opened from Accounts ("Open GitHub/Vercel/Supabase/Render") and from the "Import from" chips on Setup. Shared `ImportCard` (title, pill, type chips, Open / Add). `HubVM.importProject(name, repo, type, liveUrl, vercelId)` saves the Project directly (no setup form), skips repos already added, and stores the Vercel project id for Website/Server so the Vercel status works.
 - Default type on Add: Vercel = Website, Render = Server, Supabase = Server, GitHub = none (Add stays off until a type is picked). Repo source: Vercel project link, Render service `repo`, Supabase = GitHub repo with the same name (else a dialog asks owner/name), GitHub = the repo itself.

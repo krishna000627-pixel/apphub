@@ -27,13 +27,12 @@ import kotlinx.coroutines.delay
     val ctx = LocalContext.current
     // refresh on open, then every 20 s while the page is open (silent)
     LaunchedEffect(Unit) { while (true) { vm.refreshRender(); delay(20_000) } }
-    val list = vm.renderServices
-    val live = list.count { !it.suspended }
+    var q by remember { mutableStateOf("") }
+    val all = vm.renderServices
+    val list = all.filter { q.isBlank() || it.name.contains(q.trim(), true) || it.repo.contains(q.trim(), true) }
+    val live = all.count { !it.suspended }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Header("Render", nav) {
-            if (vm.renderLoading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Green)
-            else IconButton({ vm.refreshRender() }, Modifier.size(40.dp)) { Icon(Icons.Default.Refresh, null) }
-        }
+        SearchHeader("Render", nav, vm.renderLoading, q, { q = it }) { vm.refreshRender() }
         if (vm.renderUser.isBlank()) {
             Panel {
                 Text("Not connected", color = Amber, fontWeight = FontWeight.Bold)
@@ -54,13 +53,13 @@ import kotlinx.coroutines.delay
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Stat("Total", list.size, Cyan, Modifier.weight(1f))
+                    Stat("Total", all.size, Cyan, Modifier.weight(1f))
                     Stat("Active", live, Green, Modifier.weight(1f))
-                    Stat("Off", list.size - live, if (list.size - live > 0) Amber else Muted, Modifier.weight(1f))
+                    Stat("Off", all.size - live, if (all.size - live > 0) Amber else Muted, Modifier.weight(1f))
                 }
             }
             if (vm.renderMsg.isNotBlank()) Text(vm.renderMsg, fontSize = 12.sp, color = Amber)
-            if (list.isEmpty() && !vm.renderLoading) Panel { Text("No services yet", color = Muted) }
+            if (list.isEmpty() && !vm.renderLoading) Panel { Text(if (q.isBlank()) "No services yet" else "No match", color = Muted) }
             list.forEach { sv -> RenderCard(vm, sv) { openUrl(ctx, it) } }
         }
         Spacer(Modifier.height(12.dp))
