@@ -18,6 +18,7 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v62" to listOf("A changed address shows at once (unlink Vercel = GitHub Pages address right away, Pages off = its address gone right away). The note under Create GitHub repo is removed. Hosting settings moved to their own file."),
         "v61" to listOf("Setup: back to the old way. The new repo is always private (no Private/Public choice); change it any time in the app's Settings > Repository. When Vercel is unlinked from a website, its vercel.app links become the GitHub Pages address (home card, info page, saved address)."),
         "v60" to listOf("Home: a website's chip shows the short name (Vercel or GitHub Pages) instead of the long address. Open site still opens the address."),
         "v59" to listOf("A website can be on GitHub Pages and Vercel at once again. Home shows one address per website: Vercel while it is linked, otherwise the GitHub Pages address when Pages is on. Unlink Vercel hides its address and home falls back to Pages. Settings shows both panels; GitHub Pages says Enabled with Open site and Turn off."),

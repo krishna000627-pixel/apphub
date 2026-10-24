@@ -599,70 +599,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
             OutlinedTextField(stack, { stack = it }, label = { Text("Tech stack") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
         }
-        // v57: repo visibility, simply from Settings
-        if (p.repo.contains("/")) {
-            LaunchedEffect(p.id) { vm.repoMsg = ""; vm.loadVisibility(p) }
-            var askPublic by remember { mutableStateOf(false) }
-            val priv = vm.repoPrivate[p.id]
-            Panel {
-                SectionTitle(Icons.Default.Lock, "Repository")
-                Text(p.repo + when (priv) { true -> " is private"; false -> " is public"; null -> "" }, fontSize = 12.sp, color = Muted)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    HubSwitch(priv == false, { if (priv != null && !vm.repoBusy) { if (it) askPublic = true else vm.changeVisibility(p, true) } })
-                    Text(if (vm.repoBusy) "  Changing…" else "  Public repo", fontSize = 13.sp)
-                }
-                Text("GitHub Pages on the free plan needs a public repo. Vercel works with either.", fontSize = 11.sp, color = Muted)
-                if (vm.repoMsg.isNotBlank()) Text(vm.repoMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
-            }
-            if (askPublic) AlertDialog(onDismissRequest = { askPublic = false },
-                title = { Text("Make ${p.repo} public?") },
-                text = { Text("Anyone can see the code and its history, including anything secret that was ever pushed. You can make it private again later.") },
-                confirmButton = { TextButton({ askPublic = false; vm.changeVisibility(p, false) }) { Text("Make public") } },
-                dismissButton = { TextButton({ askPublic = false }) { Text("Cancel") } })
-        }
-        if (p.kind == ProjectType.SERVER) {
-            LaunchedEffect(p.id) {
-                if (vm.renderUser.isNotBlank() && vm.renderServices.isEmpty()) vm.loadRender()
-                if (vm.supabaseOn && vm.supabaseProjects.isEmpty()) vm.loadSupabase()
-            }
-            val rs = vm.renderFor(p); val sb = vm.supabaseFor(p); val onVercel = vm.isVercel(p)
-            if (rs != null || sb != null || onVercel) Panel {
-                SectionTitle(Icons.Default.Storage, "Hosting")
-                if (onVercel) SettingRow(Icons.Default.OpenInNew, "Open on Vercel", "Dashboard", Cyan, { openUrl(ctx, "https://vercel.com/dashboard") })
-                rs?.let { SettingRow(Icons.Default.OpenInNew, "Open on Render", it.name, Cyan, { openUrl(ctx, it.dashboardUrl) }) }
-                sb?.let { SettingRow(Icons.Default.OpenInNew, "Open on Supabase", it.name, Cyan, { openUrl(ctx, "https://supabase.com/dashboard/project/${it.id}") }) }
-            }
-        }
-        // v59: a website can be on GitHub Pages and on Vercel at the same time; the home card shows Vercel while it is linked, else Pages
-        val siteOnPages = p.kind == ProjectType.WEBSITE && vm.pagesOn[p.id] == true
-        if (p.kind == ProjectType.WEBSITE) LaunchedEffect(p.id) { vm.pagesMsg = ""; vm.loadPages(p) }
-        if (p.kind == ProjectType.WEBSITE) Panel {
-            SectionTitle(Icons.Default.Public, "GitHub Pages")
-            if (siteOnPages) {
-                Text("Enabled. ${pagesUrl(p.repo)}", fontSize = 12.sp, color = Green)
-                Text("Every push to main publishes the site through the deploy workflow in your zip.", fontSize = 11.sp, color = Muted)
-                SettingRow(Icons.Default.OpenInNew, "Open site", pagesUrl(p.repo), Cyan, { openUrl(ctx, pagesUrl(p.repo)) })
-                SettingRow(Icons.Default.PowerSettingsNew, if (vm.pagesBusy) "Working…" else "Turn off", "Stops publishing to GitHub Pages", Amber, { if (!vm.pagesBusy) vm.disablePages(p) })
-            } else {
-                Text("Off. Turns Pages on for ${p.repo} with GitHub Actions as the source, then starts the deploy workflow.", fontSize = 11.sp, color = Muted)
-                SettingRow(Icons.Default.CloudUpload, if (vm.pagesBusy) "Enabling…" else "Enable GitHub Pages", "Uses your GitHub login", Green, { if (!vm.pagesBusy) vm.enablePages(p) })
-            }
-            if (vm.pagesMsg.isNotBlank()) Text(vm.pagesMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
-        }
-        if (p.kind != ProjectType.APP) Panel {
-            SectionTitle(Icons.Default.Cloud, "Vercel")
-            if (vm.isVercel(p)) {
-                Text("Linked. Every push deploys by itself and the status follows the Vercel deployment.", fontSize = 11.sp, color = Muted)
-                SettingRow(Icons.Default.VpnKey, "Environment variables", "Names only, values stay hidden", Cyan, { nav.navigate("env/${p.id}") })
-                SettingRow(Icons.Default.OpenInNew, "Open on Vercel", "Dashboard", Muted, { openUrl(ctx, "https://vercel.com/dashboard") })
-                SettingRow(Icons.Default.CloudUpload, if (vm.vercelBusy) "Starting…" else "Deploy now", "Asks Vercel to deploy the latest main", Green, { if (!vm.vercelBusy) vm.deployVercelNow(p) })
-                SettingRow(Icons.Default.LinkOff, "Unlink", "Hides its address here; the Vercel project stays", Amber, { vm.unlinkVercel(p) })
-            } else {
-                Text(if (vm.vercelUser.isBlank()) "Log in to Vercel in Accounts first." else "Not linked. Link creates the Vercel project from ${p.repo}.", fontSize = 11.sp, color = Muted)
-                SettingRow(Icons.Default.Link, if (vm.vercelBusy) "Linking…" else "Link to Vercel", "Deploy this ${p.kind.label.lowercase()} on Vercel", Green, { if (!vm.vercelBusy) vm.linkVercel(p) })
-            }
-            if (vm.vercelMsg.isNotBlank()) Text(vm.vercelMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
-        }
+        HostingPanels(vm, nav, p)   // v62: Repository, Hosting, GitHub Pages and Vercel panels live in HostingPage.kt
         Panel {
             SectionTitle(Icons.Default.Tag, "Version")
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1291,8 +1228,6 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
             if (githubUsable) Green else Amber, createUsable) {
             if (githubUsable) { create = !create; vm.prefs.setupCreate = create } else toAccounts()
         }
-        if (createUsable) Text(if (type == ProjectType.WEBSITE) "Private. Public or private can be changed later in the app's Settings. GitHub Pages on the free plan needs it public."
-            else "Private. Public or private can be changed later in the app's Settings.", fontSize = 11.sp, color = Muted)
         if (type == ProjectType.APP) Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it; vm.prefs.setupKeys = it }); Text("  Generate signing keys + set secrets") }
         else Text(if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
             else "Your zip needs its own .github/workflows deploy. The status shows Running once the endpoint answers.", fontSize = 12.sp, color = Muted)

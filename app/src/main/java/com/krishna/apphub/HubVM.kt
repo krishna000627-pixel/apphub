@@ -680,25 +680,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         gh.pagesState(p.repo)?.let { if (pagesOn[p.id] != it) pagesOn[p.id] = it }
     }
 
-    /**
-     * v59: the address the home card shows. Vercel while it is linked, else the GitHub Pages address when Pages is on,
-     * else an address you typed yourself. v61: once Vercel is unlinked, a vercel.app address becomes the GitHub Pages address.
-     */
-    fun siteLink(p: Project): String {
-        if (p.kind != ProjectType.WEBSITE) return p.liveUrl
-        if (isVercel(p)) return if (p.liveUrl.contains(".github.io")) "" else p.liveUrl
-        if (pagesOn[p.id] == true) return pagesUrl(p.repo)
-        // v61: not on Vercel any more: a vercel.app address is replaced by the GitHub Pages one
-        return if (p.liveUrl.contains(".vercel.app")) (if (p.repo.contains("/")) pagesUrl(p.repo) else "") else p.liveUrl
-    }
-
-    /** v60: the short name the home card shows for the address: Vercel, GitHub Pages, or the host of an address you typed. */
-    fun siteName(p: Project): String? {
-        val l = siteLink(p)
-        if (l.isBlank()) return null
-        if (p.kind != ProjectType.WEBSITE) return hostOf(l)
-        return when { l.contains(".vercel.app") -> "Vercel"; l.contains(".github.io") -> "GitHub Pages"; else -> hostOf(l) }
-    }
+    // v62: siteLink(p) and siteName(p) moved to HostingPage.kt (extensions of HubVM)
 
     // v58: is GitHub Pages on for the project's repo (per project, read when its Settings tab opens)
     val pagesOn = mutableStateMapOf<Long, Boolean>()
@@ -739,6 +721,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             if (it.liveUrl.contains(".vercel.app")) dao.save(it.copy(liveUrl = if (it.kind == ProjectType.WEBSITE && it.repo.contains("/")) pagesUrl(it.repo) else ""))
         } }
         prefs.setVercelId(p.repo, ""); vercelLast.remove(p.id); vercelVer.remove(p.id); vercelRev++
+        // v62: read the Pages state now, so the Pages address shows without waiting for the next check
+        viewModelScope.launch { if (p.repo.contains("/")) gh.pagesState(p.repo)?.let { pagesOn[p.id] = it } }
     }
 
     fun loadEnv(p: Project) = viewModelScope.launch {

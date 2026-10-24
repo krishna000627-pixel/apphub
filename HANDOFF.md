@@ -12,6 +12,12 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v62
+- New file `HostingPage.kt`: `ColumnScope.HostingPanels(vm, nav, p)` = the app Settings panels that were inline in `AppSettings` (Repository visibility, server Hosting, GitHub Pages, Vercel), plus `HubVM.siteLink(p)` / `HubVM.siteName(p)` as extensions (removed from HubVM.kt). `AppSettings` just calls `HostingPanels(vm, nav, p)`.
+- `siteLink` is state-only (vercelRev via `isVercel`, `pagesOn`, liveUrl): Vercel linked -> liveUrl (github.io ignored); else Pages on -> `pagesUrl(repo)`; else a vercel.app liveUrl -> `pagesUrl(repo)`; a github.io liveUrl with `pagesOn == false` -> ""; else liveUrl. `unlinkVercel` also reads `gh.pagesState` at once.
+- Setup: the one-line note under "Create GitHub repo (private)" is removed. Settings Vercel "Unlink" row says "Links switch to GitHub Pages".
+- versionCode 62, versionName "62.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
 ## v61
 - Setup: the v56 Private/Public chips and the automatic "Website = public" rule are gone (`vis` removed from AddScreen). The repo is created private again (`HubVM.setup(..., isPrivate = true)`), with a one-line note that visibility can be changed later in the app's Settings > Repository panel (v57, unchanged). If the Pages target fails on the private repo, the setup log says to make it public in Settings and enable Pages there.
 - Unlinked Vercel -> GitHub Pages: `HubVM.unlinkVercel` saves `pagesUrl(repo)` instead of an empty address for a website whose liveUrl was a vercel.app one (other kinds still just lose it). `siteLink` returns `pagesUrl(repo)` for a website that is not on Vercel and still has a vercel.app liveUrl (was ""), even if Pages is off (the Settings Pages panel enables it). The info page (`Info.kt` pill + "Live URL" row) and the card's "live" line now use `siteLink(p)` like the home card, so no screen shows an old vercel.app address.
