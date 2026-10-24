@@ -1167,6 +1167,7 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     var name by remember { mutableStateOf(vm.draftName) }; var repo by remember { mutableStateOf("") }
     var pkg by remember { mutableStateOf("") }; var ver by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(ProjectType.APP) }; var url by remember { mutableStateOf("") }   // v38: what kind of project (v39: may come from the Prompt Maker)
+    var target by remember { mutableStateOf("") }   // v52: Deploy to: "", vercel, render or supabase (kept only while its account is connected)
     LaunchedEffect(Unit) { vm.draftName = "" }
     // v40: the three switches keep the position you left them in (saved on tap); Vercel stays off until you turn it on
     var create by remember { mutableStateOf(vm.prefs.setupCreate) }; var keys by remember { mutableStateOf(vm.prefs.setupKeys) }
@@ -1175,12 +1176,28 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     val createUsable = create && githubUsable
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
-        // v46: repos that already exist are added in one tap from the provider pages
-        Text("Import from", fontSize = 12.sp, color = Muted)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("GitHub" to "github", "Vercel" to "vercel", "Render" to "render", "Supabase" to "supabase").forEach { (label, route) ->
-                AssistChip({ nav.navigate(route) { launchSingleTop = true } }, { Text(label) })
+        // v52: "Deploy to" replaces "Import from" (existing repos are still added from Accounts > Open ...)
+        val toAccounts = { nav.navigate("accounts") { launchSingleTop = true }; Unit }
+        Text("Deploy to", fontSize = 12.sp, color = Muted)
+        val targets = listOf(Triple("Vercel", "vercel", vm.vercelUser.isNotBlank()), Triple("Render", "render", vm.renderUser.isNotBlank()), Triple("Supabase", "supabase", vm.supabaseOn))
+        if (type == ProjectType.APP) {
+            FilterChip(true, {}, { Text("GitHub Releases") }, enabled = false, leadingIcon = { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) })
+            Text("Apps build on GitHub Actions and the signed APK is released on GitHub. Vercel, Render and Supabase are for websites and servers.", fontSize = 12.sp, color = Muted)
+        } else {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                targets.forEach { (label, key, on) ->
+                    val sel = target == key && on
+                    FilterChip(sel, { if (!on) toAccounts() else target = if (target == key) "" else key },
+                        { Text(if (on) label else "$label (log in)") },
+                        leadingIcon = if (sel) ({ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }) else null)
+                }
             }
+            Text(when (if (targets.any { it.second == target && it.third }) target else "") {
+                "vercel" -> "Creates the Vercel project from the repo and fills in its address."
+                "render" -> "Creates a free Render service from the repo: a static site for a website, a Node web service for a server. Render's GitHub app must be able to see the repo."
+                "supabase" -> "Creates a Supabase project in your first organization and fills in its API address. The database password is random and not kept."
+                else -> "Pick one to create it with the project, or none to only push to GitHub."
+            }, fontSize = 12.sp, color = Muted)
         }
         TypePicker(type) { type = it }
         OutlinedTextField(name, { name = it }, label = { Text("${type.label} name") }, placeholder = { Text(when (type) { ProjectType.APP -> "e.g. My App"; ProjectType.WEBSITE -> "e.g. My Site"; ProjectType.SERVER -> "e.g. My API" }) }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -1189,7 +1206,6 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         else OutlinedTextField(url, { url = it }, label = { Text(if (type == ProjectType.WEBSITE) "Live URL (optional)" else "Endpoint URL (optional)") },
             placeholder = { Text(if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text("v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        val toAccounts = { nav.navigate("accounts") { launchSingleTop = true }; Unit }
         ConnRow(Icons.Default.Code, "Create GitHub repo (private)",
             if (githubUsable) "Logged in as ${vm.login}" else if (vm.login.isNotBlank()) "Session expired. Tap to log in again" else "Not logged in. Tap to log in",
             if (githubUsable) Green else Amber, createUsable) {
@@ -1199,7 +1215,8 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         else Text(if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
             else "Your zip needs its own .github/workflows deploy. The status shows Running once the endpoint answers.", fontSize = 12.sp, color = Muted)
         BigButton("Create project", Icons.Default.PlayArrow) {
-            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, createUsable, keys && type == ProjectType.APP, type, url) else vm.toast("Name and repo required")
+            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, createUsable, keys && type == ProjectType.APP, type, url,
+                if (type == ProjectType.APP || targets.none { it.second == target && it.third }) "" else target) else vm.toast("Name and repo required")
         }
         if (vm.log.isNotEmpty()) {
             Panel { vm.log.forEach { Mono(it) } }

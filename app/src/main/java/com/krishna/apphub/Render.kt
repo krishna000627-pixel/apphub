@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 /**
  * v43: Render connection. Login is an API key (dashboard.render.com/u/settings#api-keys), kept in the encrypted Prefs.
  * v45: besides reading the account and services, App Hub can start a deploy of a service.
- * It never creates, suspends, deletes or changes a service.
+ * v52: it can also create a service from a repo (Setup > Deploy to). It never suspends, deletes or changes a service.
  */
 class RenderApi(private val prefs: Prefs) {
     /** [kind] is Render's service type (web_service, static_site, background_worker, ...). */
@@ -74,6 +74,29 @@ class RenderApi(private val prefs: Prefs) {
     suspend fun deploy(id: String, key: String = prefs.renderKey): String {
         val (c, b) = post("/services/$id/deploys", key, JSONObject())
         return if (c in 200..299) "" else errorOf(c, b)
+    }
+
+    /**
+     * v52: creates a free service from a GitHub repo (owner/name). Website = static site, Server = Node web service
+     * (npm install, npm start). Needs the Render GitHub app to see the repo. Returns the service, or null and the reason.
+     */
+    suspend fun create(name: String, repo: String, website: Boolean, key: String = prefs.renderKey): Pair<Svc?, String> {
+        val (oc, ob) = get("/owners?limit=20", key)
+        if (oc != 200) return null to errorOf(oc, ob)
+        val ownerId = runCatching { JSONArray(ob).optJSONObject(0)?.optJSONObject("owner")?.optString("id") }.getOrNull().orEmpty()
+        if (ownerId.isBlank()) return null to "no Render workspace found"
+        val details = if (website)
+            JSONObject().put("buildCommand", "").put("publishPath", ".")
+        else JSONObject().put("runtime", "node").put("plan", "free").put("region", "oregon")
+            .put("envSpecificDetails", JSONObject().put("buildCommand", "npm install").put("startCommand", "npm start"))
+        val body = JSONObject().put("type", if (website) "static_site" else "web_service")
+            .put("name", name).put("ownerId", ownerId).put("repo", "https://github.com/$repo")
+            .put("autoDeploy", "yes").put("serviceDetails", details)
+        val (c, b) = post("/services", key, body)
+        if (c !in 200..299) return null to errorOf(c, b)
+        val sv = runCatching { JSONObject(b).optJSONObject("service") }.getOrNull() ?: return null to "Render answered in an unexpected way"
+        return Svc(sv.optString("id"), sv.optString("name"), sv.optString("type"), false,
+            sv.optJSONObject("serviceDetails")?.optString("url").orEmpty(), repo) to ""
     }
 
     suspend fun services(key: String = prefs.renderKey): Pair<List<Svc>?, String> {

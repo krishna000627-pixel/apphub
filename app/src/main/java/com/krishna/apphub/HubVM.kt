@@ -1243,7 +1243,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /** Setup wizard: repo -> keystore -> secrets -> save project, all in-app via OAuth. */
     fun setup(name: String, repoName: String, pkg: String, version: String, create: Boolean, keys: Boolean,
-              type: ProjectType = ProjectType.APP, liveUrl: String = "") = viewModelScope.launch {
+              type: ProjectType = ProjectType.APP, liveUrl: String = "", target: String = "") = viewModelScope.launch {
         log.clear()
         if (login.isBlank() && !repoName.contains("/")) { log += "✗ Log in with GitHub (Accounts) or enter owner/name"; return@launch }
         val repo = if (repoName.contains("/")) repoName else "$login/$repoName"
@@ -1252,7 +1252,40 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             val c = gh.createRepo(repo.substringAfter("/")).first
             log += when (c) { 201 -> "✓ repo created"; 422 -> "• repo already exists"; else -> "✗ repo failed ($c)" }
         }
-        val liveAddr = if (type == ProjectType.APP) "" else cleanUrl(liveUrl)
+        var liveAddr = if (type == ProjectType.APP) "" else cleanUrl(liveUrl)
+        // v52: Deploy to (websites and servers only). A failed target never stops the project from being saved.
+        if (type != ProjectType.APP && target.isNotBlank()) {
+            val plain = name.trim()
+            when (target) {
+                "vercel" -> {
+                    log += "Linking Vercel…"
+                    val (lk, err) = vercel.link(repo)
+                    if (lk == null) log += "✗ Vercel: $err" else {
+                        prefs.setVercelId(repo, lk.id); vercelRev++
+                        if (liveAddr.isBlank()) liveAddr = lk.url
+                        log += "✓ Vercel project linked (${lk.url})"
+                    }
+                }
+                "render" -> {
+                    log += "Creating Render service…"
+                    val (sv, err) = render.create(plain, repo, type == ProjectType.WEBSITE)
+                    if (sv == null) log += "✗ Render: $err" else {
+                        if (liveAddr.isBlank()) liveAddr = sv.url
+                        log += "✓ Render service created (${if (type == ProjectType.WEBSITE) "static site" else "web service"})"
+                        loadRender()
+                    }
+                }
+                "supabase" -> {
+                    log += "Creating Supabase project…"
+                    val (pj, err) = supabase.create(plain)
+                    if (pj == null) log += "✗ Supabase: $err" else {
+                        if (liveAddr.isBlank()) liveAddr = "https://${pj.id}.supabase.co"
+                        log += "✓ Supabase project created (database password not kept)"
+                        loadSupabase()
+                    }
+                }
+            }
+        }
         if (keys && type == ProjectType.APP) {
             log += "Generating signing keystore…"
             val s = Signing.generate(name)

@@ -12,6 +12,12 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v52
+- Setup (AddScreen): the "Import from" chips are replaced by "Deploy to". Websites/servers pick Vercel | Render | Supabase (FilterChip, tap again = none, state local to the screen, only counts while that account is connected; a chip of a disconnected account reads "(log in)" and opens Accounts). Apps show a disabled "GitHub Releases" chip + note.
+- `HubVM.setup(..., liveUrl, target)`: after the repo/keys steps, `vercel.link(repo)` (id stored, live address filled), `render.create(name, repo, website)` (new `RenderApi.create`: GET /owners then POST /v1/services; static_site or free node web_service, autoDeploy yes), `supabase.create(name)` (new `SupabaseApi.create`: GET /v1/organizations then POST /v1/projects, americas, random db_pass not kept, liveUrl https://<id>.supabase.co). A failed target logs a red line and the project is still saved.
+- Import of existing repos is unchanged (Accounts > Open GitHub/Vercel/Render/Supabase, `HubVM.importProject`).
+- versionCode 52, versionName "52.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
 ## v51
 - v49 was never pushed and v50 was skipped: v51 contains everything from v49 (see below) plus this. versionCode 51, versionName "51.0".
 - Prompts: `Prompts.PREVIEW` ("put every preview in a NEW file in the zip, e.g. preview.html, never draw it in the chat; do not add it to the app until approved"). Used in ideasPrompt, buildPrompt, the Improve UI task text (app and website) and appended to both `delivery()` variants, so every delivery-rule prompt carries it. Reason: previews drawn in the chat burn the context window.
