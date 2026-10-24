@@ -97,7 +97,7 @@ private class IR(val k: String, val v: String, val c: Color = Color.Unspecified,
                         if (upd) Pill(if (phone == false) "Install" else "Update", Amber)
                     } else {
                         Pill(p.kind.label, Muted)
-                        hostOf(p.liveUrl)?.let { Pill("↗ $it", Cyan) }
+                        hostOf(vm.siteLink(p))?.let { Pill("↗ $it", Cyan) }
                     }
                 }
             }
@@ -105,7 +105,7 @@ private class IR(val k: String, val v: String, val c: Color = Color.Unspecified,
         item {
             InfoCard(p.kind.label, vm, listOf(
                 if (p.kind == ProjectType.APP) IR("Package", p.packageName.ifBlank { "unknown" }, copy = p.packageName.isNotBlank(), mono = true)
-                else IR("Live URL", p.liveUrl.ifBlank { "not set" }, if (p.liveUrl.isBlank()) Muted else Color.Unspecified, copy = p.liveUrl.isNotBlank(), mono = true),
+                else IR("Live URL", vm.siteLink(p).ifBlank { "not set" }, if (vm.siteLink(p).isBlank()) Muted else Color.Unspecified, copy = vm.siteLink(p).isNotBlank(), mono = true),
                 IR("Repo", p.repo, copy = true, mono = true),
                 IR("Stack", p.stack)
             ))

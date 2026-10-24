@@ -682,13 +682,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /**
      * v59: the address the home card shows. Vercel while it is linked, else the GitHub Pages address when Pages is on,
-     * else an address you typed yourself. An unlinked Vercel address is never shown.
+     * else an address you typed yourself. v61: once Vercel is unlinked, a vercel.app address becomes the GitHub Pages address.
      */
     fun siteLink(p: Project): String {
         if (p.kind != ProjectType.WEBSITE) return p.liveUrl
         if (isVercel(p)) return if (p.liveUrl.contains(".github.io")) "" else p.liveUrl
         if (pagesOn[p.id] == true) return pagesUrl(p.repo)
-        return if (p.liveUrl.contains(".vercel.app")) "" else p.liveUrl
+        // v61: not on Vercel any more: a vercel.app address is replaced by the GitHub Pages one
+        return if (p.liveUrl.contains(".vercel.app")) (if (p.repo.contains("/")) pagesUrl(p.repo) else "") else p.liveUrl
     }
 
     /** v60: the short name the home card shows for the address: Vercel, GitHub Pages, or the host of an address you typed. */
@@ -733,8 +734,10 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /** Only forgets the link here; the project on Vercel stays. */
     fun unlinkVercel(p: Project) {
-        // v59: its address is hidden too (home shows the GitHub Pages address instead when Pages is on)
-        viewModelScope.launch { projects.value.firstOrNull { it.id == p.id }?.let { if (it.liveUrl.contains(".vercel.app")) dao.save(it.copy(liveUrl = "")) } }
+        // v61: a website's vercel.app address is replaced by its GitHub Pages address; other kinds just lose it
+        viewModelScope.launch { projects.value.firstOrNull { it.id == p.id }?.let {
+            if (it.liveUrl.contains(".vercel.app")) dao.save(it.copy(liveUrl = if (it.kind == ProjectType.WEBSITE && it.repo.contains("/")) pagesUrl(it.repo) else ""))
+        } }
         prefs.setVercelId(p.repo, ""); vercelLast.remove(p.id); vercelVer.remove(p.id); vercelRev++
     }
 
@@ -1407,7 +1410,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 "pages" -> {
                     log += "Enabling GitHub Pages…"
                     val err = gh.enablePages(repo)
-                    if (err.isNotBlank()) log += "✗ Pages: $err" else {
+                    if (err.isNotBlank()) log += "✗ Pages: $err" + (if (isPrivate) ". The repo is private: make it public in the app's Settings, then enable Pages there." else "") else {
                         if (liveAddr.isBlank()) liveAddr = pagesUrl(repo)
                         log += "✓ GitHub Pages on (source: GitHub Actions). Live at ${pagesUrl(repo)} after the first deploy"
                     }

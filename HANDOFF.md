@@ -12,6 +12,11 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v61
+- Setup: the v56 Private/Public chips and the automatic "Website = public" rule are gone (`vis` removed from AddScreen). The repo is created private again (`HubVM.setup(..., isPrivate = true)`), with a one-line note that visibility can be changed later in the app's Settings > Repository panel (v57, unchanged). If the Pages target fails on the private repo, the setup log says to make it public in Settings and enable Pages there.
+- Unlinked Vercel -> GitHub Pages: `HubVM.unlinkVercel` saves `pagesUrl(repo)` instead of an empty address for a website whose liveUrl was a vercel.app one (other kinds still just lose it). `siteLink` returns `pagesUrl(repo)` for a website that is not on Vercel and still has a vercel.app liveUrl (was ""), even if Pages is off (the Settings Pages panel enables it). The info page (`Info.kt` pill + "Live URL" row) and the card's "live" line now use `siteLink(p)` like the home card, so no screen shows an old vercel.app address.
+- versionCode 61, versionName "61.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
 ## v60
 - Home card chip for a website shows `HubVM.siteName(p)`: "Vercel" (vercel.app address), "GitHub Pages" (github.io address), else the host of a typed address. Other types still show the host. The address itself (`siteLink`) is unchanged and still opened by the Open site button.
 - versionCode 60, versionName "60.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.

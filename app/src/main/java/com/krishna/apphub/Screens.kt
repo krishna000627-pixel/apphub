@@ -416,7 +416,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                                 val st = vm.stage(p)
                                 Mono("status   : ${st.label.lowercase()}", color = st.color())
                                 if (p.kind == ProjectType.APP) Mono("installed: $instText", color = instColor)
-                                else Mono("live     : ${p.liveUrl.ifBlank { "-" }}")
+                                else Mono("live     : ${vm.siteLink(p).ifBlank { "-" }}")
                                 Mono("version  : ${p.version}")
                             }
                             Icon(Icons.Default.ChevronRight, null, tint = Muted)
@@ -1218,7 +1218,6 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     var name by remember { mutableStateOf(vm.draftName) }; var repo by remember { mutableStateOf("") }
     var pkg by remember { mutableStateOf("") }; var ver by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(ProjectType.APP) }; var url by remember { mutableStateOf("") }   // v38: what kind of project (v39: may come from the Prompt Maker)
-    var vis by remember { mutableStateOf<Boolean?>(null) }   // v56: repo private? null = automatic (public for a Website, private otherwise)
     var host by remember { mutableStateOf("") }; var db by remember { mutableStateOf(false) }   // v55: server: Host on (vercel | render) and Database (Supabase)
     var target by remember { mutableStateOf("") }   // v52: Deploy to: "", vercel, render or supabase (kept only while its account is connected)
     LaunchedEffect(Unit) { vm.draftName = "" }
@@ -1286,21 +1285,14 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         else OutlinedTextField(url, { url = it }, label = { Text(if (type == ProjectType.WEBSITE) "Live URL (optional)" else "Endpoint URL (optional)") },
             placeholder = { Text(if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text("v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        val isPrivate = vis ?: (type != ProjectType.WEBSITE)
-        ConnRow(Icons.Default.Code, "Create GitHub repo (${if (isPrivate) "private" else "public"})",
+        // v61: back to the old way: the new repo is always private. Change it later in the app's Settings > Repository.
+        ConnRow(Icons.Default.Code, "Create GitHub repo (private)",
             if (githubUsable) "Logged in as ${vm.login}" else if (vm.login.isNotBlank()) "Session expired. Tap to log in again" else "Not logged in. Tap to log in",
             if (githubUsable) Green else Amber, createUsable) {
             if (githubUsable) { create = !create; vm.prefs.setupCreate = create } else toAccounts()
         }
-        if (createUsable) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                FilterChip(isPrivate, { vis = true }, { Text("Private") }, leadingIcon = { Icon(Icons.Default.Lock, null, Modifier.size(16.dp)) })
-                FilterChip(!isPrivate, { vis = false }, { Text("Public") }, leadingIcon = { Icon(Icons.Default.Public, null, Modifier.size(16.dp)) })
-            }
-            Text(if (type == ProjectType.WEBSITE && !isPrivate) "Public so GitHub Pages works on the free plan. Do not put secrets in the zip."
-                else if (type == ProjectType.WEBSITE) "GitHub Pages on a private repo needs a paid GitHub plan. Vercel works with a private repo."
-                else "Anyone can see a public repo. Private is the safe default for apps and servers.", fontSize = 11.sp, color = Muted)
-        }
+        if (createUsable) Text(if (type == ProjectType.WEBSITE) "Private. Public or private can be changed later in the app's Settings. GitHub Pages on the free plan needs it public."
+            else "Private. Public or private can be changed later in the app's Settings.", fontSize = 11.sp, color = Muted)
         if (type == ProjectType.APP) Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(keys, { keys = it; vm.prefs.setupKeys = it }); Text("  Generate signing keys + set secrets") }
         else Text(if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
             else "Your zip needs its own .github/workflows deploy. The status shows Running once the endpoint answers.", fontSize = 12.sp, color = Muted)
@@ -1310,7 +1302,7 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
                     ProjectType.WEBSITE -> if (targets.none { it.second == target && it.third }) "" else target
                     ProjectType.SERVER -> if ((host == "vercel" && vm.vercelUser.isNotBlank()) || (host == "render" && vm.renderUser.isNotBlank())) host else ""
                     else -> ""
-                }, type == ProjectType.SERVER && db && vm.supabaseOn, isPrivate) else vm.toast("Name and repo required")
+                }, type == ProjectType.SERVER && db && vm.supabaseOn, true) else vm.toast("Name and repo required")
         }
         if (vm.log.isNotEmpty()) {
             Panel { vm.log.forEach { Mono(it) } }
