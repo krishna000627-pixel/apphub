@@ -265,6 +265,20 @@ class GitHub(private val prefs: Prefs) {
         }
     }
 
+    /** v58: is Pages on for the repo? true / false, null when GitHub could not be asked. */
+    suspend fun pagesState(repo: String): Boolean? {
+        val (c, _) = get("/repos/$repo/pages")
+        return when (c) { 200 -> true; 404 -> false; else -> null }
+    }
+
+    /** v58: turns Pages off. Returns "" or the reason. */
+    suspend fun disablePages(repo: String): String {
+        val (c, b) = send("DELETE", "/repos/$repo/pages", JSONObject())
+        if (c in 200..299 || c == 404) return ""
+        val msg = runCatching { JSONObject(b).optString("message") }.getOrDefault("")
+        return when { c == 0 -> "no network"; c == 401 -> "GitHub session expired. Log in again in Accounts"; msg.isNotBlank() -> msg; else -> "HTTP $c" }
+    }
+
     /** Starts the deploy workflow by hand (the one the Website zip ships). */
     suspend fun dispatchDeploy(repo: String) =
         send("POST", "/repos/$repo/actions/workflows/deploy.yml/dispatches", JSONObject().put("ref", "main")).first == 204

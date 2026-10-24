@@ -652,7 +652,10 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         vercelBusy = false
         if (lk == null) { vercelMsg = "Vercel: $err"; return@launch }
         prefs.setVercelId(p.repo, lk.id); vercelRev++
-        projects.value.firstOrNull { it.id == p.id }?.let { if (it.liveUrl.isBlank()) dao.save(it.copy(liveUrl = lk.url)) }
+        projects.value.firstOrNull { it.id == p.id }?.let {
+            val base = if (it.liveUrl.contains(".github.io")) "" else it.liveUrl
+            if (base.isBlank()) dao.save(it.copy(liveUrl = lk.url))
+        }
         toast("Linked to Vercel")
     }
 
@@ -667,6 +670,53 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var pagesBusy by mutableStateOf(false)
     var pagesMsg by mutableStateOf("")
 
+    private val pagesAt = mutableMapOf<Long, Long>()
+
+    /** Reads the Pages state of a website at most once a minute (home cards need it without opening Settings). */
+    private suspend fun pagesCheck(p: Project) {
+        if (p.kind != ProjectType.WEBSITE || !p.repo.contains("/")) return
+        if (System.currentTimeMillis() - (pagesAt[p.id] ?: 0L) < 60_000L) return
+        pagesAt[p.id] = System.currentTimeMillis()
+        gh.pagesState(p.repo)?.let { if (pagesOn[p.id] != it) pagesOn[p.id] = it }
+    }
+
+    /**
+     * v59: the address the home card shows. Vercel while it is linked, else the GitHub Pages address when Pages is on,
+     * else an address you typed yourself. An unlinked Vercel address is never shown.
+     */
+    fun siteLink(p: Project): String {
+        if (p.kind != ProjectType.WEBSITE) return p.liveUrl
+        if (isVercel(p)) return if (p.liveUrl.contains(".github.io")) "" else p.liveUrl
+        if (pagesOn[p.id] == true) return pagesUrl(p.repo)
+        return if (p.liveUrl.contains(".vercel.app")) "" else p.liveUrl
+    }
+
+    /** v60: the short name the home card shows for the address: Vercel, GitHub Pages, or the host of an address you typed. */
+    fun siteName(p: Project): String? {
+        val l = siteLink(p)
+        if (l.isBlank()) return null
+        if (p.kind != ProjectType.WEBSITE) return hostOf(l)
+        return when { l.contains(".vercel.app") -> "Vercel"; l.contains(".github.io") -> "GitHub Pages"; else -> hostOf(l) }
+    }
+
+    // v58: is GitHub Pages on for the project's repo (per project, read when its Settings tab opens)
+    val pagesOn = mutableStateMapOf<Long, Boolean>()
+
+    fun loadPages(p: Project) = viewModelScope.launch {
+        if (!p.repo.contains("/")) return@launch
+        gh.pagesState(p.repo)?.let { pagesOn[p.id] = it }
+    }
+
+    fun disablePages(p: Project) = viewModelScope.launch {
+        pagesBusy = true; pagesMsg = ""
+        val err = gh.disablePages(p.repo)
+        pagesBusy = false
+        if (err.isNotBlank()) { pagesMsg = "Pages: $err"; return@launch }
+        pagesOn[p.id] = false
+        projects.value.firstOrNull { it.id == p.id }?.let { if (it.liveUrl.contains(".github.io")) dao.save(it.copy(liveUrl = "")) }
+        pagesMsg = "GitHub Pages is off."
+    }
+
     /** Turns Pages on for the project's repo, starts the deploy workflow and fills the live address when it is empty. */
     fun enablePages(p: Project) = viewModelScope.launch {
         if (!p.repo.contains("/")) { pagesMsg = "Log in with GitHub first (Accounts)"; return@launch }
@@ -674,6 +724,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val err = gh.enablePages(p.repo)
         if (err.isNotBlank()) { pagesBusy = false; pagesMsg = "Pages: $err"; return@launch }
         val started = gh.dispatchDeploy(p.repo)
+        pagesOn[p.id] = true
         projects.value.firstOrNull { it.id == p.id }?.let { if (it.liveUrl.isBlank()) dao.save(it.copy(liveUrl = pagesUrl(p.repo))) }
         pagesBusy = false
         pagesMsg = if (started) "Pages is on and a deploy was started." else "Pages is on. Push or re-run the deploy workflow to publish."
@@ -682,6 +733,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     /** Only forgets the link here; the project on Vercel stays. */
     fun unlinkVercel(p: Project) {
+        // v59: its address is hidden too (home shows the GitHub Pages address instead when Pages is on)
+        viewModelScope.launch { projects.value.firstOrNull { it.id == p.id }?.let { if (it.liveUrl.contains(".vercel.app")) dao.save(it.copy(liveUrl = "")) } }
         prefs.setVercelId(p.repo, ""); vercelLast.remove(p.id); vercelVer.remove(p.id); vercelRev++
     }
 
@@ -762,7 +815,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val host = vercel.liveHost(vid) ?: return
         val now = projects.value.firstOrNull { it.id == p.id } ?: return
         val want = "https://$host"
-        if (now.liveUrl != want && (now.liveUrl.isBlank() || now.liveUrl.contains(".vercel.app"))) dao.save(now.copy(liveUrl = want))
+        if (now.liveUrl != want && (now.liveUrl.isBlank() || now.liveUrl.contains(".vercel.app") || now.liveUrl.contains(".github.io"))) dao.save(now.copy(liveUrl = want))
     }
 
     /** v57: asks Vercel to deploy main now. Returns "" or the reason. */
@@ -995,6 +1048,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
      */
     fun refresh(p: Project) = viewModelScope.launch {
         if (!p.repo.contains("/")) return@launch
+        if (p.kind == ProjectType.WEBSITE) launch { pagesCheck(p) }
         val r = gh.runs(p.repo)
         if (r.isEmpty() && runs[p.id] != null && !isVercel(p)) return@launch   // offline or API error: keep what is shown (a Vercel project has no runs, its status comes from Vercel)
         val real = r.filter { !it.cancelled }   // a run you cancelled is not a result: it never shows as failed

@@ -12,6 +12,20 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v60
+- Home card chip for a website shows `HubVM.siteName(p)`: "Vercel" (vercel.app address), "GitHub Pages" (github.io address), else the host of a typed address. Other types still show the host. The address itself (`siteLink`) is unchanged and still opened by the Open site button.
+- versionCode 60, versionName "60.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
+## v59
+- Replaces the v58 "Pages XOR Vercel" rule: both can be on. Settings (website) shows the GitHub Pages panel (Enabled + address, Open site, Turn off, else Enable) and the Vercel panel always. `linkVercel` no longer turns Pages off, `enablePages` no longer unlinks Vercel.
+- Home address: `HubVM.siteLink(p)` (Website): Vercel linked -> liveUrl (a github.io value is ignored); else `pagesOn[p.id] == true` -> `pagesUrl(repo)`; else liveUrl unless it is a vercel.app address (hidden once unlinked). Servers and others: liveUrl. Used for the "↗ host" pill and the Open site button on the card. `pagesCheck(p)` (GET /repos/{repo}/pages, at most once a minute per website) runs from `refresh`. `unlinkVercel` clears a vercel.app liveUrl; `fixVercelAddress` also replaces a github.io liveUrl while Vercel is linked.
+- versionCode 59, versionName "59.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
+## v58
+- Website hosting is Pages XOR Vercel in the app Settings tab: `siteOnVercel = vm.isVercel(p)`, `siteOnPages = vm.pagesOn[p.id] == true` (`GitHub.pagesState` GET /repos/{repo}/pages 200/404, read by `HubVM.loadPages` when the tab opens). Pages panel shows when on Pages or not on Vercel: "Enabled" + address + Open site + Turn off (`GitHub.disablePages` DELETE /repos/{repo}/pages, `HubVM.disablePages`), else the Enable button. The Vercel panel shows for servers always and for websites when on Vercel or not on Pages.
+- `HubVM.linkVercel`: for a website, turns Pages off if it was on and drops a github.io liveUrl. `HubVM.enablePages`: forgets the Vercel link (`unlinkVercel`, the Vercel project stays) and replaces a vercel.app liveUrl with the Pages one.
+- versionCode 58, versionName "58.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
 ## v57
 - Repo visibility in the app Settings tab ("Repository" panel, all types): `GitHub.repoInfo(repo)` (id, private), `GitHub.updateVisibility(repo, makePrivate)` (PATCH /repos/{repo}), `HubVM.loadVisibility/changeVisibility` (`repoPrivate` map, `repoBusy`, `repoMsg`); making public asks first. Setup chips from v56 stay.
 - Vercel address: the guessed `name.vercel.app` is gone (`Vercel.domainOf` and `projects()` return "" when unknown). `Vercel.liveHost(projectId)` = GET /v9/projects/{id} targets.production.alias (shortest .vercel.app), else /domains. `HubVM.fixVercelAddress` saves it as liveUrl when a deployment passed (from `vercelState`, once per deployment, and from `watchVercel`) if liveUrl is empty or already a vercel.app address.

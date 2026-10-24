@@ -18,6 +18,9 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v60" to listOf("Home: a website's chip shows the short name (Vercel or GitHub Pages) instead of the long address. Open site still opens the address."),
+        "v59" to listOf("A website can be on GitHub Pages and Vercel at once again. Home shows one address per website: Vercel while it is linked, otherwise the GitHub Pages address when Pages is on. Unlink Vercel hides its address and home falls back to Pages. Settings shows both panels; GitHub Pages says Enabled with Open site and Turn off."),
+        "v58" to listOf("A website is on GitHub Pages or on Vercel. Settings shows the one in use: GitHub Pages says Enabled with its address, Open site and Turn off; Vercel keeps its own panel. When neither is on, both are offered. Linking Vercel turns Pages off, enabling Pages forgets the Vercel link (the Vercel project stays)."),
         "v57" to listOf("Settings tab: Repository panel with a Public repo switch (asks before making public). Vercel: the live address is now Vercel's real one, read after a deployment passes (no more guessed name.vercel.app). If a push does not start a Vercel deployment within about 25 s, App Hub starts it itself; Deploy now in the Vercel panel does it by hand."),
         "v56" to listOf("Setup: you choose Private or Public for the new repo. A Website starts on Public (GitHub Pages needs it on the free plan), an App or Server on Private. Your tap is kept while you change the type."),
         "v55" to listOf("Setup for a Server is back, full: Host on Vercel or Render (created from the repo) and Database Supabase (creates the project; SUPABASE_URL is set on the host). A not-logged-in chip opens Accounts. The server's Hosting panel also shows Open on Vercel."),

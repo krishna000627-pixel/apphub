@@ -338,7 +338,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 null -> if (p.packageName.isBlank()) Pill("? No package", Muted)
             } else {
                 Pill(p.kind.label, Muted)
-                hostOf(p.liveUrl)?.let { Pill("↗ $it", Cyan) }
+                vm.siteName(p)?.let { Pill("↗ $it", Cyan) }
             }
             // v35: download / update pill goes last, after the status and installed pills
             if (dl != null) Pill("Updating", Cyan)
@@ -397,7 +397,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                     if (dl != null) { CircularProgressIndicator({ dl / 100f }, Modifier.size(14.dp), color = Amber, strokeWidth = 2.dp); Spacer(Modifier.width(6.dp)) }
                     BtnText(if (dl != null) dlText(dl) else installLabel(vm, p, upd))
                 }
-                else OutlinedButton({ if (p.liveUrl.isBlank()) vm.toast("Set the live URL in Settings") else openUrl(ctx, p.liveUrl) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)) {
+                else OutlinedButton({ vm.siteLink(p).let { if (it.isBlank()) vm.toast("Set the live URL in Settings") else openUrl(ctx, it) } }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)) {
                     Icon(Icons.Default.OpenInNew, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText(if (p.kind == ProjectType.WEBSITE) "Open site" else "Open server")
                 }
             }
@@ -633,10 +633,20 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 sb?.let { SettingRow(Icons.Default.OpenInNew, "Open on Supabase", it.name, Cyan, { openUrl(ctx, "https://supabase.com/dashboard/project/${it.id}") }) }
             }
         }
+        // v59: a website can be on GitHub Pages and on Vercel at the same time; the home card shows Vercel while it is linked, else Pages
+        val siteOnPages = p.kind == ProjectType.WEBSITE && vm.pagesOn[p.id] == true
+        if (p.kind == ProjectType.WEBSITE) LaunchedEffect(p.id) { vm.pagesMsg = ""; vm.loadPages(p) }
         if (p.kind == ProjectType.WEBSITE) Panel {
             SectionTitle(Icons.Default.Public, "GitHub Pages")
-            Text("Turns Pages on for ${p.repo} with GitHub Actions as the source, then starts the deploy workflow. Needed once, before the first deploy works.", fontSize = 11.sp, color = Muted)
-            SettingRow(Icons.Default.CloudUpload, if (vm.pagesBusy) "Enabling…" else "Enable GitHub Pages", "Uses your GitHub login", Green, { if (!vm.pagesBusy) vm.enablePages(p) })
+            if (siteOnPages) {
+                Text("Enabled. ${pagesUrl(p.repo)}", fontSize = 12.sp, color = Green)
+                Text("Every push to main publishes the site through the deploy workflow in your zip.", fontSize = 11.sp, color = Muted)
+                SettingRow(Icons.Default.OpenInNew, "Open site", pagesUrl(p.repo), Cyan, { openUrl(ctx, pagesUrl(p.repo)) })
+                SettingRow(Icons.Default.PowerSettingsNew, if (vm.pagesBusy) "Working…" else "Turn off", "Stops publishing to GitHub Pages", Amber, { if (!vm.pagesBusy) vm.disablePages(p) })
+            } else {
+                Text("Off. Turns Pages on for ${p.repo} with GitHub Actions as the source, then starts the deploy workflow.", fontSize = 11.sp, color = Muted)
+                SettingRow(Icons.Default.CloudUpload, if (vm.pagesBusy) "Enabling…" else "Enable GitHub Pages", "Uses your GitHub login", Green, { if (!vm.pagesBusy) vm.enablePages(p) })
+            }
             if (vm.pagesMsg.isNotBlank()) Text(vm.pagesMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
         }
         if (p.kind != ProjectType.APP) Panel {
@@ -646,7 +656,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 SettingRow(Icons.Default.VpnKey, "Environment variables", "Names only, values stay hidden", Cyan, { nav.navigate("env/${p.id}") })
                 SettingRow(Icons.Default.OpenInNew, "Open on Vercel", "Dashboard", Muted, { openUrl(ctx, "https://vercel.com/dashboard") })
                 SettingRow(Icons.Default.CloudUpload, if (vm.vercelBusy) "Starting…" else "Deploy now", "Asks Vercel to deploy the latest main", Green, { if (!vm.vercelBusy) vm.deployVercelNow(p) })
-                SettingRow(Icons.Default.LinkOff, "Unlink", "Only forgets the link, the Vercel project stays", Amber, { vm.unlinkVercel(p) })
+                SettingRow(Icons.Default.LinkOff, "Unlink", "Hides its address here; the Vercel project stays", Amber, { vm.unlinkVercel(p) })
             } else {
                 Text(if (vm.vercelUser.isBlank()) "Log in to Vercel in Accounts first." else "Not linked. Link creates the Vercel project from ${p.repo}.", fontSize = 11.sp, color = Muted)
                 SettingRow(Icons.Default.Link, if (vm.vercelBusy) "Linking…" else "Link to Vercel", "Deploy this ${p.kind.label.lowercase()} on Vercel", Green, { if (!vm.vercelBusy) vm.linkVercel(p) })
