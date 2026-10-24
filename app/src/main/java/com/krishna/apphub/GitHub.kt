@@ -228,6 +228,32 @@ class GitHub(private val prefs: Prefs) {
         return send("PUT", "/repos/$repo/actions/secrets/$name", body).first in 200..204
     }
 
+    // ---- v53: GitHub Pages ----
+    /** Turns Pages on with "GitHub Actions" as the source (what the deploy workflow needs). Empty string = done, otherwise the reason. */
+    suspend fun enablePages(repo: String): String {
+        val body = JSONObject().put("build_type", "workflow")
+        val (c, b) = send("POST", "/repos/$repo/pages", body)
+        if (c in 200..299) return ""
+        if (c == 409) {   // already on: make sure the source is GitHub Actions
+            val r = send("PUT", "/repos/$repo/pages", body)
+            return if (r.first in 200..299) "" else "Pages is on, but its source could not be changed (HTTP ${r.first})"
+        }
+        val msg = runCatching { JSONObject(b).optString("message") }.getOrDefault("")
+        return when {
+            c == 0 -> "no network"
+            c == 401 -> "GitHub session expired. Log in again in Accounts"
+            msg.contains("plan", true) || msg.contains("upgrade", true) || c == 402 ->
+                "GitHub Pages is not available for a private repo on your plan. Make the repo public or deploy on Vercel"
+            c == 403 || c == 404 -> "GitHub refused (HTTP $c). Check that you own the repo and that its name is right" + if (msg.isNotBlank()) " ($msg)" else ""
+            msg.isNotBlank() -> msg
+            else -> "HTTP $c"
+        }
+    }
+
+    /** Starts the deploy workflow by hand (the one the Website zip ships). */
+    suspend fun dispatchDeploy(repo: String) =
+        send("POST", "/repos/$repo/actions/workflows/deploy.yml/dispatches", JSONObject().put("ref", "main")).first == 204
+
     // ---- builds ----
     suspend fun dispatch(repo: String) =
         send("POST", "/repos/$repo/actions/workflows/build.yml/dispatches", JSONObject().put("ref", "main")).first == 204

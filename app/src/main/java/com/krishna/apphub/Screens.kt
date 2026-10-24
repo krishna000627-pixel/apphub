@@ -599,6 +599,12 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
             OutlinedTextField(stack, { stack = it }, label = { Text("Tech stack") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
         }
+        if (p.kind == ProjectType.WEBSITE) Panel {
+            SectionTitle(Icons.Default.Public, "GitHub Pages")
+            Text("Turns Pages on for ${p.repo} with GitHub Actions as the source, then starts the deploy workflow. Needed once, before the first deploy works.", fontSize = 11.sp, color = Muted)
+            SettingRow(Icons.Default.CloudUpload, if (vm.pagesBusy) "Enabling…" else "Enable GitHub Pages", "Uses your GitHub login", Green, { if (!vm.pagesBusy) vm.enablePages(p) })
+            if (vm.pagesMsg.isNotBlank()) Text(vm.pagesMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
+        }
         if (p.kind != ProjectType.APP) Panel {
             SectionTitle(Icons.Default.Cloud, "Vercel")
             if (vm.isVercel(p)) {
@@ -1179,7 +1185,9 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         // v52: "Deploy to" replaces "Import from" (existing repos are still added from Accounts > Open ...)
         val toAccounts = { nav.navigate("accounts") { launchSingleTop = true }; Unit }
         Text("Deploy to", fontSize = 12.sp, color = Muted)
-        val targets = listOf(Triple("Vercel", "vercel", vm.vercelUser.isNotBlank()), Triple("Render", "render", vm.renderUser.isNotBlank()), Triple("Supabase", "supabase", vm.supabaseOn))
+        val targets = listOfNotNull(
+            if (type == ProjectType.WEBSITE) Triple("GitHub Pages", "pages", githubUsable) else null,
+            Triple("Vercel", "vercel", vm.vercelUser.isNotBlank()), Triple("Render", "render", vm.renderUser.isNotBlank()), Triple("Supabase", "supabase", vm.supabaseOn))
         if (type == ProjectType.APP) {
             FilterChip(true, {}, { Text("GitHub Releases") }, enabled = false, leadingIcon = { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) })
             Text("Apps build on GitHub Actions and the signed APK is released on GitHub. Vercel, Render and Supabase are for websites and servers.", fontSize = 12.sp, color = Muted)
@@ -1193,6 +1201,7 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
                 }
             }
             Text(when (if (targets.any { it.second == target && it.third }) target else "") {
+                "pages" -> "Turns GitHub Pages on for the repo (source: GitHub Actions) so the deploy workflow in your zip can publish. A private repo needs a GitHub plan that allows Pages."
                 "vercel" -> "Creates the Vercel project from the repo and fills in its address."
                 "render" -> "Creates a free Render service from the repo: a static site for a website, a Node web service for a server. Render's GitHub app must be able to see the repo."
                 "supabase" -> "Creates a Supabase project in your first organization and fills in its API address. The database password is random and not kept."

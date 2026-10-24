@@ -12,6 +12,11 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v53
+- GitHub Pages: `GitHub.enablePages(repo)` (POST /repos/{repo}/pages build_type=workflow; 409 = already on, then PUT to make the source GitHub Actions; plan/private-repo errors give a plain message), `GitHub.dispatchDeploy(repo)` (workflow deploy.yml, ref main), top-level `pagesUrl(repo)` (ProjectStatus.kt).
+- Setup: "GitHub Pages" chip under Deploy to for Website only (target "pages" in `HubVM.setup`; fills liveUrl). App's Settings tab: Website panel "GitHub Pages" with `HubVM.enablePages(p)` (enable, dispatch deploy, fill liveUrl if empty; `pagesBusy/pagesMsg`).
+- versionCode 53, versionName "53.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
 ## v52
 - Setup (AddScreen): the "Import from" chips are replaced by "Deploy to". Websites/servers pick Vercel | Render | Supabase (FilterChip, tap again = none, state local to the screen, only counts while that account is connected; a chip of a disconnected account reads "(log in)" and opens Accounts). Apps show a disabled "GitHub Releases" chip + note.
 - `HubVM.setup(..., liveUrl, target)`: after the repo/keys steps, `vercel.link(repo)` (id stored, live address filled), `render.create(name, repo, website)` (new `RenderApi.create`: GET /owners then POST /v1/services; static_site or free node web_service, autoDeploy yes), `supabase.create(name)` (new `SupabaseApi.create`: GET /v1/organizations then POST /v1/projects, americas, random db_pass not kept, liveUrl https://<id>.supabase.co). A failed target logs a red line and the project is still saved.

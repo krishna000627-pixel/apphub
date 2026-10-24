@@ -655,6 +655,23 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         toast("Linked to Vercel")
     }
 
+    // ---- v53: GitHub Pages for an existing website ----
+    var pagesBusy by mutableStateOf(false)
+    var pagesMsg by mutableStateOf("")
+
+    /** Turns Pages on for the project's repo, starts the deploy workflow and fills the live address when it is empty. */
+    fun enablePages(p: Project) = viewModelScope.launch {
+        if (!p.repo.contains("/")) { pagesMsg = "Log in with GitHub first (Accounts)"; return@launch }
+        pagesBusy = true; pagesMsg = ""
+        val err = gh.enablePages(p.repo)
+        if (err.isNotBlank()) { pagesBusy = false; pagesMsg = "Pages: $err"; return@launch }
+        val started = gh.dispatchDeploy(p.repo)
+        projects.value.firstOrNull { it.id == p.id }?.let { if (it.liveUrl.isBlank()) dao.save(it.copy(liveUrl = pagesUrl(p.repo))) }
+        pagesBusy = false
+        pagesMsg = if (started) "Pages is on and a deploy was started." else "Pages is on. Push or re-run the deploy workflow to publish."
+        toast("GitHub Pages enabled")
+    }
+
     /** Only forgets the link here; the project on Vercel stays. */
     fun unlinkVercel(p: Project) {
         prefs.setVercelId(p.repo, ""); vercelLast.remove(p.id); vercelVer.remove(p.id); vercelRev++
@@ -1264,6 +1281,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                         prefs.setVercelId(repo, lk.id); vercelRev++
                         if (liveAddr.isBlank()) liveAddr = lk.url
                         log += "✓ Vercel project linked (${lk.url})"
+                    }
+                }
+                "pages" -> {
+                    log += "Enabling GitHub Pages…"
+                    val err = gh.enablePages(repo)
+                    if (err.isNotBlank()) log += "✗ Pages: $err" else {
+                        if (liveAddr.isBlank()) liveAddr = pagesUrl(repo)
+                        log += "✓ GitHub Pages on (source: GitHub Actions). Live at ${pagesUrl(repo)} after the first deploy"
                     }
                 }
                 "render" -> {

@@ -91,3 +91,9 @@ object Health {
         }.getOrDefault(false)
     }
 }
+
+/** v53: address a GitHub Pages site of [repo] (owner/name) gets. */
+fun pagesUrl(repo: String): String {
+    val owner = repo.substringBefore("/").lowercase(); val name = repo.substringAfter("/")
+    return if (name.equals("$owner.github.io", true)) "https://$owner.github.io/" else "https://$owner.github.io/$name/"
+}

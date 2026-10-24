@@ -18,6 +18,7 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v53" to listOf("GitHub Pages: websites get a GitHub Pages chip under Deploy to in Setup, and an Enable GitHub Pages button in the app's Settings tab. It turns Pages on with GitHub Actions as the source and starts the deploy workflow, so you no longer do it by hand on github.com. A private repo on a plan without Pages gets a clear message."),
         "v52" to listOf("Setup: \"Import from\" is now \"Deploy to\". For a website or server pick Vercel, Render or Supabase and the project is created there with the repo (Vercel: linked and live address filled in; Render: free static site or Node web service; Supabase: new project). An app shows GitHub Releases. Not logged in: tap the chip to open Accounts. Existing repos are still added from Accounts > Open GitHub / Vercel / Render / Supabase."),
         "v51" to listOf("Includes v49 (v50 was skipped). Prompts now ask Claude to put previews in a new file in the zip (preview.html) instead of drawing them in the chat, so the chat does not fill up."),
         "v49" to listOf("Search open hides everything but the list (dashboard and all pages). New setup or import copies an adopt prompt for Claude; also in app Settings > Shortcuts. File type check before a push. Builds: full history (Load older builds, Copy history)."),
