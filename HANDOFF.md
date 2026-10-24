@@ -12,6 +12,18 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v51
+- v49 was never pushed and v50 was skipped: v51 contains everything from v49 (see below) plus this. versionCode 51, versionName "51.0".
+- Prompts: `Prompts.PREVIEW` ("put every preview in a NEW file in the zip, e.g. preview.html, never draw it in the chat; do not add it to the app until approved"). Used in ideasPrompt, buildPrompt, the Improve UI task text (app and website) and appended to both `delivery()` variants, so every delivery-rule prompt carries it. Reason: previews drawn in the chat burn the context window.
+No new dependencies.
+
+## v49
+- Search open = hide everything else: `SearchHeader` now takes `searching/onSearching` (state lives in each screen); the screens wrap their summary panels/messages in `if (!searching)`. Dashboard wraps session/net notes, stat strip, install follow-ups and filter chips; the chip filter is ignored while searching.
+- Adopt prompt: `Prompts.adopt(p)` (Commands.kt), per type (APP: build.yml signed APK + 4 secrets + plain versionCode/versionName; WEBSITE/SERVER: deploy workflow, version in footer or /health, no secrets/node_modules) + `delivery(p)`. Copied by itself (quietly) by `HubVM.setup` and `HubVM.importProject`, and from app Settings > Shortcuts > "Copy adopt prompt". `HubVM.copy(text, quiet)`.
+- File type checker: `TypeCheck.scan(kind, entries)` (Zip.kt) runs in `HubVM.deploy` after the secret check (`typesChecked` param). Flags: no files of the project's type, Android files in a website/server, build outputs/archives (.apk .aab .zip .exe ...), node_modules/. `TypeAsk` + `TypeDialog` (Leave out & push drops whole-file/folder issues via `TypeCheck.dropSet` + `Pack.without`, Push anyway, Cancel).
+- Build history: `GitHub.runsPage` (100 per page, total_count) + `HubVM.loadOlder` (olderRuns/olderMore/olderLoading, in memory only). Builds tab lists live runs + loaded older ones, "Load older builds" until the end, "Copy history" (`historyText`).
+No new dependencies.
+
 ## v48
 - Shared `SearchField` + `SearchHeader` (Pages.kt). Provider pages (GitHub, Vercel, Supabase, Render) use `SearchHeader`: back arrow, title (tap = refresh, spinner while loading), search icon that opens the field in place (x clears, then closes; back closes). Lists filter on name (and repo). The dashboard uses the same `SearchField`. The GitHub page's own search box and the private `Refresh` icon helper are removed.
 No new dependencies.

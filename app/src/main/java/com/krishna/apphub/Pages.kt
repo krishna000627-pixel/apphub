@@ -125,18 +125,18 @@ fun repoOf(url: String): String {
 }
 
 /** v48: header of the provider pages: back arrow, the title (tap = refresh, spinner while loading) and a search icon that opens the field in place. */
-@Composable fun SearchHeader(title: String, nav: NavHostController, loading: Boolean, q: String, onQ: (String) -> Unit, onRefresh: () -> Unit) {
-    var searching by remember { mutableStateOf(false) }
-    BackHandler(searching) { searching = false; onQ("") }
+@Composable fun SearchHeader(title: String, nav: NavHostController, loading: Boolean, q: String, onQ: (String) -> Unit,
+                             searching: Boolean, onSearching: (Boolean) -> Unit, onRefresh: () -> Unit) {
+    BackHandler(searching) { onSearching(false); onQ("") }
     Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 4.dp).height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton({ if (searching) { searching = false; onQ("") } else nav.popBackStack() }, Modifier.size(40.dp)) { Icon(Icons.Default.ArrowBack, null) }
-        if (searching) SearchField(q, onQ, { searching = false }, Modifier.weight(1f))
+        IconButton({ if (searching) { onSearching(false); onQ("") } else nav.popBackStack() }, Modifier.size(40.dp)) { Icon(Icons.Default.ArrowBack, null) }
+        if (searching) SearchField(q, onQ, { onSearching(false) }, Modifier.weight(1f))
         else {
             Row(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).clickable { onRefresh() }.padding(vertical = 8.dp, horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Green, maxLines = 1)
                 if (loading) { Spacer(Modifier.width(10.dp)); CircularProgressIndicator(Modifier.size(14.dp), color = Green, strokeWidth = 2.dp) }
             }
-            IconButton({ searching = true }, Modifier.size(40.dp)) { Icon(Icons.Default.Search, null) }
+            IconButton({ onSearching(true) }, Modifier.size(40.dp)) { Icon(Icons.Default.Search, null) }
         }
     }
 }
@@ -146,18 +146,19 @@ fun repoOf(url: String): String {
     val ctx = LocalContext.current
     val ps by vm.projects.collectAsState()
     var q by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.loadRepos() }
     val on = vm.login.isNotBlank() && !vm.sessionExpired
     val shown = vm.ghRepos.filter { q.isBlank() || it.full.contains(q.trim(), true) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SearchHeader("GitHub", nav, vm.ghLoading, q, { q = it }) { vm.loadRepos() }
+        SearchHeader("GitHub", nav, vm.ghLoading, q, { q = it }, searching, { searching = it }) { vm.loadRepos() }
         if (!on) NotConnected("GitHub", nav) else {
-            AccountCard(Icons.Default.Code, vm.login, "https://github.com/${vm.login}") {
+            if (!searching) AccountCard(Icons.Default.Code, vm.login, "https://github.com/${vm.login}") {
                 Stat("Repos", vm.ghRepos.size, Cyan, Modifier.weight(1f))
                 Stat("Private", vm.ghRepos.count { it.priv }, Amber, Modifier.weight(1f))
                 Stat("Added", vm.ghRepos.count { r -> ps.any { it.repo.equals(r.full, true) } }, Green, Modifier.weight(1f))
             }
-            if (vm.ghMsg.isNotBlank()) Text(vm.ghMsg, fontSize = 12.sp, color = Amber)
+            if (!searching && vm.ghMsg.isNotBlank()) Text(vm.ghMsg, fontSize = 12.sp, color = Amber)
             shown.take(40).forEach { r ->
                 ImportCard(Icons.Default.Code, r.name, listOf(if (r.priv) "private" else "public", r.lang).filter { it.isNotBlank() }.joinToString(" • "),
                     added = ps.any { it.repo.equals(r.full, true) }, defType = null,
@@ -183,17 +184,18 @@ private fun vercelLook(st: String): Pair<String, Color>? = when (st) {
     val ctx = LocalContext.current
     val ps by vm.projects.collectAsState()
     var q by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.loadVercelProjects() }
     val shown = vm.vcProjects.filter { q.isBlank() || it.name.contains(q.trim(), true) || it.repo.contains(q.trim(), true) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SearchHeader("Vercel", nav, vm.vcLoading, q, { q = it }) { vm.loadVercelProjects() }
+        SearchHeader("Vercel", nav, vm.vcLoading, q, { q = it }, searching, { searching = it }) { vm.loadVercelProjects() }
         if (vm.vercelUser.isBlank()) NotConnected("Vercel", nav) else {
-            AccountCard(Icons.Default.Public, vm.vercelUser, "https://vercel.com/dashboard") {
+            if (!searching) AccountCard(Icons.Default.Public, vm.vercelUser, "https://vercel.com/dashboard") {
                 Stat("Projects", vm.vcProjects.size, Cyan, Modifier.weight(1f))
                 Stat("Live", vm.vcProjects.count { it.state == "READY" }, Green, Modifier.weight(1f))
                 Stat("Added", vm.vcProjects.count { v -> ps.any { it.repo.equals(v.repo, true) } }, Green, Modifier.weight(1f))
             }
-            if (vm.vcMsg.isNotBlank()) Text(vm.vcMsg, fontSize = 12.sp, color = Amber)
+            if (!searching && vm.vcMsg.isNotBlank()) Text(vm.vcMsg, fontSize = 12.sp, color = Amber)
             shown.forEach { v ->
                 ImportCard(Icons.Default.Public, v.name, v.url.removePrefix("https://"), Cyan, vercelLook(v.state),
                     added = v.repo.isNotBlank() && ps.any { it.repo.equals(v.repo, true) }, defType = ProjectType.WEBSITE,
@@ -214,6 +216,7 @@ private fun vercelLook(st: String): Pair<String, Color>? = when (st) {
     var ask by remember { mutableStateOf<Pair<SupabaseApi.Proj, ProjectType>?>(null) }
     var askRepo by remember { mutableStateOf("") }
     var q by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.loadSupabase(); vm.loadRepos() }
     val shown = vm.supabaseProjects.filter { q.isBlank() || it.name.contains(q.trim(), true) }
     fun slug(n: String) = n.lowercase().replace(Regex("[^a-z0-9]+"), "")
@@ -234,14 +237,14 @@ private fun vercelLook(st: String): Pair<String, Color>? = when (st) {
             dismissButton = { TextButton({ ask = null }) { Text("Cancel") } })
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SearchHeader("Supabase", nav, vm.supabaseLoading, q, { q = it }) { vm.loadSupabase() }
+        SearchHeader("Supabase", nav, vm.supabaseLoading, q, { q = it }, searching, { searching = it }) { vm.loadSupabase() }
         if (!vm.supabaseOn) NotConnected("Supabase", nav) else {
-            AccountCard(Icons.Default.Storage, "Supabase", "https://supabase.com/dashboard") {
+            if (!searching) AccountCard(Icons.Default.Storage, "Supabase", "https://supabase.com/dashboard") {
                 Stat("Projects", vm.supabaseProjects.size, Cyan, Modifier.weight(1f))
                 Stat("Active", vm.supabaseProjects.count { it.status.startsWith("ACTIVE") }, Green, Modifier.weight(1f))
                 Stat("Paused", vm.supabaseProjects.count { !it.status.startsWith("ACTIVE") }, if (vm.supabaseProjects.any { !it.status.startsWith("ACTIVE") }) Amber else Muted, Modifier.weight(1f))
             }
-            if (vm.supabaseMsg.isNotBlank()) Text(vm.supabaseMsg, fontSize = 12.sp, color = Amber)
+            if (!searching && vm.supabaseMsg.isNotBlank()) Text(vm.supabaseMsg, fontSize = 12.sp, color = Amber)
             shown.forEach { pr ->
                 val repo = match(pr)
                 val ok = pr.status.startsWith("ACTIVE")

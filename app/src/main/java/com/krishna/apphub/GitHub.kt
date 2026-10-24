@@ -232,21 +232,30 @@ class GitHub(private val prefs: Prefs) {
     suspend fun dispatch(repo: String) =
         send("POST", "/repos/$repo/actions/workflows/build.yml/dispatches", JSONObject().put("ref", "main")).first == 204
 
+    private fun parseRuns(a: JSONArray): List<Run> = (0 until a.length()).map {
+        val o = a.getJSONObject(it)
+        Run(
+            o.getLong("id"), o.getInt("run_number"),
+            if (o.isNull("conclusion")) null else o.getString("conclusion") == "success",
+            o.getString("created_at").replace("T", " ").take(16),
+            o.optJSONObject("head_commit")?.optString("message")?.lineSequence()?.first() ?: "",
+            o.optString("event"),
+            o.optString("conclusion") == "cancelled"
+        )
+    }
+
     suspend fun runs(repo: String, n: Int = 15): List<Run> {
         val (c, b) = get("/repos/$repo/actions/runs?per_page=$n")
         if (c != 200) return emptyList()
-        val a = JSONObject(b).getJSONArray("workflow_runs")
-        return (0 until a.length()).map {
-            val o = a.getJSONObject(it)
-            Run(
-                o.getLong("id"), o.getInt("run_number"),
-                if (o.isNull("conclusion")) null else o.getString("conclusion") == "success",
-                o.getString("created_at").replace("T", " ").take(16),
-                o.optJSONObject("head_commit")?.optString("message")?.lineSequence()?.first() ?: "",
-                o.optString("event"),
-                o.optString("conclusion") == "cancelled"
-            )
-        }
+        return parseRuns(JSONObject(b).getJSONArray("workflow_runs"))
+    }
+
+    /** v49: one page (100) of the whole build history. Second value = more pages exist. On an error: empty list and true, so it can be tried again. */
+    suspend fun runsPage(repo: String, page: Int): Pair<List<Run>, Boolean> {
+        val (c, b) = get("/repos/$repo/actions/runs?per_page=100&page=$page")
+        if (c != 200) return emptyList<Run>() to true
+        val o = JSONObject(b)
+        return parseRuns(o.getJSONArray("workflow_runs")) to (page * 100 < o.optInt("total_count"))
     }
 
     suspend fun errorOf(repo: String, runId: Long): String {

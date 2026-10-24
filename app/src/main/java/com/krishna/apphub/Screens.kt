@@ -224,7 +224,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         "Pinned" -> vm.isPinned(p.id); "To push" -> vm.pending(p); "Errors" -> p.lastStatus == "failed"; "Updates" -> vm.hasUpdate(p)
         else -> ProjectType.values().firstOrNull { it.plural == k }?.let { t -> p.kind == t } ?: true
     }
-    val shown = ps.filter { hit(it, f) && (q.isBlank() || it.name.contains(q, true) || it.repo.contains(q, true)) }
+    val shown = ps.filter { hit(it, if (searching) "All" else f) && (q.isBlank() || it.name.contains(q, true) || it.repo.contains(q, true)) }
         .sortedWith(compareByDescending<Project> { vm.isPinned(it.id) }.thenBy { it.name.lowercase() })
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         // v47: tap the name to refresh, search sits where the refresh icon was (opens in the header, no box above the list)
@@ -241,6 +241,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 IconButton({ nav.navigate("add") }, Modifier.size(40.dp)) { Icon(Icons.Default.Add, null, tint = Green) }
             }
         }
+        if (!searching) Column {   // v49: while searching only the header and the list stay
         if (vm.sessionExpired) Panel(Modifier.padding(bottom = 6.dp), border = Red.copy(alpha = 0.7f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -286,6 +287,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             chips.forEach { k ->
                 FilterChip(f == k, { f = k }, { Text("$k (${ps.count { hit(it, k) }})", fontSize = 12.sp) })
             }
+        }
         }
         if (ps.isEmpty()) EmptyState(Icons.Default.Apps, "No apps yet", "Add your own app, or bring back the preset apps.", Modifier.padding(top = 12.dp)) {
             Button({ vm.restorePresets() }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { Text("Add presets") }
@@ -455,7 +457,14 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 }
             }
             1 -> {
-                items(runs) { r ->
+                val all = (runs + (vm.olderRuns[id] ?: emptyList())).distinctBy { it.id }   // v49: the whole history, newest first
+                if (all.isNotEmpty()) item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Mono("${all.size} builds", Modifier.weight(1f), Muted)
+                        TextButton({ vm.copy(vm.historyText(p, all)) }) { Text("Copy history", fontSize = 12.sp, color = Cyan) }
+                    }
+                }
+                items(all) { r ->
                     val st = when (r.ok) { true -> "passed"; false -> "failed"; else -> "running" }
                     Column(Modifier.fillMaxWidth().clickable {
                         if (openRun == r.id) openRun = null else { openRun = r.id; vm.loadJobs(p, r.id) }
@@ -475,6 +484,9 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                             }
                         }
                     }
+                }
+                if ((runs.size >= 15 || vm.olderRuns[id] != null) && vm.olderMore[id] != false) item {
+                    OutlinedButton({ vm.loadOlder(p) }, Modifier.fillMaxWidth()) { BtnText(if (vm.olderLoading[id] == true) "Loading…" else "Load older builds") }
                 }
                 if (runs.isEmpty()) item {
                     EmptyState(Icons.Default.Build, "No builds yet", "Deploy a zip and the first build starts on GitHub.") {
@@ -636,6 +648,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 HubSwitch(vm.isPinned(p.id), { vm.togglePin(p) })
             }
             SettingRow(Icons.Default.Restore, "Reset installed marker", "Now: ${vm.installedTag(p.id).ifBlank { "none" }}. Clears the update check.", Cyan, { vm.clearInstalled(p.id) })
+            SettingRow(Icons.Default.AutoAwesome, "Copy adopt prompt", "Send it to Claude with the project", Cyan, { vm.copy(Prompts.adopt(p)) })
             SettingRow(Icons.Default.OpenInNew, "Open on GitHub", p.repo, Muted, { openUrl(ctx, "https://github.com/${p.repo}") })
         }
         Panel(border = Red.copy(alpha = 0.6f)) {
@@ -710,6 +723,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 onSelected = { target = null; if (pack != null) start(tp, pack, note) },
                 onCancel = { target = null })
         }
+        vm.typeAsk?.let { a -> TypeDialog(a, onAnyway = { vm.typePushAnyway(ctx) }, onLeave = { vm.typeLeaveOut(ctx) }, onCancel = { vm.typeCancel() }) }
         vm.secretAsk?.let { a -> SecretDialog(a, onAnyway = { vm.secretPushAnyway(ctx) }, onLeave = { vm.secretLeaveOut(ctx) }, onCancel = { vm.secretCancel() }) }
         older?.let { op ->
             if (pack != null) OldVersionDialog(pack.name, pack.version, vm.pushedVersion(op), op,
@@ -1266,6 +1280,23 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         },
         confirmButton = { TextButton(if (whole) onLeave else onAnyway) { Text(if (whole) "Leave out & push" else "Push anyway") } },
         dismissButton = { Row { TextButton(onCancel) { Text("Cancel") }; if (whole) TextButton(onAnyway) { Text("Push anyway") } } })
+}
+
+/** v49: file type check: the zip does not fit the project type, or has files that should not be pushed. */
+@Composable fun TypeDialog(a: TypeAsk, onAnyway: () -> Unit, onLeave: () -> Unit, onCancel: () -> Unit) {
+    val drop = TypeCheck.dropSet(a.issues, a.pack.entries).size
+    AlertDialog(onDismissRequest = onCancel,
+        title = { Text("Check these files") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("${a.p.name} is a ${a.p.kind.label}.", fontSize = 12.sp, color = Muted)
+                a.issues.take(6).forEach { Mono(if (it.path.isBlank()) it.why else "${it.path}\n  ${it.why}", color = Amber) }
+                if (a.issues.size > 6) Text("+ ${a.issues.size - 6} more", fontSize = 12.sp, color = Muted)
+                if (drop > 0) Text("Leave out & push skips $drop file(s).", fontSize = 11.sp, color = Muted)
+            }
+        },
+        confirmButton = { TextButton(if (drop > 0) onLeave else onAnyway) { Text(if (drop > 0) "Leave out & push" else "Push anyway") } },
+        dismissButton = { Row { TextButton(onCancel) { Text("Cancel") }; if (drop > 0) TextButton(onAnyway) { Text("Push anyway") } } })
 }
 
 /** v42: environment variables of a Vercel project. Names are listed, values are write-only and never stored in App Hub. */

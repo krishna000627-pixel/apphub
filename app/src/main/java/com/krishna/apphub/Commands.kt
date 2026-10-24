@@ -7,6 +7,9 @@ object Commands {
 }
 
 object Prompts {
+    /** v51: previews go in a file inside the zip. Drawing them in the chat fills the context window. */
+    const val PREVIEW = "Put every preview (logo, avatars, themes, screens) in a NEW file in the zip, for example preview.html, and never draw it in the chat. Do not add it to the app until I approve it."
+
     /** v41: tasks per project type. A server has no UI, so it gets API wording instead of UI/UX. */
     fun tasksFor(kind: ProjectType): List<String> = when (kind) {
         ProjectType.SERVER -> listOf("Fix error", "Add feature", "Improve API", "Refactor", "Release notes", "Other")
@@ -17,7 +20,8 @@ object Prompts {
         "I want to build a new Android app in the \"$cat\" area." + (if (notes.isBlank()) "" else " My interests and must-haves: $notes.") +
         "\n\nDo NOT write any code yet.\n\nStep 1 - Ideas: suggest 8 distinct app ideas. For each give: a name, a one-line pitch, the 3 main screens, " +
         "the one feature that makes it special, and effort (small / medium / large).\n\nThen stop and ask me to pick one (or mix two). " +
-        "Only after I choose: ask up to 3 short questions, show a one-screen plan and a preview of the look, and wait for my OK before building."
+        "Only after I choose: ask up to 3 short questions, show a one-screen plan, and wait for my OK before building. " +
+        PREVIEW
 
     fun buildPrompt(name: String, pitch: String): String {
         val base = name.filter { it.isLetterOrDigit() }.ifBlank { "NewApp" }
@@ -26,9 +30,27 @@ object Prompts {
             "Before coding: ask me up to 3 short questions if anything is unclear, then show a short plan and wait for my OK.\n\n" +
             "CI: add a GitHub Actions workflow that builds a signed release APK (secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD) " +
             "and publishes it as a release asset.\n\n" +
-            "Show a preview of any new visuals (logo, avatars, themes) first. Do not add them straight into the app.\n\n" +
+            PREVIEW + "\n\n" +
             "Delivery: zip the whole project as ${base}_v1.zip with a top-level folder ${base}_v1/. Version v1 (versionCode 1). " +
             "On every later change always bump the version, even for a string-only change."
+    }
+
+    /** v49: sent to Claude together with the project, so an existing project works with App Hub (workflow, version, secrets, delivery). */
+    fun adopt(p: Project): String {
+        val head = "Adopt my existing ${p.kind.label.lowercase()} project ${p.name} (${p.version}) for App Hub.\n\nRepo: ${p.repo}\nStack: ${p.stack}\n\n" +
+            "I will send you the whole project. Do NOT change how it looks or behaves. Only make it work with App Hub, then list what you changed.\n\nMake sure:\n"
+        val rules = if (p.kind == ProjectType.APP)
+            "1. .github/workflows/build.yml builds a signed release APK on every push to main and publishes it as a release asset (tag build-<run number>). " +
+            "It signs with the secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD (decode the keystore in the workflow; app/build.gradle reads them from env vars or keystore.properties; no keystore file in the repo).\n" +
+            "2. applicationId stays the same. versionCode and versionName are plain values in app/build.gradle(.kts), so App Hub can read and bump them.\n" +
+            "3. No secrets, .env files or keystores in the zip.\n" +
+            "4. minSdk 26 or higher and a launcher icon exists."
+        else
+            "1. A workflow in .github/workflows deploys on every push to main (or tell me if Vercel or Render should deploy it from the repo instead).\n" +
+            "2. The version is shown ${if (p.kind == ProjectType.WEBSITE) "in the site footer" else "by GET /health, which answers 200 with {\"status\":\"ok\",\"version\":\"<version>\"}"} and matches package.json if there is one.\n" +
+            "3. No secrets, .env files or node_modules in the zip. List the environment variables I must set.\n" +
+            "4. The README says how to run and deploy it."
+        return head + rules + "\n\nBefore coding: ask me up to 3 short questions if anything is unclear. Please keep the solution simple and production ready." + delivery(p)
     }
 
     fun delivery(p: Project): String {
@@ -37,10 +59,10 @@ object Prompts {
         if (p.kind != ProjectType.APP) return "\n\nDelivery rules: zip the whole project as ${base}_$next.zip with a top-level folder ${base}_$next/. " +
             "Always bump the version to $next (in package.json if there is one, and where it is shown: " +
             "${if (p.kind == ProjectType.WEBSITE) "the site footer" else "the /health response"}), even for a string-only change. " +
-            "After the zip, list every file you created or changed (path + one short note)."
+            "After the zip, list every file you created or changed (path + one short note). $PREVIEW"
         return "\n\nDelivery rules: zip the whole project as ${base}_$next.zip with a top-level folder ${base}_$next/. " +
             "Always bump the version to $next (versionCode and versionName), even for a string-only change. " +
-            "After the zip, list every file you created or changed (path + one short note)."
+            "After the zip, list every file you created or changed (path + one short note). $PREVIEW"
     }
 
     /** What the text box under step 4 asks for, per task. */
@@ -69,7 +91,7 @@ object Prompts {
         fun fill(placeholder: String) = change.ifBlank { placeholder }
         return when (task) {
             "Improve UI" -> "Improve the design and UX of my website ${p.name} (${p.version}).$host\n\nFocus:\n${fill("<pages or problems to improve>")}\n\n" +
-                "Project stack: $stack.\n\nKeep the existing style, make it responsive and accessible, and show a preview before large visual changes. $tail"
+                "Project stack: $stack.\n\nKeep the existing style, make it responsive and accessible. Before large visual changes: $PREVIEW $tail"
             "Improve API" -> "Improve the API of my server ${p.name} (${p.version}).$host\n\nFocus:\n${fill("<endpoints or problems to improve>")}\n\n" +
                 "Project stack: $stack.\n\nImprove validation, error responses and consistency.$keep $tail"
             "Fix error" -> "Fix the following ${if (vercel) "Vercel build or deploy" else "build"} error in my $noun ${p.name} (${p.version}).$host\n\nError:\n" +
@@ -89,7 +111,7 @@ object Prompts {
         fun fill(placeholder: String) = change.ifBlank { placeholder }
         return when (task) {
             "Improve UI" -> "Improve the UI and UX of my Android project ${p.name} (${p.version}).\n\nFocus:\n${fill("<screens or problems to improve>")}\n\n" +
-                "Project stack: $stack.\n\nKeep the existing dark green/cyan style, reduce wasted padding, and show a preview before large visual changes. $tail"
+                "Project stack: $stack.\n\nKeep the existing dark green/cyan style, reduce wasted padding. Before large visual changes: $PREVIEW $tail"
             "Fix error" -> "Fix the following build error in my Android project ${p.name} (${p.version}).\n\nError:\n" +
                 "${error.ifBlank { "<paste error here>" }}\n\n" + (if (change.isBlank()) "" else "Extra notes:\n$change\n\n") + "Project stack: $stack.\n\nPlease analyze the error, explain the cause, " +
                 "and provide the exact code changes with updated files. $tail"

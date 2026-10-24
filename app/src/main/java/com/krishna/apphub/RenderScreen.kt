@@ -28,11 +28,12 @@ import kotlinx.coroutines.delay
     // refresh on open, then every 20 s while the page is open (silent)
     LaunchedEffect(Unit) { while (true) { vm.refreshRender(); delay(20_000) } }
     var q by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
     val all = vm.renderServices
     val list = all.filter { q.isBlank() || it.name.contains(q.trim(), true) || it.repo.contains(q.trim(), true) }
     val live = all.count { !it.suspended }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SearchHeader("Render", nav, vm.renderLoading, q, { q = it }) { vm.refreshRender() }
+        SearchHeader("Render", nav, vm.renderLoading, q, { q = it }, searching, { searching = it }) { vm.refreshRender() }
         if (vm.renderUser.isBlank()) {
             Panel {
                 Text("Not connected", color = Amber, fontWeight = FontWeight.Bold)
@@ -41,7 +42,7 @@ import kotlinx.coroutines.delay
                 BigButton("Accounts", Icons.Default.Login) { nav.navigate("accounts") { launchSingleTop = true } }
             }
         } else {
-            Panel {
+            if (!searching) Panel {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Cloud, null, tint = Cyan, modifier = Modifier.size(22.dp))
                     Spacer(Modifier.width(12.dp))
@@ -58,7 +59,7 @@ import kotlinx.coroutines.delay
                     Stat("Off", all.size - live, if (all.size - live > 0) Amber else Muted, Modifier.weight(1f))
                 }
             }
-            if (vm.renderMsg.isNotBlank()) Text(vm.renderMsg, fontSize = 12.sp, color = Amber)
+            if (!searching && vm.renderMsg.isNotBlank()) Text(vm.renderMsg, fontSize = 12.sp, color = Amber)
             if (list.isEmpty() && !vm.renderLoading) Panel { Text(if (q.isBlank()) "No services yet" else "No match", color = Muted) }
             list.forEach { sv -> RenderCard(vm, sv) { openUrl(ctx, it) } }
         }

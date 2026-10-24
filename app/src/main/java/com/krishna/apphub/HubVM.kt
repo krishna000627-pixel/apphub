@@ -205,11 +205,13 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     /** Adds an existing repo as a project, no setup form. A Vercel project id (websites and servers) links it to Vercel too. */
     fun importProject(name: String, repo: String, type: ProjectType, liveUrl: String = "", vercelId: String = "") = viewModelScope.launch {
         if (dao.all().first().any { it.repo.equals(repo, true) }) { toast("Already added"); return@launch }
-        val id = dao.save(Project(name = name, repo = repo, version = "v1", stack = type.defaultStack, type = type.name,
-            liveUrl = if (type == ProjectType.APP) "" else cleanUrl(liveUrl)))
+        val proj = Project(name = name, repo = repo, version = "v1", stack = type.defaultStack, type = type.name,
+            liveUrl = if (type == ProjectType.APP) "" else cleanUrl(liveUrl))
+        val id = dao.save(proj)
         if (vercelId.isNotBlank() && type != ProjectType.APP) { prefs.setVercelId(repo, vercelId); vercelRev++ }
         selId = id
-        toast("Added $name")
+        copy(Prompts.adopt(proj), quiet = true)   // v49: the adopt prompt is ready to send to Claude
+        toast("Added $name. Adopt prompt copied")
     }
 
     fun loadRender() = viewModelScope.launch {
@@ -226,6 +228,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var envBusy by mutableStateOf(false)
     // ---- v42: secrets found in a zip about to be pushed (the Deploy screen asks) ----
     var secretAsk by mutableStateOf<SecretAsk?>(null)
+    var typeAsk by mutableStateOf<TypeAsk?>(null)   // v49
     // ---- v42: server down / up alerts ----
     var serverAlerts by mutableStateOf(prefs.serverAlerts)
 
@@ -761,9 +764,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     }
     fun toast(s: String) = Toast.makeText(getApplication(), s, Toast.LENGTH_SHORT).show()
 
-    fun copy(text: String) {
+    fun copy(text: String, quiet: Boolean = false) {
         val cm = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("apphub", text)); toast("Copied")
+        cm.setPrimaryClip(ClipData.newPlainText("apphub", text)); if (!quiet) toast("Copied")
     }
 
     // ---- login ----
@@ -1057,6 +1060,24 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         logLoading = false
     }
 
+    // ---- v49: the whole build history, 100 at a time ----
+    val olderRuns = mutableStateMapOf<Long, List<GitHub.Run>>()
+    val olderMore = mutableStateMapOf<Long, Boolean>()
+    val olderLoading = mutableStateMapOf<Long, Boolean>()
+    private val olderPage = HashMap<Long, Int>()
+    fun loadOlder(p: Project) = viewModelScope.launch {
+        if (olderLoading[p.id] == true) return@launch
+        olderLoading[p.id] = true
+        val page = (olderPage[p.id] ?: 0) + 1
+        val (list, more) = gh.runsPage(p.repo, page)
+        if (list.isNotEmpty()) { olderPage[p.id] = page; olderRuns[p.id] = (olderRuns[p.id] ?: emptyList()) + list.filter { !it.cancelled } }
+        olderMore[p.id] = more
+        olderLoading[p.id] = false
+    }
+    /** Plain text of the loaded build history, newest first (for Copy history). */
+    fun historyText(p: Project, list: List<GitHub.Run>): String = "${p.name} builds (${list.size})\n" +
+        list.joinToString("\n") { r -> "#${r.number} ${when (r.ok) { true -> "passed"; false -> "failed"; else -> "running" }} ${r.time} ${r.msg}" }
+
     fun loadJobs(p: Project, runId: Long) = viewModelScope.launch { jobs[runId] = gh.jobs(p.repo, runId) }
 
     fun update(p: Project) = viewModelScope.launch {
@@ -1100,6 +1121,23 @@ class HubVM(app: Application) : AndroidViewModel(app) {
 
     fun secretCancel() { secretAsk = null }
 
+    // v49: answers of the file type dialog
+    fun typePushAnyway(ctx: Context) {
+        val a = typeAsk ?: return
+        typeAsk = null
+        deploy(ctx, a.p, a.pack, a.note, a.src, secretsChecked = true, typesChecked = true)
+    }
+    fun typeLeaveOut(ctx: Context) {
+        val a = typeAsk ?: return
+        typeAsk = null
+        val drop = TypeCheck.dropSet(a.issues, a.pack.entries)
+        val trimmed = a.pack.without(drop)
+        zipPack = trimmed
+        toast("Left out ${drop.size} file(s)")
+        deploy(ctx, a.p, trimmed, a.note, a.src, secretsChecked = true, typesChecked = true)
+    }
+    fun typeCancel() { typeAsk = null }
+
     fun pickZip(ctx: Context, uri: Uri) = viewModelScope.launch {
         val pack = withContext(Dispatchers.IO) { runCatching { Zipper.read(ctx, uri) }.getOrNull() }
         if (pack == null || pack.entries.isEmpty()) { toast("Could not read that zip"); return@launch }
@@ -1108,11 +1146,16 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         projects.value.firstOrNull { Commands.fileBase(it).equals(base, true) }?.let { selId = it.id }
     }
 
-    fun deploy(ctx: Context, p: Project, pack: Zipper.Pack, note: String, src: File? = null, secretsChecked: Boolean = false) = viewModelScope.launch {
+    fun deploy(ctx: Context, p: Project, pack: Zipper.Pack, note: String, src: File? = null, secretsChecked: Boolean = false, typesChecked: Boolean = false) = viewModelScope.launch {
         if (deploying) return@launch
         if (!p.repo.contains("/")) { toast("Log in with GitHub first (Accounts)"); return@launch }
         // v42: keys, tokens and .env files are asked about before anything leaves the phone
         if (pack.findings.isNotEmpty() && !secretsChecked) { secretAsk = SecretAsk(p, pack, note, src); return@launch }
+        // v49: file type check: does the zip fit the project type, and is there junk (apk, archives, node_modules)
+        if (!typesChecked) {
+            val issues = TypeCheck.scan(p.kind, pack.entries)
+            if (issues.isNotEmpty()) { typeAsk = TypeAsk(p, pack, note, src, issues); return@launch }
+        }
         deploying = true; deployLog.clear(); deployGen++
         try {
             val files = pack.entries.map { it.path to it.bytes }.toMutableList()
@@ -1219,10 +1262,13 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             val ok = all.all { gh.setSecret(repo, it.first, it.second) }
             log += if (ok) "✓ 4 secrets set on GitHub" else "✗ setting secrets failed (check repo exists / token scope)"
         }
-        val id = dao.save(Project(name = name, repo = repo, packageName = if (type == ProjectType.APP) pkg else "", version = version,
-            stack = type.defaultStack, type = type.name, liveUrl = liveAddr))
+        val proj = Project(name = name, repo = repo, packageName = if (type == ProjectType.APP) pkg else "", version = version,
+            stack = type.defaultStack, type = type.name, liveUrl = liveAddr)
+        val id = dao.save(proj)
         selId = id
-        log += "✓ Project added. Open Deploy and choose your zip to push and build."
+        copy(Prompts.adopt(proj), quiet = true)   // v49: adopt prompt for Claude, copied by itself
+        log += "✓ Project added. Adopt prompt copied: send it to Claude with your project."
+        log += "Then open Deploy and choose your zip to push and build."
     }
 
     // =====================================================================================

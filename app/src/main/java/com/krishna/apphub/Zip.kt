@@ -103,3 +103,46 @@ object SecretScan {
         return out
     }
 }
+
+/** v49: a zip whose files do not fit the project type (the Deploy screen asks). [issues] without a path cannot be left out. */
+class TypeAsk(val p: Project, val pack: Zipper.Pack, val note: String, val src: File?, val issues: List<Zipper.Finding>)
+
+/** v49: file type checker. Looks at what is about to be pushed: does it fit an App / Website / Server, and is there junk (build outputs, archives, node_modules). */
+object TypeCheck {
+    private val junkExt = listOf(".apk", ".aab", ".zip", ".exe", ".dmg", ".iso", ".7z", ".rar")
+    private val androidNames = listOf("androidmanifest.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
+    private val serverNames = listOf("package.json", "requirements.txt", "pyproject.toml", "dockerfile", "go.mod", "pom.xml", "cargo.toml", "gemfile", "composer.json", "vercel.json", "render.yaml")
+    private val appCode = listOf(".kt", ".java", ".gradle", ".kts")
+    private val webCode = listOf(".html", ".css", ".js", ".ts", ".jsx", ".tsx", ".vue", ".svelte")
+    private val serverCode = listOf(".js", ".ts", ".py", ".go", ".rs", ".java", ".rb", ".php", ".cs")
+
+    fun scan(kind: ProjectType, entries: List<Zipper.Entry>): List<Zipper.Finding> {
+        val out = ArrayList<Zipper.Finding>()
+        val paths = entries.map { it.path }
+        val names = paths.map { it.substringAfterLast('/').lowercase() }
+        fun anyExt(list: List<String>) = paths.any { p -> list.any { p.lowercase().endsWith(it) } }
+        val android = names.any { it in androidNames }
+        when (kind) {
+            ProjectType.APP -> if (!android && !anyExt(appCode)) out.add(Zipper.Finding("", "No Android files (build.gradle, AndroidManifest.xml, .kt). This project is an App.", false))
+            ProjectType.WEBSITE -> when {
+                android -> out.add(Zipper.Finding("", "Looks like an Android project, not a website.", false))
+                !anyExt(webCode) -> out.add(Zipper.Finding("", "No web files (index.html, .css, .js). This project is a Website.", false))
+            }
+            ProjectType.SERVER -> when {
+                android -> out.add(Zipper.Finding("", "Looks like an Android project, not a server.", false))
+                names.none { it in serverNames } && !anyExt(serverCode) -> out.add(Zipper.Finding("", "No server files (package.json, .py, Dockerfile). This project is a Server.", false))
+            }
+        }
+        entries.filter { e -> junkExt.any { e.path.lowercase().endsWith(it) } }.take(8)
+            .forEach { out.add(Zipper.Finding(it.path, "build output or archive", true)) }
+        val nm = paths.filter { it.startsWith("node_modules/") || it.contains("/node_modules/") }
+        if (nm.isNotEmpty()) out.add(Zipper.Finding(nm.first().substringBefore("node_modules/") + "node_modules/", "${nm.size} dependency files (install on build instead)", true))
+        return out
+    }
+
+    /** Paths of every file the "Leave out" choice drops (whole files, and whole folders such as node_modules/). */
+    fun dropSet(issues: List<Zipper.Finding>, entries: List<Zipper.Entry>): Set<String> {
+        val whole = issues.filter { it.wholeFile }
+        return entries.map { it.path }.filter { path -> whole.any { path == it.path || (it.path.endsWith("/") && path.startsWith(it.path)) } }.toSet()
+    }
+}
