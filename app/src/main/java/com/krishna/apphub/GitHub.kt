@@ -451,7 +451,7 @@ class GitHub(private val prefs: Prefs) {
         return if (c4 == 200) true to message else false to "Branch update failed ($c4)"
     }
 
-    data class PushResult(val ok: Boolean, val committed: Boolean = false, val added: Int = 0, val changed: Int = 0, val same: Int = 0, val sha: String = "", val branch: String = "")
+    data class PushResult(val ok: Boolean, val committed: Boolean = false, val added: Int = 0, val changed: Int = 0, val same: Int = 0, val sha: String = "", val branch: String = "", val removed: Int = 0)
 
     /** The file as text if it is valid UTF-8 (so it can travel inline), else null. */
     private fun textOf(b: ByteArray): String? {
@@ -499,7 +499,8 @@ class GitHub(private val prefs: Prefs) {
      * Pushes only what changed: new files are created, changed files are updated, identical files are skipped
      * (compared by git blob hash against the repo's current tree). Result is ONE commit, or none if nothing changed.
      */
-    suspend fun pushFiles(repo: String, files: List<Pair<String, ByteArray>>, message: String, dryRun: Boolean = false, log: (String) -> Unit): PushResult {
+    suspend fun pushFiles(repo: String, files: List<Pair<String, ByteArray>>, message: String, dryRun: Boolean = false,
+                          deleteMissing: Boolean = false, protect: Set<String> = emptySet(), log: (String) -> Unit): PushResult {
         val (c0, b0) = get("/repos/$repo")
         if (c0 != 200) { log("✗ Cannot open $repo ($c0). Check login and repo name."); return PushResult(false) }
         val branch = JSONObject(b0).s("default_branch").ifBlank { "main" }
@@ -540,11 +541,27 @@ class GitHub(private val prefs: Prefs) {
                 else -> same++
             }
         }
-        log("• $added new, $changed changed, $same unchanged (skipped)")
+        // v72: files that are in the repo but no longer in the zip are removed in the same commit
+        val gone = ArrayList<String>()
+        if (deleteMissing && known) {
+            val have = files.map { it.first }.toHashSet()
+            val zipHasWorkflow = have.any { it.startsWith(".github/workflows/") }
+            for (path in remote.keys.sorted()) {
+                if (path in have || path in protect || Zipper.skip(path, 0)) continue
+                if (path.startsWith(".github/workflows/") && !zipHasWorkflow) continue   // a zip without a workflow must not break the build
+                gone.add(path)
+            }
+            if (gone.size > maxOf(10, remote.size / 2)) {
+                log("• ${gone.size} repo files are not in this zip. That looks like a partial zip, so nothing was deleted.")
+                gone.clear()
+            }
+        }
+        log("• $added new, $changed changed, $same unchanged (skipped)" + if (gone.isNotEmpty()) ", ${gone.size} to delete" else "")
+        gone.forEach { marks.add("  - $it") }
         marks.take(30).forEach { log(it) }
         if (marks.size > 30) log("  … and ${marks.size - 30} more")
-        if (todo.isEmpty()) { log("✓ Nothing to push, the repo already has these files."); return PushResult(true, false, 0, 0, same) }
-        if (dryRun) { log("• Preview only, nothing was pushed."); return PushResult(true, false, added, changed, same) }
+        if (todo.isEmpty() && gone.isEmpty()) { log("✓ Nothing to push, the repo already has these files."); return PushResult(true, false, 0, 0, same) }
+        if (dryRun) { log("• Preview only, nothing was pushed."); return PushResult(true, false, added, changed, same, removed = gone.size) }
 
         // Text files go inline in the tree request (no extra call each). Only binary or big files need a blob upload.
         var inlineBytes = 0
@@ -584,6 +601,7 @@ class GitHub(private val prefs: Prefs) {
             if (path in inline) e.put("content", inline[path]) else e.put("sha", shas[path])
             entries.put(e)
         }
+        for (path in gone) entries.put(JSONObject().put("path", path).put("mode", "100644").put("type", "blob").put("sha", JSONObject.NULL))   // null sha = delete
         val (c3, b3) = send("POST", "/repos/$repo/git/trees", JSONObject().put("base_tree", baseTree).put("tree", entries))
         if (c3 != 201) { log("✗ tree failed ($c3)"); return PushResult(false) }
         val (c4, b4) = send("POST", "/repos/$repo/git/commits",
@@ -593,7 +611,7 @@ class GitHub(private val prefs: Prefs) {
         val c5 = send("PATCH", "/repos/$repo/git/refs/heads/$branch", JSONObject().put("sha", newSha)).first
         if (c5 != 200) { log("✗ branch update failed ($c5)"); return PushResult(false) }
         log("• commit ${newSha.take(7)} on $branch")
-        return PushResult(true, true, added, changed, same, newSha, branch)
+        return PushResult(true, true, added, changed, same, newSha, branch, gone.size)
     }
 
     // ---- install / update ----

@@ -79,6 +79,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var zipPack by mutableStateOf<Zipper.Pack?>(null)
     var deploying by mutableStateOf(false)
     var autoInstall by mutableStateOf(prefs.autoInstall)
+    var deleteRemoved by mutableStateOf(prefs.deleteRemoved)   // v72
         private set
     var autoDownload by mutableStateOf(prefs.autoDownload)
         private set
@@ -577,7 +578,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         deploying = true; deployLog.clear(); deployGen++
         try {
             deployLog += "Comparing ${pack.entries.size} files with ${p.repo}…"
-            gh.pushFiles(p.repo, pack.entries.map { it.path to it.bytes }, "preview", dryRun = true) { deployLog += it }
+            gh.pushFiles(p.repo, pack.entries.map { it.path to it.bytes }, "preview", dryRun = true, deleteMissing = deleteRemoved, protect = pack.ignored) { deployLog += it }
         } finally { deploying = false }
     }
 
@@ -590,6 +591,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     }
 
     fun updateAutoInstall(v: Boolean) { autoInstall = v; prefs.autoInstall = v }
+    fun updateDeleteRemoved(v: Boolean) { deleteRemoved = v; prefs.deleteRemoved = v }
 
     fun skipZip(p: Project, f: File) { prefs.setZipSeen(p.id, Downloads.key(f)); zipFound.remove(p.id) }
 
@@ -1319,7 +1321,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             if (prefs.notifiedRun(p.id) == 0L && before != 0L) prefs.setNotifiedRun(p.id, before)
             val pushStart = System.currentTimeMillis()
             deployLog += "Pushing ${files.size} files to ${p.repo}…"
-            val res = gh.pushFiles(p.repo, files, msg) { deployLog += it }
+            val res = gh.pushFiles(p.repo, files, msg, deleteMissing = deleteRemoved, protect = pack.ignored) { deployLog += it }
             if (res.ok) {
                 (src ?: zipFound[p.id]?.takeIf { it.name == pack.name } ?: zipLatest[p.id]?.takeIf { it.name == pack.name })
                     ?.let { prefs.setZipSeen(p.id, Downloads.key(it)); zipFound.remove(p.id) }
@@ -1327,7 +1329,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                     projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
                     prefs.setPushedVer(p.id, ver); pushedV[p.id] = ver
                     if (pack.whatsNew.isNotBlank()) { prefs.addWhatsNew(p.repo, ver, pack.whatsNew); whatsNewRev++; deployLog += "• What's new saved from whatsnew.txt (not pushed)" }
-                    deployLog += "✓ Pushed $ver (${res.added} new, ${res.changed} updated). Watching the build…"
+                    deployLog += "✓ Pushed $ver (${res.added} new, ${res.changed} updated" + (if (res.removed > 0) ", ${res.removed} deleted" else "") + "). Watching the build…"
                     if (isVercel(p)) watchVercel(p, pushStart, deployGen) else watch(p, before, deployGen)
                 }
             }

@@ -156,6 +156,11 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("auto_install", true)
         set(v) { sp.edit().putBoolean("auto_install", v).apply() }
 
+    /** v72: a push also deletes repo files that are no longer in the zip. */
+    var deleteRemoved: Boolean
+        get() = sp.getBoolean("delete_removed", true)
+        set(v) { sp.edit().putBoolean("delete_removed", v).apply() }
+
     /** When build runs / details were last pulled from GitHub (millis), so screens can skip the sync while the cache is fresh. */
     fun syncedAt(id: Long) = sp.getLong("sy_$id", 0L)
     fun setSyncedAt(id: Long, v: Long) { sp.edit().putLong("sy_$id", v).apply() }

@@ -18,6 +18,7 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v72" to listOf("A push also deletes repo files you removed from the zip (one commit, Undo last push brings them back). Preview marks them with \"-\". A zip that looks partial deletes nothing. Switch on the Deploy screen."),
         "v71" to listOf("White theme: Settings > Theme (Dark, White, System). One Update button per app: the Updated pill, the ready-to-install banner and the Update ready card are gone. The hint under Deploy to is removed for apps."),
         "v70" to listOf("App Hub's own zip now carries whatsnew.txt (git-ignored, never pushed). release.sh writes it into the GitHub release notes."),
         "v69" to listOf("Tap an older release on the Releases page to download it: Download and install, Download only, Share file, Delete. The list now shows up to 30 releases. Clear saved APKs also clears these."),

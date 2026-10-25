@@ -539,6 +539,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         OutlinedTextField(note, { note = it }, label = { Text("Note") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         if (pack != null && p != null) Mono("commit : ${pack.version.ifBlank { Commands.bump(p.version) }}: ${note.ifBlank { "update from App Hub" }}", color = Muted)
         Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.autoInstall, { vm.updateAutoInstall(it) }); Text("  Auto-install", fontSize = 12.sp) }
+        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.deleteRemoved, { vm.updateDeleteRemoved(it) }); Text("  Delete repo files that are not in the zip", fontSize = 12.sp) }
         if (pack != null && p != null) OutlinedButton({ vm.preview(p, pack) }, Modifier.fillMaxWidth(), enabled = !vm.deploying) {
             Icon(Icons.Default.Compare, null, Modifier.size(16.dp)); Text(" Preview", fontSize = 13.sp)
         }
