@@ -199,7 +199,7 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
         val j = line.indexOf(q, i, ignoreCase = true)
         if (j < 0) { append(line.substring(i)); break }
         append(line.substring(i, j))
-        withStyle(SpanStyle(background = Amber.copy(alpha = 0.4f), color = Color.White)) { append(line.substring(j, j + q.length)) }
+        withStyle(SpanStyle(background = Amber.copy(alpha = 0.4f))) { append(line.substring(j, j + q.length)) }
         i = j + q.length
     }
 }

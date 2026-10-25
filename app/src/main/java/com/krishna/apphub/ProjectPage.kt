@@ -214,16 +214,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                 }
             }
         }
-        if (isApp && upd && dl == null) item {
-            Panel(border = Amber) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Download, null, tint = Amber)
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) { Text("Update ready", fontWeight = FontWeight.Bold, color = Amber); Text("A newer build than the one on this phone.", fontSize = 12.sp, color = Muted) }
-                    Button({ nav.navigate("install/$id") }, contentPadding = PadBtn, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) { BtnText("Update") }
-                }
-            }
-        }
+        // v71: no separate "Update ready" card; the Update button above and the Releases row are enough
         if (err.isNotBlank()) item {
             Panel(border = Red) {
                 Text("Build failed", color = Red, fontWeight = FontWeight.Bold)
@@ -250,7 +241,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                 if (isApp) {
                     RowLine()
                     NavRow(Icons.Default.Download, Cyan, "Releases", rl.firstOrNull()?.let { "${it.tag} • ${ago(it.time)}" } ?: "None yet",
-                        if (upd) "Update" else null, Amber) { nav.navigate("releases/$id") }
+                        null) { nav.navigate("releases/$id") }
                 }
                 RowLine()
                 NavRow(Icons.Default.Folder, Amber, "Files", files?.let { "${it.size} files • ${fmtBytes(it.sumOf { f -> f.size })}" } ?: "Browse the repo") { nav.navigate("files/$id") }
@@ -359,7 +350,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                 border = if (i == 0 && upd) Amber else Line) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(r.tag, Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Cyan)
-                    if (i == 0) Pill(if (upd) "Update" else "Latest", if (upd) Amber else Green)
+                    if (i == 0) { if (!upd) Pill("Latest", Green) }
                     else if (saved) Pill("Saved", Green)
                     else if (r.sizeKb > 0) Icon(Icons.Default.Download, null, Modifier.size(18.dp), tint = Muted)
                     Spacer(Modifier.width(8.dp))

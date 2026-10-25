@@ -12,6 +12,12 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v71
+- White theme. `Theme.kt`: `Pal.light` (snapshot state) + the palette (`Bg Surf Line Green Cyan Red Amber Muted`) are now getters (`val Bg: Color get() = ...`) with a dark and a light value each, so every existing use follows the theme with no call-site change (do NOT cache them in top-level vals). `HubTheme(light)` sets `Pal.light` before composing content, picks `darkScheme` / `lightScheme`, and in a `SideEffect` flips the status / navigation bar icon colour and the window background. `MainActivity` computes `light` from `vm.themeMode` (0 dark, 1 white, 2 follow the phone via `isSystemInDarkTheme()`). `Prefs.themeMode`, `HubVM.themeMode/setTheme`, Settings > Theme panel (3 chips). Accent fills keep black text (`Color.Black`); the light accents are darker so they stay readable on white. Files.kt search highlight no longer forces white text.
+- One Update control: removed the dashboard "ready to install" banner and the amber Updated / Update pill on the card (the card's Update / Install button stays), the project home "Update ready" card and the "Update" badge on its Releases row (the hero Update button stays), and the "Update" pill on the newest release row (its button stays; "Latest" pill only when up to date).
+- Setup: removed the hint under the "GitHub Releases" chip for apps.
+- `whatsnew.txt` refreshed for v71. versionCode 71, versionName "71.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
 ## v70
 - v68 and v69 shipped without a `whatsnew.txt` (only the reader and the prompt rule existed). From v70 every zip carries `whatsnew.txt` at the top of the project folder (3 to 6 lines starting with "- ", what is new for the user in that version). It is listed in `.gitignore`, so `termux/release.sh` (`git add -A`) never commits it. `release.sh` now, after the CI run passed, reads the run number (`gh run view --json number`) and runs `gh release edit build-<number> --notes-file whatsnew.txt` when the file exists (silent if it does not work). Keep writing a fresh whatsnew.txt in every delivery.
 - versionCode 70, versionName "70.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.

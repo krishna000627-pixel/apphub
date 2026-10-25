@@ -119,6 +119,11 @@ class Prefs(ctx: Context) {
     fun addWhatsNew(repo: String, ver: String, text: String) = putWhatsNew(repo, whatsNew(repo).filter { it.ver != ver } + WN(ver, System.currentTimeMillis(), text.take(4000), false))
     fun markWhatsNewWritten(repo: String, ver: String) = putWhatsNew(repo, whatsNew(repo).map { if (it.ver == ver) WN(it.ver, it.time, it.text, true) else it })
 
+    /** v71: 0 = dark, 1 = white, 2 = follow the phone. */
+    var themeMode: Int
+        get() = sp.getInt("theme_mode", 0)
+        set(v) { sp.edit().putInt("theme_mode", v).apply() }
+
     fun pinned(id: Long) = sp.getBoolean("pin_$id", false)
     /** v63: no build / server alerts for this app. */
     fun muted(id: Long) = sp.getBoolean("mute_$id", false)

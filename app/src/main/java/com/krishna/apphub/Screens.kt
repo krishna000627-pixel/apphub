@@ -280,18 +280,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             Stat("Failing", ps.count { it.lastStatus == "failed" }, Red, Modifier.weight(1f))
             Stat("To push", ps.count { vm.pending(it) }, Amber, Modifier.weight(1f))
         }
-        // follow-up: a saved APK that was not installed (ignored or skipped installer)
-        ps.filter { vm.waitingInstall(it) }.forEach { w ->
-            Panel(Modifier.padding(top = 6.dp), border = Amber.copy(alpha = 0.6f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${w.name} ${vm.cachedTag(w.id)} is ready to install", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(if (vm.installSkipped(w)) "The installer was skipped. Tap Install to continue." else "Downloaded, not installed yet.", fontSize = 12.sp, color = Muted)
-                    }
-                    Button({ vm.installCached(ctx, w) }, contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) { BtnText("Install") }
-                }
-            }
-        }
+        // v71: the "ready to install" banner is gone; the card of that app already has the Install / Update button
         Spacer(Modifier.height(6.dp))
         // v38: Websites / Servers chips appear once such a project exists
         val chips = listOf("All", "Pinned", "To push", "Errors", "Updates") +
@@ -354,9 +343,6 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 Pill(p.kind.label, Muted)
                 vm.siteName(p)?.let { Pill("↗ $it", Cyan) }
             }
-            // v35: download / update pill goes last, after the status and installed pills
-            if (dl != null) Pill("Updating", Cyan)
-            else if (upd) Pill(if (vm.isInstalled(p) == false) "Install" else if (vm.waitingInstall(p)) "Updated" else "Update", Amber)
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -883,6 +869,12 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Settings")
+        Panel {   // v71
+            Text("Theme", fontWeight = FontWeight.Bold)
+            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Dark", "White", "System").forEachIndexed { i, l -> FilterChip(vm.themeMode == i, { vm.setTheme(i) }, { Text(l) }) }
+            }
+        }
         // v43: logins moved to their own page (Accounts)
         Panel {
             Text("Accounts", fontWeight = FontWeight.Bold)
@@ -1028,7 +1020,6 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
                 fontSize = 12.sp, color = Muted)
         } else if (type == ProjectType.APP) {
             FilterChip(true, {}, { Text("GitHub Releases") }, enabled = false, leadingIcon = { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) })
-            Text("Apps build on GitHub Actions and the signed APK is released on GitHub. Vercel, Render and Supabase are for websites and servers.", fontSize = 12.sp, color = Muted)
         } else {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 targets.forEach { (label, key, on) ->

@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.Manifest
 import android.os.Build
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
@@ -52,11 +53,10 @@ class MainActivity : ComponentActivity() {
             askNotif.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         setContent {
-            HubTheme {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    val vm: HubVM = viewModel()
-                    App(vm)
-                }
+            val vm: HubVM = viewModel()
+            val light = vm.themeMode == 1 || (vm.themeMode == 2 && !isSystemInDarkTheme())   // v71: 0 dark, 1 white, 2 follow the phone
+            HubTheme(light) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { App(vm) }
             }
         }
     }

@@ -285,6 +285,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     private fun vOf(m: String) = Regex("^v\\d+").find(m)?.value
 
     fun isPinned(id: Long) = pins[id] ?: prefs.pinned(id)
+    var themeMode by mutableIntStateOf(prefs.themeMode)   // v71
+    fun setTheme(m: Int) { themeMode = m; prefs.themeMode = m }
     fun togglePin(p: Project) { val v = !isPinned(p.id); pins[p.id] = v; prefs.setPinned(p.id, v) }
     // v63: mute the alerts of one app; re-run or cancel a build
     private val mutes = mutableStateMapOf<Long, Boolean>()
