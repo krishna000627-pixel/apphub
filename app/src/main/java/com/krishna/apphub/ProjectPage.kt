@@ -346,20 +346,27 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
 }
 
 @Composable private fun ReleasesBody(vm: HubVM, nav: NavHostController, p: Project) {
+    val ctx = LocalContext.current
     val id = p.id
     val rl = vm.releases[id] ?: emptyList()
     val upd = vm.hasUpdate(p)
+    var sel by remember { mutableStateOf<GitHub.Release?>(null) }
+    sel?.let { r -> OldReleaseDialog(vm, p, r) { sel = null } }
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         itemsIndexed(rl) { i, r ->
-            Panel(border = if (i == 0 && upd) Amber else Line) {
+            val saved = i > 0 && vm.hasOld(p, r.tag)
+            Panel(Modifier.clickable { if (i == 0) nav.navigate("install/$id") else if (r.sizeKb > 0) sel = r else vm.toast("No APK on this release") },
+                border = if (i == 0 && upd) Amber else Line) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(r.tag, Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Cyan)
                     if (i == 0) Pill(if (upd) "Update" else "Latest", if (upd) Amber else Green)
+                    else if (saved) Pill("Saved", Green)
+                    else if (r.sizeKb > 0) Icon(Icons.Default.Download, null, Modifier.size(18.dp), tint = Muted)
                     Spacer(Modifier.width(8.dp))
                     Text(ago(r.time), fontSize = 12.sp, color = Muted)
                 }
                 Mono(vm.notesFor(p, r.tag, r.notes).take(300))
-                if (r.sizeKb > 0) Mono("APK ${"%.1f".format(r.sizeKb / 1024.0)} MB", color = Muted)
+                if (r.sizeKb > 0) Mono("APK ${"%.1f".format(r.sizeKb / 1024.0)} MB" + if (i > 0) " • tap to download" else "", color = Muted)
                 if (i == 0) {
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton({ nav.navigate("install/$id") }, Modifier.fillMaxWidth(), contentPadding = PadBtn,
@@ -370,6 +377,46 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
         if (rl.isEmpty()) item { EmptyState(Icons.Default.Download, "No releases yet", "A release with the APK appears here once a build passes.") }
         item { Spacer(Modifier.height(16.dp)) }
     }
+}
+
+/** v69: an older release: download it, install it, share the file, or delete the saved copy. */
+@Composable private fun OldReleaseDialog(vm: HubVM, p: Project, r: GitHub.Release, onClose: () -> Unit) {
+    val ctx = LocalContext.current
+    val key = "${p.id}:${r.tag}"
+    val prog = vm.oldDl[key]
+    val err = vm.oldMsg[key]
+    val saved = vm.hasOld(p, r.tag)
+    val onPhone = vm.installedTag(p.id) == r.tag
+    AlertDialog(onDismissRequest = onClose,
+        title = { Text("${p.name} ${r.tag}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Mono("${ago(r.time)} • ${"%.1f".format(r.sizeKb / 1024.0)} MB" + if (onPhone) " • on this phone" else "", color = Muted)
+                Mono(vm.notesFor(p, r.tag, r.notes).take(400))
+                if (prog != null) {
+                    LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green)
+                    Mono("Downloading ${(prog * 100).toInt()}%", color = Cyan)
+                }
+                if (err != null && prog == null) Text(err, color = Red, fontSize = 12.sp)
+                if (saved && prog == null) Text("Saved on this phone.", color = Green, fontSize = 12.sp)
+                if (vm.isInstalled(p) == true && !onPhone) Text("Android will not install an older build over a newer one. Uninstall the app first (its data is lost), or just keep the file.", fontSize = 11.sp, color = Muted)
+                if (saved && prog == null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton({ vm.shareOld(ctx, p, r.tag) }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("Share file") }
+                    OutlinedButton({ vm.deleteOld(p, r.tag) }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("Delete") }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton({ if (saved) vm.installOld(ctx, p, r.tag) else vm.downloadOld(ctx, p, r.tag, true) }, enabled = prog == null) {
+                Text(if (prog != null) "Downloading…" else if (saved) "Install" else "Download and install", color = Green)
+            }
+        },
+        dismissButton = {
+            Row {
+                if (!saved && prog == null) TextButton({ vm.downloadOld(ctx, p, r.tag, false) }) { Text("Download only") }
+                TextButton(onClose) { Text("Close") }
+            }
+        })
 }
 
 /** v68: every what's new text App Hub read from a zip (whatsnew.txt), newest first. For apps it shows whether it is also on the GitHub release. */

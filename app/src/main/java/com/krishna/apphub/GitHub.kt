@@ -364,10 +364,10 @@ class GitHub(private val prefs: Prefs) {
     }
 
     suspend fun releases(repo: String): List<Release> {
-        val (c, b) = get("/repos/$repo/releases?per_page=20"); if (c != 200) return emptyList()
+        val (c, b) = get("/repos/$repo/releases?per_page=30"); if (c != 200) return emptyList()
         val a = JSONArray(b)
         return (0 until a.length()).map { a.getJSONObject(it) }.filter { !it.optBoolean("draft") }
-            .sortedByDescending { it.s("published_at").ifBlank { it.s("created_at") } }.take(8).map { o ->
+            .sortedByDescending { it.s("published_at").ifBlank { it.s("created_at") } }.take(30).map { o ->
                 Release(o.s("tag_name"), o.s("published_at").ifBlank { o.s("created_at") }.replace("T", " ").take(16), o.s("body"),
                     (o.optJSONArray("assets")?.optJSONObject(0)?.optLong("size") ?: 0L) / 1024)
             }
@@ -618,6 +618,20 @@ class GitHub(private val prefs: Prefs) {
             }
         }
         return best
+    }
+
+    /** v69: the APK of one release, by tag (used to download an older release). Null when the release has no APK. */
+    suspend fun releaseByTag(repo: String, tag: String): Rel? {
+        val (c, b) = get("/repos/$repo/releases/tags/$tag")
+        if (c != 200) return null
+        val j = runCatching { JSONObject(b) }.getOrNull() ?: return null
+        val assets = j.optJSONArray("assets") ?: return null
+        for (k in 0 until assets.length()) {
+            val x = assets.getJSONObject(k)
+            if (x.s("name").endsWith(".apk")) return Rel(j.s("tag_name"), j.s("body"), x.s("url"),
+                j.s("published_at").ifBlank { j.s("created_at") }.replace("T", " ").take(16), x.optLong("size") / 1024)
+        }
+        return null
     }
 
     /** applicationId of the app, read from app/build.gradle(.kts) in the repo. "" when not found. */

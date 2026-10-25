@@ -29,6 +29,14 @@ if ! gh run watch "$RUN_ID" --exit-status; then
   exit 1
 fi
 
+# v70: the release notes come from whatsnew.txt (it is git-ignored, so it is never pushed)
+if [ -f whatsnew.txt ]; then
+  NUM="$(gh run view "$RUN_ID" --json number -q .number 2>/dev/null || true)"
+  if [ -n "$NUM" ] && gh release edit "build-$NUM" --repo "$SLUG" --notes-file whatsnew.txt >/dev/null 2>&1; then
+    echo "==> Release notes written from whatsnew.txt"
+  fi
+fi
+
 OUT="$HOME/storage/downloads"
 [ -d "$OUT" ] || { echo "Tip: run termux-setup-storage once to save to Downloads."; OUT="$HOME"; }
 gh release download --repo "$SLUG" --pattern '*.apk' --dir "$OUT" --clobber

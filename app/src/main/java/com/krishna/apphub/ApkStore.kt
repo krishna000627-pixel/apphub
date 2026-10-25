@@ -30,7 +30,11 @@ object ApkStore {
     }
     fun clearPrev(ctx: Context, prefs: Prefs, id: Long) { prev(ctx, id).delete(); prefs.setPrevTag(id, "") }
     /** Space used by all saved APKs (latest, previous and partial downloads). */
-    fun usedBytes(ctx: Context): Long = dir(ctx).listFiles()?.sumOf { it.length() } ?: 0L
+    fun usedBytes(ctx: Context): Long = dir(ctx).walkTopDown().filter { it.isFile }.sumOf { it.length() }
+
+    // ---- v69: an older release saved on request (tap it on the Releases page). Separate from the latest / previous files above. ----
+    fun old(ctx: Context, id: Long, tag: String) = File(dir(ctx), "old/app_${id}_${tag.filter { it.isLetterOrDigit() }}.apk")
+    fun oldAll(ctx: Context, id: Long): List<File> = File(dir(ctx), "old").listFiles()?.filter { it.name.startsWith("app_${id}_") }.orEmpty()
 
     /** Partial download of one release. Named per release so a half file of an older build is never continued. */
     fun part(ctx: Context, id: Long, tag: String) = File(dir(ctx), "app_${id}_${tag.filter { it.isLetterOrDigit() }}.part")

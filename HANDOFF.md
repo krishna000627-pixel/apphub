@@ -12,6 +12,16 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v70
+- v68 and v69 shipped without a `whatsnew.txt` (only the reader and the prompt rule existed). From v70 every zip carries `whatsnew.txt` at the top of the project folder (3 to 6 lines starting with "- ", what is new for the user in that version). It is listed in `.gitignore`, so `termux/release.sh` (`git add -A`) never commits it. `release.sh` now, after the CI run passed, reads the run number (`gh run view --json number`) and runs `gh release edit build-<number> --notes-file whatsnew.txt` when the file exists (silent if it does not work). Keep writing a fresh whatsnew.txt in every delivery.
+- versionCode 70, versionName "70.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
+## v69
+- Older releases: on the Releases page (`ReleasesBody`, ProjectPage.kt) a row other than the newest opens `OldReleaseDialog` (download with progress, "Download and install", "Download only", then Install / Share file / Delete). The newest row still opens the Install page. `GitHub.releaseByTag(repo, tag)` finds the APK asset of one release; `HubVM.downloadOld/installOld/shareOld/deleteOld`, state `oldDl` ("id:tag" -> progress) and `oldMsg`. Files: `filesDir/apks/old/app_<id>_<tag>.apk` (`ApkStore.old/oldAll`, covered by the existing FileProvider path `apks/`), downloaded through a `.part` file (resumes) and checked with `getPackageArchiveInfo`. Separate from the latest / previous-build cache, so none of that logic changed. `ApkStore.usedBytes` now counts sub folders; `clearApks` also deletes the saved older releases.
+- `GitHub.releases` returns up to 30 (was 8; the Install page still shows 5). A release with no APK (`sizeKb == 0`) shows a toast instead of the dialog.
+- Android does not install an older versionCode over a newer one: the dialog says so when the app is installed with another tag.
+- versionCode 69, versionName "69.0". No new dependencies. Not compiled here: CI is the first build, paste errors back.
+
 ## v68
 - About = hub with sub pages (About.kt): hero + links, one Panel of `NavRow`s (What's new, Crash log, Help) and How it works. Routes `about`, `about/new`, `about/crash`, `about/help` (`AboutNewScreen`, `AboutCrashScreen`, `AboutHelpScreen`), no bottom bar (`onProject` prefixes now include "about" and "whatsnew/"). `NavRow` / `RowLine` are public now (ProjectPage.kt). The old tab row is gone from About.
 - Deleted project: `projectOrHome(vm, nav, id)` (ProjectPage.kt) is used by every project page (home, builds, releases, settings, aprompt, whatsnew, info, files, file, install, env). If the project is missing for 500 ms it navigates to `dash` (popUpTo dash), so you never see an empty screen.

@@ -30,6 +30,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import androidx.core.content.FileProvider
 
 class HubVM(app: Application) : AndroidViewModel(app) {
     val prefs = Prefs(app)
@@ -1497,9 +1498,48 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         dao.all().first().filter { !dlProgress.containsKey(it.id) }.forEach { p ->
             dropCache(p); ApkStore.clearPrev(app, prefs, p.id); ApkStore.clearParts(app, p.id)
+            ApkStore.oldAll(app, p.id).forEach { it.delete() }   // v69
         }
+        oldRev.intValue++
         withContext(Dispatchers.Main) { toast("Saved APKs cleared") }
     }
+
+    // ---- v69: download an older release (tap it on the Releases page) ----
+    /** "id:tag" -> progress 0..1 while an older release downloads. */
+    val oldDl = mutableStateMapOf<String, Float>()
+    val oldMsg = mutableStateMapOf<String, String>()
+    private val oldRev = mutableIntStateOf(0)
+    fun oldFile(p: Project, tag: String) = ApkStore.old(getApplication<Application>(), p.id, tag)
+    fun hasOld(p: Project, tag: String): Boolean = oldRev.intValue >= 0 && oldFile(p, tag).exists()
+
+    /** Saves that release's APK in the app's own storage (via a .part file), then optionally opens the installer. */
+    fun downloadOld(ctx: Context, p: Project, tag: String, thenInstall: Boolean) = viewModelScope.launch {
+        val key = "${p.id}:$tag"
+        if (oldDl.containsKey(key)) return@launch
+        oldMsg.remove(key); oldDl[key] = 0f
+        val f = oldFile(p, tag)
+        val ok = withContext(Dispatchers.IO) {
+            runCatching {
+                val rel = gh.releaseByTag(p.repo, tag) ?: error("No APK on this release")
+                f.parentFile?.mkdirs()
+                val part = File(f.path + ".part")
+                gh.download(rel.assetUrl, part) { d, t -> if (t > 0) oldDl[key] = d.toFloat() / t }
+                if (part.length() <= 0 || getApplication<Application>().packageManager.getPackageArchiveInfo(part.path, 0) == null) { part.delete(); error("The file is not a readable APK, try again") }
+                f.delete()
+                if (!part.renameTo(f)) { part.delete(); error("Could not save the file") }
+            }.onFailure { oldMsg[key] = it.message ?: "Download failed" }.isSuccess
+        }
+        oldDl.remove(key); oldRev.intValue++
+        if (ok) { toast("Saved ${p.name} $tag"); if (thenInstall) gh.install(ctx, f) }
+    }
+    fun installOld(ctx: Context, p: Project, tag: String) { if (hasOld(p, tag)) gh.install(ctx, oldFile(p, tag)) else toast("Download it first") }
+    fun shareOld(ctx: Context, p: Project, tag: String) {
+        if (!hasOld(p, tag)) return
+        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", oldFile(p, tag))
+        ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("application/vnd.android.package-archive")
+            .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+    fun deleteOld(p: Project, tag: String) { oldFile(p, tag).delete(); File(oldFile(p, tag).path + ".part").delete(); oldRev.intValue++ }
 
     // ---- feature 5: rollback ----
     fun hasPrev(p: Project) = ApkStore.hasPrev(getApplication<Application>(), prefs, p.id)

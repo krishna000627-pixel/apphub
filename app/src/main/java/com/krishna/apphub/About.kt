@@ -18,6 +18,8 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v70" to listOf("App Hub's own zip now carries whatsnew.txt (git-ignored, never pushed). release.sh writes it into the GitHub release notes."),
+        "v69" to listOf("Tap an older release on the Releases page to download it: Download and install, Download only, Share file, Delete. The list now shows up to 30 releases. Clear saved APKs also clears these."),
         "v68" to listOf("About is a hub with sub pages (What's new, Crash log, Help) like a project: back arrow, no tabs, no bottom bar. If a project is deleted its pages send you home. What's new logger: the zip may carry whatsnew.txt (the app prompt asks for it). App Hub reads it, keeps a log per project, writes it into the GitHub release of an app, and never pushes the file."),
         "v67" to listOf("New project prompt maker: type, name and ideas are on one page (no empty first page), 2 pages for an app, 3 for a website or server. A new project starts at v0 when Create GitHub repo is on (the first zip becomes v1). After Setup, App Hub asks for the zip and opens the picker."),
         "v66" to listOf("New project prompt maker redesigned: big type cards, idea cards (2 per row) with category chips, option cards for stack and host, a ready page with what to do next, pages slide, the action bar stays at the bottom. Copy turns into Copied."),
