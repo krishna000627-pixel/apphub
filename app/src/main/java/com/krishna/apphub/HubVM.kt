@@ -239,6 +239,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var ideaPitch by mutableStateOf("")
     var ideaNotes by mutableStateOf("")
     var draftName by mutableStateOf("")
+    var draftType by mutableStateOf(ProjectType.APP)   // v67: the type picked in the Prompt Maker, carried to Setup
+    var setupDoneId by mutableStateOf<Long?>(null)    // v67: set when Setup saved a project: Setup then asks for the zip
+    var askZip by mutableStateOf(false)               // v67: Deploy opens the zip picker once, right after that question
     var promptNote by mutableStateOf("")   // "what do you want changed" text of the Prompt Maker, kept across tabs
 
     // full build-log viewer
@@ -1057,6 +1060,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val vs = vercelState(p)   // v39: a Vercel website / server takes its status from the Vercel deployment
         val status = when { vs != null -> vs.first; last == null -> "none"; last.ok == null -> "running"; last.ok == true -> "passed"; else -> "failed" }
         notifyBuild(p, last)
+        launch { writeWhatsNew(p) }   // v68
         // the error text is read once per failed run, not on every poll
         val err = if (vs != null) vs.second else if (status == "failed" && last != null) {
             val old = errors[p.id].orEmpty()
@@ -1319,6 +1323,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                 if (res.committed) {
                     projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
                     prefs.setPushedVer(p.id, ver); pushedV[p.id] = ver
+                    if (pack.whatsNew.isNotBlank()) { prefs.addWhatsNew(p.repo, ver, pack.whatsNew); whatsNewRev++; deployLog += "• What's new saved from whatsnew.txt (not pushed)" }
                     deployLog += "✓ Pushed $ver (${res.added} new, ${res.changed} updated). Watching the build…"
                     if (isVercel(p)) watchVercel(p, pushStart, deployGen) else watch(p, before, deployGen)
                 }
@@ -1380,7 +1385,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     /** Setup wizard: repo -> keystore -> secrets -> save project, all in-app via OAuth. */
     fun setup(name: String, repoName: String, pkg: String, version: String, create: Boolean, keys: Boolean,
               type: ProjectType = ProjectType.APP, liveUrl: String = "", target: String = "", db: Boolean = false, isPrivate: Boolean = true) = viewModelScope.launch {
-        log.clear()
+        log.clear(); setupDoneId = null
         if (login.isBlank() && !repoName.contains("/")) { log += "✗ Log in with GitHub (Accounts) or enter owner/name"; return@launch }
         val repo = if (repoName.contains("/")) repoName else "$login/$repoName"
         if (create) {
@@ -1468,6 +1473,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         copy(Prompts.adopt(proj), quiet = true)   // v49: adopt prompt for Claude, copied by itself
         log += "✓ Project added. Adopt prompt copied: send it to Claude with your project."
         log += "Then open Deploy and choose your zip to push and build."
+        setupDoneId = id
     }
 
     // =====================================================================================
@@ -1510,10 +1516,34 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     // ---- feature 7: release notes fall back to the commit message of the push that started the build ----
     /** Notes of the release; when empty, the message of the build run with the same number (release tags are build-N); else the default line. */
     fun notesFor(p: Project, tag: String, body: String): String {
+        whatsNewFor(p, tag)?.let { return it }   // v68: the whatsnew.txt of that version wins
         if (body.isNotBlank()) return body.trim()
         val num = Commands.num(tag).toIntOrNull()
         val msg = runs[p.id]?.firstOrNull { it.number == num }?.msg?.trim().orEmpty()
         return msg.ifBlank { DEFAULT_NOTES }
+    }
+
+    // ---- v68: what's new log (whatsnew.txt from the zip; never pushed) ----
+    var whatsNewRev by mutableIntStateOf(0)
+    /** The log of a project, newest first. */
+    fun whatsNewLog(p: Project): List<WN> = if (whatsNewRev >= 0) prefs.whatsNew(p.repo).reversed() else emptyList()
+    /** The logged text of the version a release (tag build-N) was built from, found through the commit message "vNN: ..." of that run. */
+    fun whatsNewFor(p: Project, tag: String): String? {
+        val num = Commands.num(tag).toIntOrNull() ?: return null
+        val ver = ((runs[p.id] ?: emptyList()) + (olderRuns[p.id] ?: emptyList())).firstOrNull { it.number == num }?.msg?.substringBefore(':')?.trim().orEmpty()
+        if (ver.isBlank()) return null
+        return prefs.whatsNew(p.repo).lastOrNull { it.ver == ver }?.text?.takeIf { it.isNotBlank() }
+    }
+    /** Apps: writes logged texts into their GitHub release once the build passed and the release exists (retried for 3 days). */
+    private suspend fun writeWhatsNew(p: Project) {
+        if (p.kind != ProjectType.APP) return
+        val pending = prefs.whatsNew(p.repo).filter { !it.written && System.currentTimeMillis() - it.time < 3 * 86_400_000L }
+        if (pending.isEmpty()) return
+        val all = (runs[p.id] ?: emptyList()) + (olderRuns[p.id] ?: emptyList())
+        for (w in pending) {
+            val run = all.firstOrNull { it.ok == true && it.msg.trim().startsWith("${w.ver}:") } ?: continue
+            if (gh.setReleaseBody(p.repo, "build-${run.number}", w.text) == 1) { prefs.markWhatsNewWritten(p.repo, w.ver); whatsNewRev++ }
+        }
     }
 
     // ---- feature 2: backup ----

@@ -26,6 +26,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,7 +41,7 @@ import androidx.navigation.NavHostController
 
 /** A project's own prompt page: pick a task, write what you want, copy. The stack is the project's own (change it in its Settings). */
 @Composable fun AppPromptScreen(vm: HubVM, nav: NavHostController, id: Long) {
-    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
+    val p = projectOrHome(vm, nav, id) ?: return
     val tasks = Prompts.appTasks(p.kind)
     var task by rememberSaveable(id) { mutableStateOf(if (vm.task in tasks) vm.task else tasks.first()) }
     var note by rememberSaveable(id, task) { mutableStateOf("") }
@@ -59,7 +60,7 @@ import androidx.navigation.NavHostController
             if (task == "Fix error") Mono(if (err.isBlank()) "No build error on record." else "Build error included (${err.lines().count { it.isNotBlank() }} lines)", color = Muted)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 HubSwitch(deliver, { deliver = it; vm.prefs.promptDeliver = it })
-                Text("  Zip name and version rules", fontSize = 12.sp)
+                Text("  Zip name, version and whatsnew.txt", fontSize = 12.sp)
             }
         }
         BigButton("Copy prompt", Icons.Default.ContentCopy) {
@@ -75,21 +76,18 @@ private val CardShape = RoundedCornerShape(14.dp)
 @Composable private fun Tag(text: String) =
     Text(text, fontSize = 11.sp, color = Muted, modifier = Modifier.background(Line, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
 
-/** Page 1: a big tappable card per project type. */
-@Composable private fun KindCard(icon: ImageVector, title: String, sub: String, tags: List<String>, onClick: () -> Unit) =
-    Row(Modifier.fillMaxWidth().background(Surf, CardShape).border(1.dp, Line, CardShape).clip(CardShape).clickable(onClick = onClick).padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(52.dp).background(Line, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = Green, modifier = Modifier.size(28.dp))
+/** Top of page 1: App / Website / Server as one segmented control (no page of its own). */
+@Composable private fun TypeSegments(kind: ProjectType, onPick: (ProjectType) -> Unit) =
+    Row(Modifier.fillMaxWidth().background(Surf, CardShape).border(1.dp, Line, CardShape).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        listOf(ProjectType.APP to Icons.Default.Apps, ProjectType.WEBSITE to Icons.Default.Language, ProjectType.SERVER to Icons.Default.Dns).forEach { (t, ic) ->
+            val sel = kind == t
+            Row(Modifier.weight(1f).height(44.dp).background(if (sel) Line else Color.Transparent, RoundedCornerShape(10.dp)).clip(RoundedCornerShape(10.dp)).clickable { onPick(t) },
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Icon(ic, null, Modifier.size(18.dp), tint = if (sel) Green else Muted)
+                Spacer(Modifier.width(6.dp))
+                Text(t.label, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = if (sel) Green else Muted)
+            }
         }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Text(sub, fontSize = 12.sp, color = Muted)
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { tags.forEach { Tag(it) } }
-        }
-        Icon(Icons.Default.ChevronRight, null, tint = Muted)
     }
 
 /** Page 2: an idea card (two per row). The chosen one gets a green border. */
@@ -139,7 +137,7 @@ private fun hostNote(h: String) = when (h) {
     else -> ""
 }
 
-/** Prompt Maker: a NEW app, website or server, one page at a time. The action bar stays at the bottom, pages slide. */
+/** Prompt Maker: a NEW app, website or server. Page 1 = type + idea, page 2 = setup (website / server), last = ready. */
 @Composable fun NewProjectScreen(vm: HubVM, nav: NavHostController) {
     var step by rememberSaveable { mutableIntStateOf(0) }
     var kindName by rememberSaveable { mutableStateOf("APP") }
@@ -155,14 +153,15 @@ private fun hostNote(h: String) = when (h) {
     val hosts = Prompts.hostsFor(kind)
     val curStack = if (stack in stacks) stack else stacks.firstOrNull().orEmpty()
     val curHost = if (host in hosts) host else hosts.firstOrNull().orEmpty()
-    fun next() { step = if (step == 1 && app) 3 else step + 1 }
-    fun back() { step = if (step == 3 && app) 1 else step - 1 }
+    fun ideasOf(k: ProjectType) = when (k) { ProjectType.APP -> Ideas.list.values.flatten(); ProjectType.WEBSITE -> Ideas.web; ProjectType.SERVER -> Ideas.server }
+    fun next() { step = if (step == 0 && app) 2 else step + 1 }
+    fun back() { step = if (step == 2 && app) 0 else step - 1 }
     BackHandler(step > 0) { back() }
     LaunchedEffect(step) { copied = false }
-    val total = if (app) 3 else 4
-    val pos = when (step) { 0 -> 1; 1 -> 2; 2 -> 3; else -> total }
-    val title = listOf("What are you building?", "Your idea", "Setup", "Ready")[step]
-    val canNext = step != 1 || (name.isNotBlank() && pitch.isNotBlank())
+    val total = if (app) 2 else 3
+    val pos = if (step == 0) 1 else if (step == 1) 2 else total
+    val title = listOf("New project", "Setup", "Ready")[step]
+    val canNext = step != 0 || (name.isNotBlank() && pitch.isNotBlank())
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (step > 0) IconButton({ back() }, Modifier.size(40.dp)) { Icon(Icons.Default.ArrowBack, null) }
@@ -181,12 +180,18 @@ private fun hostNote(h: String) = when (h) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 when (s) {
                     0 -> {
-                        KindCard(Icons.Default.Apps, "App", "Android app with a signed APK", listOf("Kotlin", "Compose")) { kindName = "APP"; step = 1 }
-                        KindCard(Icons.Default.Language, "Website", "A site on GitHub Pages or Vercel", listOf("Responsive", "Free host")) { kindName = "WEBSITE"; step = 1 }
-                        KindCard(Icons.Default.Dns, "Server", "An API or a bot backend", listOf("Health check", "Env config")) { kindName = "SERVER"; step = 1 }
-                        Text("Already have it? Open it from the dashboard and use its Prompt.", fontSize = 12.sp, color = Muted)
-                    }
-                    1 -> {
+                        TypeSegments(kind) { t ->
+                            if (t != kind) {
+                                // a name and idea taken from the old type's list are dropped, your own text stays
+                                if (ideasOf(kind).any { it.first == name && it.second == pitch }) { name = ""; pitch = "" }
+                                kindName = t.name; stack = ""; host = ""
+                            }
+                        }
+                        Text(when (kind) {
+                            ProjectType.APP -> "Android app. A signed APK is built on GitHub."
+                            ProjectType.WEBSITE -> "A site on GitHub Pages or Vercel."
+                            ProjectType.SERVER -> "An API or a bot backend with a health check."
+                        }, fontSize = 12.sp, color = Muted)
                         Panel {
                             OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Name") })
                             Spacer(Modifier.height(8.dp))
@@ -196,7 +201,7 @@ private fun hostNote(h: String) = when (h) {
                         if (app) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Ideas.cats.forEach { c -> FilterChip(cat == c, { cat = c }, { Text(c) }) }
                         }
-                        val ideas = when (kind) { ProjectType.APP -> Ideas.list[cat].orEmpty(); ProjectType.WEBSITE -> Ideas.web; ProjectType.SERVER -> Ideas.server }
+                        val ideas = if (app) Ideas.list[cat].orEmpty() else ideasOf(kind)
                         ideas.chunked(2).forEach { pair ->
                             Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 pair.forEach { (n, d) -> IdeaCard(n, d, name == n && pitch == d, Modifier.weight(1f)) { name = n; pitch = d } }
@@ -208,7 +213,7 @@ private fun hostNote(h: String) = when (h) {
                             Text("Not sure? Copy a prompt for 8 ideas", color = Cyan, fontSize = 13.sp)
                         }
                     }
-                    2 -> {
+                    1 -> {
                         Text("Stack", color = Muted, fontSize = 12.sp)
                         stacks.forEach { OptionCard(it, stackNote(it), curStack == it) { stack = it } }
                         Spacer(Modifier.height(4.dp))
@@ -228,16 +233,16 @@ private fun hostNote(h: String) = when (h) {
                         Text("Next", color = Muted, fontSize = 12.sp)
                         NextStep(1, "Copy the prompt")
                         NextStep(2, "Send it to Claude and answer its questions")
-                        NextStep(3, "Come back with the zip and set up the project")
+                        NextStep(3, "Set up the project here, then give App Hub the zip")
                         TextButton({ step = 0; name = ""; pitch = ""; stack = ""; host = "" }) { Text("Start over", color = Muted) }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
             }
         }
-        if (step > 0) Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val green = ButtonDefaults.buttonColors(containerColor = Green, contentColor = androidx.compose.ui.graphics.Color.Black)
-            if (step == 3) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val green = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)
+            if (step == 2) {   // the ready page is always step 2 (an app skips step 1)
                 Button({
                     vm.copy(if (app) Prompts.buildPrompt(name.trim(), pitch.trim()) else Prompts.newProject(kind, name.trim(), pitch.trim(), curStack, curHost), quiet = true)
                     copied = true
@@ -245,9 +250,9 @@ private fun hostNote(h: String) = when (h) {
                     Icon(if (copied) Icons.Default.Check else Icons.Default.ContentCopy, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
                     BtnText(if (copied) "Copied" else "Copy prompt")
                 }
-                OutlinedButton({ nav.navigate("add") }, Modifier.weight(1f)) { BtnText("Set up") }
+                OutlinedButton({ vm.draftName = name.trim(); vm.draftType = kind; nav.navigate("add") }, Modifier.weight(1f)) { BtnText("Set up") }
             } else {
-                OutlinedButton({ back() }, Modifier.weight(1f)) { BtnText("Back") }
+                if (step > 0) OutlinedButton({ back() }, Modifier.weight(1f)) { BtnText("Back") }
                 Button({ next() }, Modifier.weight(2f), enabled = canNext, colors = green) { BtnText("Next") }
             }
         }

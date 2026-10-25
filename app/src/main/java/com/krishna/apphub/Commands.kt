@@ -7,6 +7,10 @@ object Commands {
 }
 
 object Prompts {
+    /** v68: asked in every delivery rule. App Hub reads this file from the zip for the release notes and never pushes it. */
+    fun whatsNewRule(v: String) = "Also put a file named whatsnew.txt at the top level of the project folder: 3 to 6 short lines, each starting with \"- \", in plain words, " +
+        "saying what is new for the user in $v. App Hub reads it for the release notes and never pushes it to GitHub."
+
     /** v51: previews go in a file inside the zip. Drawing them in the chat fills the context window. */
     const val PREVIEW = "Put every preview (logo, avatars, themes, screens) in a NEW file in the zip, for example preview.html, and never draw it in the chat. Do not add it to the app until I approve it."
 
@@ -59,7 +63,7 @@ object Prompts {
             "Before coding: ask me up to 3 short questions if anything is unclear, then show a short plan and wait for my OK.\n\n" +
             (if (site) "$PREVIEW\n\n" else "") +
             "Delivery: zip the whole project as ${base}_v1.zip with a top-level folder ${base}_v1/. Version v1. " +
-            "On every later change always bump the version, even for a string-only change. After the zip, list every file you created (path + one short note)."
+            "On every later change always bump the version, even for a string-only change. After the zip, list every file you created (path + one short note). ${whatsNewRule("v1")}"
     }
 
     /** v65: tasks of the per-app prompt page: the project tasks plus Adopt (before Other). */
@@ -74,7 +78,7 @@ object Prompts {
             "and publishes it as a release asset.\n\n" +
             PREVIEW + "\n\n" +
             "Delivery: zip the whole project as ${base}_v1.zip with a top-level folder ${base}_v1/. Version v1 (versionCode 1). " +
-            "On every later change always bump the version, even for a string-only change."
+            "On every later change always bump the version, even for a string-only change. ${whatsNewRule("v1")}"
     }
 
     /** v49: sent to Claude together with the project, so an existing project works with App Hub (workflow, version, secrets, delivery). */
@@ -101,10 +105,10 @@ object Prompts {
         if (p.kind != ProjectType.APP) return "\n\nDelivery rules: zip the whole project as ${base}_$next.zip with a top-level folder ${base}_$next/. " +
             "Always bump the version to $next (in package.json if there is one, and where it is shown: " +
             "${if (p.kind == ProjectType.WEBSITE) "the site footer" else "the /health response"}), even for a string-only change. " +
-            "After the zip, list every file you created or changed (path + one short note). $PREVIEW"
+            "After the zip, list every file you created or changed (path + one short note). ${whatsNewRule(next)} $PREVIEW"
         return "\n\nDelivery rules: zip the whole project as ${base}_$next.zip with a top-level folder ${base}_$next/. " +
             "Always bump the version to $next (versionCode and versionName), even for a string-only change. " +
-            "After the zip, list every file you created or changed (path + one short note). $PREVIEW"
+            "After the zip, list every file you created or changed (path + one short note). ${whatsNewRule(next)} $PREVIEW"
     }
 
     /** What the text box under step 4 asks for, per task. */

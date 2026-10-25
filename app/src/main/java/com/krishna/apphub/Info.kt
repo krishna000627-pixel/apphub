@@ -59,7 +59,7 @@ private class IR(val k: String, val v: String, val c: Color = Color.Unspecified,
 
 /** v34: everything about the app on one page (opened by tapping the overview box). v37: hero card, grouped cards, tap to copy. */
 @Composable fun InfoScreen(vm: HubVM, nav: NavHostController, id: Long) {
-    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
+    val p = projectOrHome(vm, nav, id) ?: return
     val ctx = LocalContext.current
     LaunchedEffect(id) { vm.checkInstalls(); vm.loadDetails(p) }
     val i = vm.infos[id]

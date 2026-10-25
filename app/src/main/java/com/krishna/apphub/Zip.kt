@@ -12,11 +12,12 @@ object Zipper {
     class Entry(val path: String, val bytes: ByteArray)
     /** v42: something that looks like a secret. [wholeFile] = the file itself is the secret (.env, key file), so it can be left out of the push. */
     class Finding(val path: String, val why: String, val wholeFile: Boolean)
-    class Pack(val name: String, val version: String, val entries: List<Entry>, val skipped: Int, val bytes: Long, val findings: List<Finding> = emptyList()) {
+    /** [whatsNew] = text of whatsnew.txt from the zip root (v68). It is read here and never part of [entries], so it is never pushed. */
+    class Pack(val name: String, val version: String, val entries: List<Entry>, val skipped: Int, val bytes: Long, val findings: List<Finding> = emptyList(), val whatsNew: String = "") {
         /** The same zip without these files (used by "Leave out & push"). */
         fun without(paths: Set<String>): Pack {
             val keep = entries.filter { it.path !in paths }
-            return Pack(name, version, keep, skipped + (entries.size - keep.size), keep.sumOf { it.bytes.size.toLong() }, findings.filter { it.path !in paths })
+            return Pack(name, version, keep, skipped + (entries.size - keep.size), keep.sumOf { it.bytes.size.toLong() }, findings.filter { it.path !in paths }, whatsNew)
         }
     }
 
@@ -51,12 +52,14 @@ object Zipper {
         val strip = tops.size == 1 && raw.all { it.first.contains('/') }
         var skipped = 0
         val out = ArrayList<Entry>()
+        var whats = ""
         for ((p0, bytes) in raw) {
             val path = if (strip) p0.substringAfter('/') else p0
+            if (path.equals("whatsnew.txt", true) || path.equals("whatsnew.md", true)) { whats = String(bytes, Charsets.UTF_8).trim().take(4000); continue }   // v68: read, never pushed
             if (skip(path, bytes.size)) { skipped++; continue }
             out.add(Entry(path, bytes))
         }
-        return Pack(name, versionOf(name), out, skipped, out.sumOf { it.bytes.size.toLong() }, SecretScan.scan(out))
+        return Pack(name, versionOf(name), out, skipped, out.sumOf { it.bytes.size.toLong() }, SecretScan.scan(out), whats)
     }
 }
 

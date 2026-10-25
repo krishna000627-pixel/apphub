@@ -183,7 +183,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     }
     // contentWindowInsets = 0 so the status bar inset is applied exactly once (statusBarsPadding below)
     // v63/v64: the project pages (project, builds, releases, settings, info, files, file, env, install) are sub pages with a back arrow, so the app bar is hidden there
-    val onProject = route != null && listOf("detail/", "builds/", "releases/", "psettings/", "aprompt/", "info/", "files/", "file/", "env/", "install/").any { route.startsWith(it) }
+    val onProject = route != null && listOf("about", "whatsnew/", "detail/", "builds/", "releases/", "psettings/", "aprompt/", "info/", "files/", "file/", "env/", "install/").any { route.startsWith(it) }
     Scaffold(containerColor = Bg, contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
         if (!onProject) NavigationBar(containerColor = Surf) {
             tabs.forEach { (r, l, i) ->
@@ -201,6 +201,10 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             composable("deploy") { DeployScreen(vm, nav) }
             composable("settings") { SettingsScreen(vm, nav) }
             composable("about") { AboutScreen(vm, nav) }
+            composable("about/new") { AboutNewScreen(nav) }   // v68: About is a hub with sub pages, like a project
+            composable("about/crash") { AboutCrashScreen(vm, nav) }
+            composable("about/help") { AboutHelpScreen(nav) }
+            composable("whatsnew/{id}", listOf(navArgument("id") { type = NavType.LongType })) { WhatsNewScreen(vm, nav, it.arguments!!.getLong("id")) }
             composable("file/{id}?path={path}", listOf(navArgument("id") { type = NavType.LongType }, navArgument("path") { type = NavType.StringType; defaultValue = "" })) {
                 FileViewerScreen(vm, nav, it.arguments!!.getLong("id"), it.arguments?.getString("path").orEmpty())
             }
@@ -504,6 +508,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     var note by remember { mutableStateOf("") }
     LaunchedEffect(p?.id) { vm.scanZips(ctx) }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.pickZip(ctx, uri) }
+    LaunchedEffect(vm.askZip) { if (vm.askZip) { vm.askZip = false; pick.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) } }
     val pack = vm.zipPack
     var target by remember { mutableStateOf<Project?>(null) }   // set when the zip name does not match the selected project
     var older by remember { mutableStateOf<Project?>(null) }    // v28: set when the zip is not newer than what is on GitHub
@@ -536,6 +541,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 Mono("version : ${pack.version.ifBlank { "-" }}")
                 Mono("files   : ${pack.entries.size}  (skipped ${pack.skipped})")
                 Mono("size    : ${"%.1f".format(pack.bytes / 1048576.0)} MB")
+                if (pack.whatsNew.isNotBlank()) Mono("whatsnew: found, kept in the log (not pushed)", color = Green)
                 if (p != null && !vm.nameMatches(p, pack.name)) Text("⚠ This zip name doesn't match ${p.name}", color = Amber, fontSize = 12.sp)
                 if (pack.findings.isNotEmpty()) Text("⚠ ${pack.findings.size} possible secret(s) in this zip. You are asked before the push.", color = Amber, fontSize = 12.sp)
             }
@@ -640,7 +646,7 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
 }
 
 @Composable fun InstallScreen(vm: HubVM, nav: NavHostController, id: Long) {
-    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
+    val p = projectOrHome(vm, nav, id) ?: return
     val ctx = LocalContext.current
     var checked by remember { mutableStateOf(false) }
     // live: the app-wide 3 s sync keeps the release current; this makes the first answer immediate
@@ -970,10 +976,10 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     // Nothing is filled in for you. Only an app name you carried over from the idea picker is kept.
     var name by remember { mutableStateOf(vm.draftName) }; var repo by remember { mutableStateOf("") }
     var pkg by remember { mutableStateOf("") }; var ver by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf(ProjectType.APP) }; var url by remember { mutableStateOf("") }   // v38: what kind of project (v39: may come from the Prompt Maker)
+    var type by remember { mutableStateOf(vm.draftType) }; var url by remember { mutableStateOf("") }   // v38: what kind of project (v39: may come from the Prompt Maker)
     var host by remember { mutableStateOf("") }; var db by remember { mutableStateOf(false) }   // v55: server: Host on (vercel | render) and Database (Supabase)
     var target by remember { mutableStateOf("") }   // v52: Deploy to: "", vercel, render or supabase (kept only while its account is connected)
-    LaunchedEffect(Unit) { vm.draftName = "" }
+    LaunchedEffect(Unit) { vm.draftName = ""; vm.draftType = ProjectType.APP }
     // v40: the three switches keep the position you left them in (saved on tap); Vercel stays off until you turn it on
     var create by remember { mutableStateOf(vm.prefs.setupCreate) }; var keys by remember { mutableStateOf(vm.prefs.setupKeys) }
     // v44: a switch only counts while its account is connected (the saved position is kept for when you log in)
@@ -981,6 +987,15 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
     val createUsable = create && githubUsable
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Setup project", nav)
+        // v67: after Setup, ask for the zip right away (Deploy opens the picker)
+        vm.setupDoneId?.let { sid ->
+            val sp = vm.projects.collectAsState().value.firstOrNull { it.id == sid }
+            AlertDialog(onDismissRequest = { vm.setupDoneId = null },
+                title = { Text("Project added") },
+                text = { Text("Now give App Hub your zip${sp?.let { " (${Commands.fileBase(it)}_${Commands.bump(it.version)}.zip)" } ?: ""}. It pushes it to GitHub and builds it.") },
+                confirmButton = { TextButton({ vm.selId = sid; vm.askZip = true; vm.setupDoneId = null; nav.navigate("deploy") { popUpTo("dash"); launchSingleTop = true } }) { Text("Choose zip", color = Green) } },
+                dismissButton = { TextButton({ vm.setupDoneId = null }) { Text("Later") } })
+        }
         // v52: "Deploy to" replaces "Import from" (existing repos are still added from Accounts > Open ...)
         val toAccounts = { nav.navigate("accounts") { launchSingleTop = true }; Unit }
         val targets = listOf(Triple("GitHub Pages", "pages", githubUsable),
@@ -1037,7 +1052,7 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         if (type == ProjectType.APP) OutlinedTextField(pkg, { pkg = it }, label = { Text("Package name (optional)") }, placeholder = { Text("found automatically if left empty") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         else OutlinedTextField(url, { url = it }, label = { Text(if (type == ProjectType.WEBSITE) "Live URL (optional)" else "Endpoint URL (optional)") },
             placeholder = { Text(if (type == ProjectType.WEBSITE) "found automatically for GitHub Pages" else "https://api.example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text("v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(ver, { ver = it }, label = { Text("Version (optional)") }, placeholder = { Text(if (createUsable) "v0 (nothing pushed yet)" else "v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         // v61: back to the old way: the new repo is always private. Change it later in the app's Settings > Repository.
         ConnRow(Icons.Default.Code, "Create GitHub repo (private)",
             if (githubUsable) "Logged in as ${vm.login}" else if (vm.login.isNotBlank()) "Session expired. Tap to log in again" else "Not logged in. Tap to log in",
@@ -1048,7 +1063,7 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         else Text(if (type == ProjectType.WEBSITE) "Your zip needs its own .github/workflows deploy. The status shows Deployed when that run passes."
             else "Your zip needs its own .github/workflows deploy. The status shows Running once the endpoint answers.", fontSize = 12.sp, color = Muted)
         BigButton("Create project", Icons.Default.PlayArrow) {
-            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { "v1" }, createUsable, keys && type == ProjectType.APP, type, url,
+            if (name.isNotBlank() && repo.isNotBlank()) vm.setup(name.trim(), repo.trim(), pkg.trim(), ver.trim().ifBlank { if (createUsable) "v0" else "v1" }, createUsable, keys && type == ProjectType.APP, type, url,
                 when (type) {
                     ProjectType.WEBSITE -> if (targets.none { it.second == target && it.third }) "" else target
                     ProjectType.SERVER -> if ((host == "vercel" && vm.vercelUser.isNotBlank()) || (host == "render" && vm.renderUser.isNotBlank())) host else ""
@@ -1156,7 +1171,7 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
 /** v42: environment variables of a Vercel project. Names are listed, values are write-only and never stored in App Hub. */
 @Composable fun EnvScreen(vm: HubVM, nav: NavHostController, id: Long) {
     val ps by vm.projects.collectAsState()
-    val p = ps.firstOrNull { it.id == id }
+    val p = projectOrHome(vm, nav, id)
     var key by remember { mutableStateOf("") }
     var value by remember { mutableStateOf("") }
     var del by remember { mutableStateOf<Vercel.Env?>(null) }

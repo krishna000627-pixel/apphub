@@ -373,6 +373,15 @@ class GitHub(private val prefs: Prefs) {
             }
     }
 
+    /** v68: puts text into the notes of the release with this tag. 1 = written, 0 = that release is not there yet, -1 = failed. */
+    suspend fun setReleaseBody(repo: String, tag: String, body: String): Int {
+        val (c, b) = get("/repos/$repo/releases/tags/$tag")
+        if (c == 404) return 0
+        if (c != 200) return -1
+        val id = runCatching { JSONObject(b).getLong("id") }.getOrNull() ?: return -1
+        return if (send("PATCH", "/repos/$repo/releases/$id", JSONObject().put("body", body)).first in 200..299) 1 else -1
+    }
+
     suspend fun jobs(repo: String, runId: Long): List<Job> {
         val (c, b) = get("/repos/$repo/actions/runs/$runId/jobs"); if (c != 200) return emptyList()
         val a = JSONObject(b).getJSONArray("jobs")

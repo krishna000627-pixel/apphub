@@ -206,7 +206,7 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
 
 /** v31: one repo file as its own page: path, size, line count, line numbers, in-file search, copy, open on GitHub, delete. Images are shown as images. */
 @Composable fun FileViewerScreen(vm: HubVM, nav: NavHostController, id: Long, path: String) {
-    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
+    val p = projectOrHome(vm, nav, id) ?: return
     val ctx = LocalContext.current
     val name = path.substringAfterLast('/')
     var blob by remember(path) { mutableStateOf<GitHub.Blob?>(null) }
@@ -291,7 +291,7 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
 
 /** Folder browser on its own page. Back goes up one folder (or clears the search) before leaving the page. */
 @Composable fun FilesScreen(vm: HubVM, nav: NavHostController, id: Long) {
-    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
+    val p = projectOrHome(vm, nav, id) ?: return
     var fq by remember(id) { mutableStateOf("") }
     var delPath by remember(id) { mutableStateOf<String?>(null) }
     var dir by remember(id) { mutableStateOf("") }

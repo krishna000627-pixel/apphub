@@ -35,6 +35,19 @@ import kotlinx.coroutines.delay
  * you move with the back arrow. Home = detail/{id}. Sub pages: builds/{id}, releases/{id} (apps), psettings/{id};
  * files/{id} and info/{id} already existed. A failed-build notification opens builds/{id} on top of the project home.
  */
+/** The project with this id, or null. If it is gone (deleted) the page sends you home instead of showing an empty screen. */
+@Composable fun projectOrHome(vm: HubVM, nav: NavHostController, id: Long): Project? {
+    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id }
+    val now by rememberUpdatedState(p)
+    LaunchedEffect(p == null) {
+        if (p == null) {
+            delay(500)   // the list may still be loading
+            if (now == null) nav.navigate("dash") { popUpTo("dash"); launchSingleTop = true }
+        }
+    }
+    return p
+}
+
 private val PadBtn = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
 
 /** 130 -> "2m 10s", 45 -> "45s", 3900 -> "1h 5m". */
@@ -54,7 +67,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
 }
 
 @Composable fun ProjectScreen(vm: HubVM, nav: NavHostController, id: Long) {
-    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
+    val p = projectOrHome(vm, nav, id) ?: return
     KeepFresh(vm, p)
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         ProjectHeader(vm, nav, p)
@@ -63,7 +76,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
 }
 
 @Composable fun BuildsScreen(vm: HubVM, nav: NavHostController, id: Long) {
-    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
+    val p = projectOrHome(vm, nav, id) ?: return
     KeepFresh(vm, p)
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header("${p.name} builds", nav)
@@ -72,7 +85,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
 }
 
 @Composable fun ReleasesScreen(vm: HubVM, nav: NavHostController, id: Long) {
-    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
+    val p = projectOrHome(vm, nav, id) ?: return
     KeepFresh(vm, p)
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header("${p.name} releases", nav)
@@ -81,7 +94,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
 }
 
 @Composable fun ProjectSettingsScreen(vm: HubVM, nav: NavHostController, id: Long) {
-    val p = vm.projects.collectAsState().value.firstOrNull { it.id == id } ?: return
+    val p = projectOrHome(vm, nav, id) ?: return
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header("${p.name} settings", nav)
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -122,7 +135,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
 }
 
 /** One row of the project's section list: icon, title, one line of state, optional badge, chevron. */
-@Composable private fun NavRow(icon: ImageVector, tint: Color, title: String, sub: String, badge: String? = null, badgeColor: Color = Red, onClick: () -> Unit) =
+@Composable fun NavRow(icon: ImageVector, tint: Color, title: String, sub: String, badge: String? = null, badgeColor: Color = Red, onClick: () -> Unit) =
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(36.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(18.dp), tint = tint) }
         Spacer(Modifier.width(12.dp))
@@ -134,7 +147,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
         Icon(Icons.Default.ChevronRight, null, tint = Muted)
     }
 
-@Composable private fun RowLine() = Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+@Composable fun RowLine() = Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
 
 /** One build as a single line (Overview). */
 @Composable private fun BuildLine(r: GitHub.Run, onClick: () -> Unit) {
@@ -230,6 +243,10 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                 NavRow(Icons.Default.Build, Cyan, "Builds",
                     if (last == null) "No builds yet" else "#${last.number} ${statusWord(last.ok)} • ${ago(last.time)}" + if (last.sec > 0) " • ${fmtDur(last.sec)}" else "",
                     if (last?.ok == false) "Failed" else null) { onBuilds() }
+                RowLine()
+                val wn = vm.whatsNewLog(p).firstOrNull()
+                NavRow(Icons.Default.NewReleases, Green, "What's new",
+                    wn?.let { "${it.ver}: ${it.text.lineSequence().firstOrNull().orEmpty().removePrefix("- ").take(50)}" } ?: "Logged from whatsnew.txt in your zip") { nav.navigate("whatsnew/$id") }
                 if (isApp) {
                     RowLine()
                     NavRow(Icons.Default.Download, Cyan, "Releases", rl.firstOrNull()?.let { "${it.tag} • ${ago(it.time)}" } ?: "None yet",
@@ -352,5 +369,37 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
         }
         if (rl.isEmpty()) item { EmptyState(Icons.Default.Download, "No releases yet", "A release with the APK appears here once a build passes.") }
         item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+/** v68: every what's new text App Hub read from a zip (whatsnew.txt), newest first. For apps it shows whether it is also on the GitHub release. */
+@Composable fun WhatsNewScreen(vm: HubVM, nav: NavHostController, id: Long) {
+    val p = projectOrHome(vm, nav, id) ?: return
+    KeepFresh(vm, p)
+    val log = vm.whatsNewLog(p)
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Header("${p.name} what's new", nav)
+        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(log, key = { it.ver }) { w ->
+                Panel {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(w.ver, Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Cyan)
+                        if (p.kind == ProjectType.APP) Pill(if (w.written) "On release" else "Waiting", if (w.written) Green else Amber)
+                        Spacer(Modifier.width(8.dp))
+                        Text(agoMs(w.time), fontSize = 12.sp, color = Muted)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Mono(w.text)
+                    TextButton({ vm.copy(w.text) }) { Text("Copy", fontSize = 12.sp, color = Cyan) }
+                }
+            }
+            if (log.isEmpty()) item {
+                EmptyState(Icons.Default.NewReleases, "Nothing logged yet",
+                    "Ask for the zip with the app prompt (zip and version rules on). It carries whatsnew.txt. App Hub reads it, keeps it here, and never pushes it.") {
+                    Button({ vm.selId = id; nav.navigate("aprompt/$id") }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { Text("Open prompt") }
+                }
+            }
+            item { Spacer(Modifier.height(16.dp)) }
+        }
     }
 }

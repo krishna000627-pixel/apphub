@@ -4,7 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,6 +18,8 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v68" to listOf("About is a hub with sub pages (What's new, Crash log, Help) like a project: back arrow, no tabs, no bottom bar. If a project is deleted its pages send you home. What's new logger: the zip may carry whatsnew.txt (the app prompt asks for it). App Hub reads it, keeps a log per project, writes it into the GitHub release of an app, and never pushes the file."),
+        "v67" to listOf("New project prompt maker: type, name and ideas are on one page (no empty first page), 2 pages for an app, 3 for a website or server. A new project starts at v0 when Create GitHub repo is on (the first zip becomes v1). After Setup, App Hub asks for the zip and opens the picker."),
         "v66" to listOf("New project prompt maker redesigned: big type cards, idea cards (2 per row) with category chips, option cards for stack and host, a ready page with what to do next, pages slide, the action bar stays at the bottom. Copy turns into Copied."),
         "v65" to listOf("Prompts split in two. Each project has its own Prompt page (task chips, one box, Copy; Adopt is a task there). The Prompt tab is now only for a NEW app, website or server, one page at a time: type, idea, setup, ready."),
         "v64" to listOf("Project page is now a hub with sub pages (Builds, Releases, Files, Info, Prompt, Settings), each with a back arrow. No bottom bar and no tabs on any project page. A failed-build notification opens the build list on top of the project."),
@@ -112,60 +114,88 @@ private val helpItems = listOf(
 )
 
 /** v28: About, What's new, Crash log and Help on their own pages, so Settings stays short. */
+/** v68: About is a hub with sub pages (What's new, Crash log, Help), like a project: back arrow, no tabs, no bottom bar. */
 @Composable fun AboutScreen(vm: HubVM, nav: NavHostController) {
     val ctx = LocalContext.current
     val info = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0) }.getOrNull() }
     val appVer = info?.versionName ?: "?"
     val appCode = info?.let { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(it) } ?: 0L
-    var crash by remember { mutableStateOf(CrashLog.read(ctx)) }
-    var page by remember { mutableIntStateOf(0) }
+    val crash = remember { CrashLog.read(ctx) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header("About", nav)
-        HubTabs(listOf("App", "New", "Crash", "Help"), page) { page = it }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            when (page) {
-                0 -> {
-                    Panel {
-                        Text("App Hub", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        Spacer(Modifier.height(4.dp))
-                        Mono("version : $appVer (build $appCode)")
-                        Mono("GitHub  : ${vm.login.ifBlank { "not logged in" }}")
-                    }
-                    Panel {
-                        Text("Links", fontWeight = FontWeight.Bold)
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TextButton({ openUrl(ctx, "https://github.com/krishna000627-pixel/apphub") }, contentPadding = PaddingValues(horizontal = 8.dp)) { BtnText("GitHub") }
-                            if (vm.login.isNotBlank()) TextButton({ openUrl(ctx, "https://github.com/${vm.login}") }, contentPadding = PaddingValues(horizontal = 8.dp)) { BtnText("Profile") }
-                        }
-                    }
-                    Panel {
-                        Text("How it works", fontWeight = FontWeight.Bold)
-                        Text("Deploy pushes your zip to GitHub as one commit. GitHub builds and signs the APK. Install downloads it. The version label follows every build automatically, however it was started.", fontSize = 12.sp, color = Muted)
-                    }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Panel {
+                Text("App Hub", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Spacer(Modifier.height(4.dp))
+                Mono("version : $appVer (build $appCode)")
+                Mono("GitHub  : ${vm.login.ifBlank { "not logged in" }}")
+                Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton({ openUrl(ctx, "https://github.com/krishna000627-pixel/apphub") }, contentPadding = PaddingValues(horizontal = 8.dp)) { BtnText("GitHub") }
+                    if (vm.login.isNotBlank()) TextButton({ openUrl(ctx, "https://github.com/${vm.login}") }, contentPadding = PaddingValues(horizontal = 8.dp)) { BtnText("Profile") }
                 }
-                1 -> ChangeLog.list.forEach { (v, lines) ->
-                    Panel {
-                        Text(v, fontWeight = FontWeight.Bold, color = Cyan)
-                        lines.forEach { Text("• $it", Modifier.padding(top = 3.dp), fontSize = 12.sp) }
-                    }
+            }
+            Panel {
+                NavRow(Icons.Default.NewReleases, Green, "What's new", ChangeLog.list.firstOrNull()?.let { "${it.first} and ${ChangeLog.list.size - 1} older" } ?: "Nothing yet") { nav.navigate("about/new") }
+                RowLine()
+                NavRow(Icons.Default.BugReport, Amber, "Crash log", if (crash.isBlank()) "No crash saved" else "A crash is saved", if (crash.isBlank()) null else "Saved") { nav.navigate("about/crash") }
+                RowLine()
+                NavRow(Icons.Default.Lightbulb, Cyan, "Help", "${helpItems.size} tips") { nav.navigate("about/help") }
+            }
+            Panel {
+                Text("How it works", fontWeight = FontWeight.Bold)
+                Text("Deploy pushes your zip to GitHub as one commit. GitHub builds and signs the APK. Install downloads it. The version label follows every build automatically, however it was started.", Modifier.padding(top = 2.dp), fontSize = 12.sp, color = Muted)
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable fun AboutNewScreen(nav: NavHostController) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Header("What's new", nav)
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ChangeLog.list.forEach { (v, lines) ->
+                Panel {
+                    Text(v, fontWeight = FontWeight.Bold, color = Cyan)
+                    lines.forEach { Text("• $it", Modifier.padding(top = 3.dp), fontSize = 12.sp) }
                 }
-                2 -> Panel {
-                    Text("Last crash", fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(4.dp))
-                    Mono(if (crash.isBlank()) "No crash saved." else crash, color = Muted)
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton({ vm.copy(crash) }, enabled = crash.isNotBlank()) {
-                            Icon(Icons.Default.BugReport, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Copy log")
-                        }
-                        TextButton({ CrashLog.clear(ctx); crash = "" }, enabled = crash.isNotBlank()) { BtnText("Clear") }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable fun AboutCrashScreen(vm: HubVM, nav: NavHostController) {
+    val ctx = LocalContext.current
+    var crash by remember { mutableStateOf(CrashLog.read(ctx)) }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Header("Crash log", nav)
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Panel {
+                Text("Last crash", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Mono(if (crash.isBlank()) "No crash saved." else crash, color = Muted)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton({ vm.copy(crash) }, enabled = crash.isNotBlank()) {
+                        Icon(Icons.Default.BugReport, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Copy log")
                     }
+                    TextButton({ CrashLog.clear(ctx); crash = "" }, enabled = crash.isNotBlank()) { BtnText("Clear") }
                 }
-                else -> helpItems.forEach { (t, d) ->
-                    Panel {
-                        Text(t, fontWeight = FontWeight.Bold)
-                        Text(d, Modifier.padding(top = 2.dp), fontSize = 12.sp, color = Muted)
-                    }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable fun AboutHelpScreen(nav: NavHostController) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Header("Help", nav)
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            helpItems.forEach { (t, d) ->
+                Panel {
+                    Text(t, fontWeight = FontWeight.Bold)
+                    Text(d, Modifier.padding(top = 2.dp), fontSize = 12.sp, color = Muted)
                 }
             }
             Spacer(Modifier.height(12.dp))

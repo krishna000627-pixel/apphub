@@ -7,6 +7,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.Flow
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** v68: one entry of a repo's what's new log. */
+class WN(val ver: String, val time: Long, val text: String, val written: Boolean)
 
 @Entity
 data class Project(
@@ -101,6 +106,18 @@ class Prefs(ctx: Context) {
     var seeded: Boolean
         get() = sp.getBoolean("seeded_v1", false)
         set(v) { sp.edit().putBoolean("seeded_v1", v).apply() }
+
+    // v68: the what's new log of a repo, newest last. [written] = it was also put into the GitHub release.
+    fun whatsNew(repo: String): List<WN> = runCatching {
+        val a = JSONArray(sp.getString("wn_$repo", "[]"))
+        (0 until a.length()).map { a.getJSONObject(it) }.map { WN(it.optString("v"), it.optLong("t"), it.optString("x"), it.optBoolean("w")) }
+    }.getOrDefault(emptyList())
+    private fun putWhatsNew(repo: String, l: List<WN>) {
+        val a = JSONArray(); l.takeLast(500).forEach { a.put(JSONObject().put("v", it.ver).put("t", it.time).put("x", it.text).put("w", it.written)) }
+        sp.edit().putString("wn_$repo", a.toString()).apply()
+    }
+    fun addWhatsNew(repo: String, ver: String, text: String) = putWhatsNew(repo, whatsNew(repo).filter { it.ver != ver } + WN(ver, System.currentTimeMillis(), text.take(4000), false))
+    fun markWhatsNewWritten(repo: String, ver: String) = putWhatsNew(repo, whatsNew(repo).map { if (it.ver == ver) WN(it.ver, it.time, it.text, true) else it })
 
     fun pinned(id: Long) = sp.getBoolean("pin_$id", false)
     /** v63: no build / server alerts for this app. */
