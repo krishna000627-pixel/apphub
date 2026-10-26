@@ -12,6 +12,9 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v76
+- Files.kt `NodeRow`: when `busy` (this file is the one in `HubVM.deletingFile`) the row gets a red tint, red icon box, red name and the line "Deleting…"; taps are off while busy. HubVM `buildingId` (Long, -1 = none) + `build(p)` keeps it set for the dispatch plus 700 ms; Screens.kt Build button swaps its 16 dp icon for a 16 dp `CircularProgressIndicator` (same slot, so it stays inside the button). versionCode 76, versionName "76.0". Not compiled here: CI is the first build.
+
 ## v75
 - Build fix only. `HubVM.kt`: `var accent` / `var textSize` already generate `setAccent(I)V` / `setTextSize(I)V`, so the functions of the same name clashed ("Platform declaration clash"). Renamed the functions to `changeAccent` / `changeTextSize` (callers in `SettingsPages.kt`). Rule: never name a function `setX` next to a `var x` in the same class. versionCode 75, versionName "75.0". No new dependencies. Not compiled here: CI is the first build.
 

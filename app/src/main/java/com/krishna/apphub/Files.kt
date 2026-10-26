@@ -91,16 +91,18 @@ private fun listDir(all: List<GitHub.RepoFile>, dir: String): List<Node> {
         color = if (last) Green else Cyan, fontWeight = if (last) FontWeight.Bold else FontWeight.Normal)
 
 @Composable private fun NodeRow(n: Node, showPath: Boolean, busy: Boolean, canDelete: Boolean, onOpen: () -> Unit, onDelete: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(38.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
-            Icon(if (n.isDir) Icons.Default.Folder else fileIcon(n.name), null, Modifier.size(20.dp), tint = if (n.isDir) Amber else Cyan)
+    // v76: while the file is being deleted the whole row turns red (tint, red icon, red name, "Deleting…")
+    Row(Modifier.fillMaxWidth().background(if (busy) Red.copy(alpha = 0.14f) else Color.Transparent, RoundedCornerShape(10.dp))
+        .clickable(enabled = !busy, onClick = onOpen).padding(vertical = 8.dp, horizontal = if (busy) 8.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(38.dp).background(if (busy) Red.copy(alpha = 0.22f) else Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+            Icon(if (n.isDir) Icons.Default.Folder else fileIcon(n.name), null, Modifier.size(20.dp), tint = if (busy) Red else if (n.isDir) Amber else Cyan)
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(n.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val sub = if (n.isDir) "${n.count} file${if (n.count == 1) "" else "s"}"
+            Text(n.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (busy) Red else Color.Unspecified)
+            val sub = if (busy) "Deleting…" else if (n.isDir) "${n.count} file${if (n.count == 1) "" else "s"}"
                 else fmtBytes(n.size) + if (showPath && n.path.contains('/')) " • ${n.path.substringBeforeLast('/')}" else ""
-            Text(sub, fontSize = 11.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(sub, fontSize = 11.sp, color = if (busy) Red else Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (n.isDir) Icon(Icons.Default.ChevronRight, null, tint = Muted)
         else if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Red, strokeWidth = 2.dp)

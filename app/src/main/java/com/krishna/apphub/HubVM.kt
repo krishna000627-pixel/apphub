@@ -1232,8 +1232,16 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     }
     fun delete(p: Project) = viewModelScope.launch { prefs.setVercelId(p.repo, ""); vercelLast.remove(p.id); vercelVer.remove(p.id); health.remove(p.id); dropCache(p); ApkStore.clearPrev(getApplication<Application>(), prefs, p.id); ApkStore.clearParts(getApplication<Application>(), p.id); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
 
+    /** v76: id of the project whose Build tap is in flight (the Build button shows a spinner), -1 = none. */
+    var buildingId by mutableLongStateOf(-1L)
+
     fun build(p: Project) = viewModelScope.launch {
-        toast(if (gh.dispatch(p.repo)) "Build triggered on GitHub" else "Trigger failed — push the workflow first")
+        if (buildingId != -1L) return@launch
+        buildingId = p.id
+        try {
+            toast(if (gh.dispatch(p.repo)) "Build triggered on GitHub" else "Trigger failed — push the workflow first")
+            delay(700)   // long enough to see the spinner
+        } finally { buildingId = -1L }
     }
 
     /** Sets the 4 signing secrets on GitHub again from the keystore stored in the app. */

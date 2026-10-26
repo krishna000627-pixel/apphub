@@ -345,7 +345,12 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton({ vm.build(p) }, Modifier.weight(1f), contentPadding = BtnPad) { Icon(Icons.Default.Build, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Build") }
+            OutlinedButton({ vm.build(p) }, Modifier.weight(1f), contentPadding = BtnPad) {
+                // v76: the spinner takes the icon's 16 dp slot, so it sits fully inside the button box
+                if (vm.buildingId == p.id) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Default.Build, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp)); BtnText("Build")
+            }
             Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
                 Icon(Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Deploy")
             }
