@@ -68,11 +68,10 @@ import java.io.File
             Text("GitHub Pages on the free plan needs a public repo. Vercel works with either.", fontSize = 11.sp, color = Muted)
             if (vm.repoMsg.isNotBlank()) Text(vm.repoMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
         }
-        if (askPublic) AlertDialog(onDismissRequest = { askPublic = false },
-            title = { Text("Make ${p.repo} public?") },
-            text = { Text("Anyone can see the code and its history, including anything secret that was ever pushed. You can make it private again later.") },
-            confirmButton = { TextButton({ askPublic = false; vm.changeVisibility(p, false) }) { Text("Make public") } },
-            dismissButton = { TextButton({ askPublic = false }) { Text("Cancel") } })
+        if (askPublic) HubDialog("Make ${p.repo} public?", { askPublic = false }, listOf(
+            dPrimary("Make public", Amber) { askPublic = false; vm.changeVisibility(p, false) }, dCancel { askPublic = false }), icon = Icons.Default.Lock, tone = Amber) {
+            DialogText("Anyone can see the code and its history, including anything secret that was ever pushed. You can make it private again later.")
+        }
     }
     if (p.kind == ProjectType.SERVER) {
         LaunchedEffect(p.id) {

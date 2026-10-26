@@ -147,28 +147,18 @@ fun LazyListScope.filesBrowser(
     val risky = path.startsWith(".github/workflows/")
     val name = path.substringAfterLast('/')
     val folder = path.substringBeforeLast('/', "")
-    AlertDialog(onDismissRequest = onCancel, containerColor = Surf, shape = RoundedCornerShape(24.dp),
-        icon = { Box(Modifier.size(48.dp).background(Red.copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.DeleteOutline, null, tint = Red) } },
-        title = { Text("Delete file?", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(Modifier.fillMaxWidth()) {
-                Column(Modifier.fillMaxWidth().background(Bg, RoundedCornerShape(12.dp)).padding(12.dp)) {
-                    Text(name, fontWeight = FontWeight.Bold, color = Cyan, fontSize = 15.sp)
-                    if (folder.isNotEmpty()) Mono(folder, color = Muted)
-                }
-                Spacer(Modifier.height(10.dp))
-                Text("One new commit removes it from ${p.repo} and a new build starts. Undo last push (app Settings) brings it back.", fontSize = 13.sp, color = Muted)
-                if (risky) {
-                    Spacer(Modifier.height(10.dp))
-                    Row(Modifier.fillMaxWidth().background(Amber.copy(alpha = 0.12f), RoundedCornerShape(12.dp)).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Warning, null, Modifier.size(18.dp), tint = Amber); Spacer(Modifier.width(8.dp))
-                        Text("Build workflow. Without it GitHub cannot build the app.", fontSize = 12.sp, color = Amber)
-                    }
-                }
-            }
-        },
-        confirmButton = { Button(onConfirm, colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) { Text("Delete") } },
-        dismissButton = { TextButton(onCancel) { Text("Cancel", color = Green) } })
+    HubDialog("Delete file?", onCancel, listOf(dPrimary("Delete", Red, onClick = onConfirm), dCancel(onClick = onCancel)),
+        icon = Icons.Default.DeleteOutline, tone = Red) {
+        DialogCard {
+            Text(name, fontWeight = FontWeight.Bold, color = Cyan, fontSize = 15.sp)
+            if (folder.isNotEmpty()) Mono(folder, color = Muted)
+        }
+        DialogNote("One new commit removes it from ${p.repo} and a new build starts. Undo last push (app Settings) brings it back.")
+        if (risky) Row(Modifier.fillMaxWidth().background(Amber.copy(alpha = 0.12f), RoundedCornerShape(10.dp)).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Warning, null, Modifier.size(18.dp), tint = Amber); Spacer(Modifier.width(8.dp))
+            Text("Build workflow. Without it GitHub cannot build the app.", fontSize = 12.sp, color = Amber)
+        }
+    }
 }
 
 // ---------- the file page ----------

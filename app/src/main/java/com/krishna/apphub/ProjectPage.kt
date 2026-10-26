@@ -378,36 +378,26 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
     val err = vm.oldMsg[key]
     val saved = vm.hasOld(p, r.tag)
     val onPhone = vm.installedTag(p.id) == r.tag
-    AlertDialog(onDismissRequest = onClose,
-        title = { Text("${p.name} ${r.tag}") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Mono("${ago(r.time)} • ${"%.1f".format(r.sizeKb / 1024.0)} MB" + if (onPhone) " • on this phone" else "", color = Muted)
-                Mono(vm.notesFor(p, r.tag, r.notes).take(400))
-                if (prog != null) {
-                    LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green)
-                    Mono("Downloading ${(prog * 100).toInt()}%", color = Cyan)
-                }
-                if (err != null && prog == null) Text(err, color = Red, fontSize = 12.sp)
-                if (saved && prog == null) Text("Saved on this phone.", color = Green, fontSize = 12.sp)
-                if (vm.isInstalled(p) == true && !onPhone) Text("Android will not install an older build over a newer one. Uninstall the app first (its data is lost), or just keep the file.", fontSize = 11.sp, color = Muted)
-                if (saved && prog == null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton({ vm.shareOld(ctx, p, r.tag) }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("Share file") }
-                    OutlinedButton({ vm.deleteOld(p, r.tag) }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("Delete") }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton({ if (saved) vm.installOld(ctx, p, r.tag) else vm.downloadOld(ctx, p, r.tag, true) }, enabled = prog == null) {
-                Text(if (prog != null) "Downloading…" else if (saved) "Install" else "Download and install", color = Green)
-            }
-        },
-        dismissButton = {
-            Row {
-                if (!saved && prog == null) TextButton({ vm.downloadOld(ctx, p, r.tag, false) }) { Text("Download only") }
-                TextButton(onClose) { Text("Close") }
-            }
+    HubDialog("${p.name} ${r.tag}", onClose, buildList {
+        add(dPrimary(if (prog != null) "Downloading…" else if (saved) "Install" else "Download and install", enabled = prog == null) {
+            if (saved) vm.installOld(ctx, p, r.tag) else vm.downloadOld(ctx, p, r.tag, true)
         })
+        if (!saved && prog == null) add(dSecondary("Download only", Cyan) { vm.downloadOld(ctx, p, r.tag, false) })
+        add(dCancel("Close", onClose))
+    }, icon = Icons.Default.History, tone = Cyan, sub = "${ago(r.time)} • ${"%.1f".format(r.sizeKb / 1024.0)} MB" + if (onPhone) " • on this phone" else "") {
+        Mono(vm.notesFor(p, r.tag, r.notes).take(400))
+        if (prog != null) {
+            LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green)
+            Mono("Downloading ${(prog * 100).toInt()}%", color = Cyan)
+        }
+        if (err != null && prog == null) Text(err, color = Red, fontSize = 12.sp)
+        if (saved && prog == null) Text("Saved on this phone.", color = Green, fontSize = 12.sp)
+        if (vm.isInstalled(p) == true && !onPhone) DialogNote("Android will not install an older build over a newer one. Uninstall the app first (its data is lost), or just keep the file.")
+        if (saved && prog == null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton({ vm.shareOld(ctx, p, r.tag) }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("Share file") }
+            OutlinedButton({ vm.deleteOld(p, r.tag) }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("Delete") }
+        }
+    }
 }
 
 /** v68: every what's new text App Hub read from a zip (whatsnew.txt), newest first. For apps it shows whether it is also on the GitHub release. */

@@ -222,19 +222,15 @@ private fun vercelLook(st: String): Pair<String, Color>? = when (st) {
     fun slug(n: String) = n.lowercase().replace(Regex("[^a-z0-9]+"), "")
     fun match(pr: SupabaseApi.Proj) = vm.ghRepos.firstOrNull { slug(it.name) == slug(pr.name) }?.full.orEmpty()
     ask?.let { (pr, t) ->
-        AlertDialog(onDismissRequest = { ask = null },
-            title = { Text("Which repo?") },
-            text = {
-                Column {
-                    Text("No GitHub repo is named like ${pr.name}.", fontSize = 12.sp, color = Muted)
-                    OutlinedTextField(askRepo, { askRepo = it }, label = { Text("owner/name") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-                }
-            },
-            confirmButton = { TextButton({
+        HubDialog("Which repo?", { ask = null }, listOf(
+            dPrimary("Add") {
                 val r = repoOf(askRepo)
                 if (r.isBlank()) vm.toast("Use owner/name") else { vm.importProject(pr.name, r, t, "https://${pr.id}.supabase.co"); ask = null }
-            }) { Text("Add", color = Green) } },
-            dismissButton = { TextButton({ ask = null }) { Text("Cancel") } })
+            },
+            dCancel { ask = null }), icon = Icons.Default.Storage) {
+            DialogNote("No GitHub repo is named like ${pr.name}.")
+            OutlinedTextField(askRepo, { askRepo = it }, label = { Text("owner/name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        }
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SearchHeader("Supabase", nav, vm.supabaseLoading, q, { q = it }, searching, { searching = it }) { vm.loadSupabase() }

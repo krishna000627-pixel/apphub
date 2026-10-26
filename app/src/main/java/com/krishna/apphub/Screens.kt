@@ -168,18 +168,15 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     if (waiting != null && waitProj != null) {
         val f = waiting.value
         val key = vm.zipKey(waiting.key, f)
-        AlertDialog(onDismissRequest = { vm.zipDismissed.add(key) },
-            title = { Text("Push ${waitProj.name}?") },
-            text = {
-                Column {
-                    Text(f.name, fontWeight = FontWeight.Bold, color = Cyan)
-                    Mono("${Zipper.versionOf(f.name).ifBlank { "-" }} • ${"%.1f".format(f.length() / 1048576.0)} MB • ${agoMs(f.lastModified())}", color = Muted)
-                    Spacer(Modifier.height(8.dp))
-                    Text("Newest zip in Downloads for this app. Only new and changed files are uploaded.", fontSize = 13.sp)
-                }
-            },
-            confirmButton = { TextButton({ vm.zipDismissed.add(key); vm.deployFile(ctx, waitProj, f); goDeploy(vm, nav, waitProj) }) { Text("Push now", color = Green) } },
-            dismissButton = { TextButton({ vm.skipZip(waitProj, f) }) { Text("Skip this zip") } })
+        HubDialog("Push ${waitProj.name}?", { vm.zipDismissed.add(key) }, listOf(
+            dPrimary("Push now") { vm.zipDismissed.add(key); vm.deployFile(ctx, waitProj, f); goDeploy(vm, nav, waitProj) },
+            dSecondary("Skip this zip") { vm.skipZip(waitProj, f) }), icon = Icons.Default.CloudUpload) {
+            DialogCard {
+                Text(f.name, fontWeight = FontWeight.Bold, color = Cyan)
+                Mono("${Zipper.versionOf(f.name).ifBlank { "-" }} • ${"%.1f".format(f.length() / 1048576.0)} MB • ${agoMs(f.lastModified())}", color = Muted)
+            }
+            DialogNote("Newest zip in Downloads for this app. Only new and changed files are uploaded.")
+        }
     }
     // contentWindowInsets = 0 so the status bar inset is applied exactly once (statusBarsPadding below)
     // v63/v64: the project pages (project, builds, releases, settings, info, files, file, env, install) are sub pages with a back arrow, so the app bar is hidden there
@@ -187,7 +184,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     Scaffold(containerColor = Bg, contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
         if (!onProject) NavigationBar(containerColor = Surf) {
             tabs.forEach { (r, l, i) ->
-                NavigationBarItem(selected = route == r, onClick = { nav.navigate(r) { popUpTo("dash"); launchSingleTop = true } },
+                NavigationBarItem(selected = route == r || (r == "settings" && route?.startsWith("settings/") == true), onClick = { nav.navigate(r) { popUpTo("dash"); launchSingleTop = true } },
                     icon = { Icon(i, null) }, label = { Text(l, fontSize = 10.sp) },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = Green, selectedTextColor = Green, indicatorColor = Line))
             }
@@ -200,6 +197,8 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             composable("log") { LogScreen(vm, nav) }
             composable("deploy") { DeployScreen(vm, nav) }
             composable("settings") { SettingsScreen(vm, nav) }
+            composable("settings/push") { PushTypeScreen(vm, nav) }   // v74
+            composable("settings/theme") { ThemeScreen(vm, nav) }
             composable("about") { AboutScreen(vm, nav) }
             composable("about/new") { AboutNewScreen(nav) }   // v68: About is a hub with sub pages, like a project
             composable("about/crash") { AboutCrashScreen(vm, nav) }
@@ -412,15 +411,14 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     var confirm by remember { mutableStateOf(false) }
     var confirmUndo by remember { mutableStateOf(false) }
     val dirty = name != p.name || repo != p.repo || pkg != p.packageName || stack != p.stack || ver != p.version || type != p.kind || (type != ProjectType.APP && cleanUrl(url) != p.liveUrl)
-    if (confirm) AlertDialog(onDismissRequest = { confirm = false },
-        confirmButton = { TextButton({ vm.delete(p); nav.popBackStack() }) { Text("Remove", color = Red) } },
-        dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },
-        title = { Text("Remove ${p.name}?") }, text = { Text("This only removes it from App Hub. Your repo and files stay untouched.") })
-    if (confirmUndo) AlertDialog(onDismissRequest = { confirmUndo = false },
-        confirmButton = { TextButton({ confirmUndo = false; vm.undoLastPush(p) }) { Text("Undo push", color = Amber) } },
-        dismissButton = { TextButton({ confirmUndo = false }) { Text("Cancel") } },
-        title = { Text("Undo the last push?") },
-        text = { Text("Adds a new commit that puts the previous code back and starts a build. History is kept. Android will not install an older versionCode over a newer one, so bump the version on your next push.") })
+    if (confirm) HubDialog("Remove ${p.name}?", { confirm = false }, listOf(
+        dPrimary("Remove", Red) { vm.delete(p); nav.popBackStack() }, dCancel { confirm = false }), icon = Icons.Default.Delete, tone = Red) {
+        DialogText("This only removes it from App Hub. Your repo and files stay untouched.")
+    }
+    if (confirmUndo) HubDialog("Undo the last push?", { confirmUndo = false }, listOf(
+        dPrimary("Undo push", Amber) { confirmUndo = false; vm.undoLastPush(p) }, dCancel { confirmUndo = false }), icon = Icons.Default.Restore, tone = Amber) {
+        DialogText("Adds a new commit that puts the previous code back and starts a build. History is kept. Android will not install an older versionCode over a newer one, so bump the version on your next push.")
+    }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Panel {
             SectionTitle(Icons.Default.Info, "${type.label} details")
@@ -707,11 +705,10 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
         if (vm.hasPrev(p)) OutlinedButton({ confirmPrev = true }, Modifier.fillMaxWidth()) {
             Icon(Icons.Default.Restore, null, Modifier.size(16.dp)); Text(" Previous build (${vm.prevTag(p)})")
         }
-        if (confirmPrev) AlertDialog(onDismissRequest = { confirmPrev = false },
-            title = { Text("Install the previous build?") },
-            text = { Text("This reinstalls ${vm.prevTag(p)}. Android will not install an older versionCode over a newer one, so if the newer build is already on your phone the install is refused. Then uninstall ${p.name} first (its data is lost).") },
-            confirmButton = { TextButton({ confirmPrev = false; vm.installPrevious(ctx, p) }) { Text("Install previous", color = Amber) } },
-            dismissButton = { TextButton({ confirmPrev = false }) { Text("Cancel") } })
+        if (confirmPrev) HubDialog("Install the previous build?", { confirmPrev = false }, listOf(
+            dPrimary("Install previous", Amber) { confirmPrev = false; vm.installPrevious(ctx, p) }, dCancel { confirmPrev = false }), icon = Icons.Default.Restore, tone = Amber) {
+            DialogText("This reinstalls ${vm.prevTag(p)}. Android will not install an older versionCode over a newer one, so if the newer build is already on your phone the install is refused. Then uninstall ${p.name} first (its data is lost).")
+        }
         val rl = vm.releases[id].orEmpty()
         if (rl.isNotEmpty()) Panel {
             Text("Recent builds", fontWeight = FontWeight.Bold)
@@ -840,48 +837,35 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
     // v27 feature 3: notification permission, asked when the switch is turned on
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
-    if (confirmClear) AlertDialog(onDismissRequest = { confirmClear = false },
-        title = { Text("Clear saved APKs?") },
-        text = { Text("Deletes the saved latest and previous builds of every app (${fmtBytes(storage)}). You can download them again, but the Previous build option is gone.") },
-        confirmButton = { TextButton({ confirmClear = false; vm.clearApks() }) { Text("Clear", color = Red) } },
-        dismissButton = { TextButton({ confirmClear = false }) { Text("Cancel") } })
-    if (warnExport) AlertDialog(onDismissRequest = { warnExport = false },
-        title = { Text("Export backup") },
-        text = { Text("The file holds your app list and the signing keystores with their passwords. Anyone who has it can sign apps as you. Keep it private and never share it.") },
-        confirmButton = { TextButton({
+    if (confirmClear) HubDialog("Clear saved APKs?", { confirmClear = false }, listOf(
+        dPrimary("Clear", Red) { confirmClear = false; vm.clearApks() }, dCancel { confirmClear = false }), icon = Icons.Default.DeleteSweep, tone = Red) {
+        DialogText("Deletes the saved latest and previous builds of every app (${fmtBytes(storage)}). You can download them again, but the Previous build option is gone.")
+    }
+    if (warnExport) HubDialog("Export backup", { warnExport = false }, listOf(
+        dPrimary("Export", Amber) {
             warnExport = false
             exportFile.launch("apphub-backup-${java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())}.json")
-        }) { Text("Export", color = Amber) } },
-        dismissButton = { TextButton({ warnExport = false }) { Text("Cancel") } })
+        }, dCancel { warnExport = false }), icon = Icons.Default.Lock, tone = Amber) {
+        DialogText("The file holds your app list and the signing keystores with their passwords. Anyone who has it can sign apps as you. Keep it private and never share it.")
+    }
     vm.pendingBackup?.let { d ->
         val (clash, keyClash) = vm.backupClashes(d)
-        AlertDialog(onDismissRequest = { vm.pendingBackup = null },
-            title = { Text("Import backup?") },
-            text = {
-                Text("This backup has ${d.apps.size} app(s) and ${d.keys.size} keystore(s).\n\n" +
-                    (if (clash > 0) "$clash app(s) already exist here and will be overwritten (name, package, version, stack).\n" else "") +
-                    (if (keyClash > 0) "$keyClash stored keystore(s) will be replaced.\n" else "") +
-                    (if (clash == 0 && keyClash == 0) "Nothing here is overwritten, the apps are added." else "\nThis cannot be undone."))
-            },
-            confirmButton = { TextButton({ vm.applyBackup(d) }) { Text("Import", color = if (clash > 0 || keyClash > 0) Red else Green) } },
-            dismissButton = { TextButton({ vm.pendingBackup = null }) { Text("Cancel") } })
+        val risky = clash > 0 || keyClash > 0
+        HubDialog("Import backup?", { vm.pendingBackup = null }, listOf(
+            dPrimary("Import", if (risky) Red else Green) { vm.applyBackup(d) }, dCancel { vm.pendingBackup = null }),
+            icon = Icons.Default.FolderOpen, tone = if (risky) Red else Green, sub = "${d.apps.size} app(s) and ${d.keys.size} keystore(s)") {
+            if (clash > 0) DialogText("$clash app(s) already exist here and will be overwritten (name, package, version, stack).")
+            if (keyClash > 0) DialogText("$keyClash stored keystore(s) will be replaced.")
+            if (!risky) DialogText("Nothing here is overwritten, the apps are added.") else DialogNote("This cannot be undone.", Red)
+        }
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Settings")
-        Panel {   // v73
-            Text("Push type", fontWeight = FontWeight.Bold)
-            var pm by remember { mutableIntStateOf(vm.prefs.pushMode) }
-            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("API", "Git pack").forEachIndexed { i, l -> FilterChip(pm == i, { pm = i; vm.prefs.pushMode = i }, { Text(l) }) }
-            }
-            Text(if (pm == 1) "Like git push: one request, the raw files. Checked after, falls back to API if anything is off." else "One request per big file.", Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Muted)
-        }
-        Panel {   // v71
-            Text("Theme", fontWeight = FontWeight.Bold)
-            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Dark", "White", "System").forEachIndexed { i, l -> FilterChip(vm.themeMode == i, { vm.setTheme(i) }, { Text(l) }) }
-            }
+        Panel {   // v74: Push type and Theme are sub pages now
+            NavRow(Icons.Default.CloudUpload, Cyan, "Push type", if (vm.prefs.pushMode == 1) "Git pack" else "API") { nav.navigate("settings/push") { launchSingleTop = true } }
+            RowLine()
+            NavRow(Icons.Default.Palette, Cyan, "Theme", listOf("Dark", "White", "System").getOrElse(vm.themeMode) { "Dark" }) { nav.navigate("settings/theme") { launchSingleTop = true } }
         }
         // v43: logins moved to their own page (Accounts)
         Panel {
@@ -990,11 +974,11 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         // v67: after Setup, ask for the zip right away (Deploy opens the picker)
         vm.setupDoneId?.let { sid ->
             val sp = vm.projects.collectAsState().value.firstOrNull { it.id == sid }
-            AlertDialog(onDismissRequest = { vm.setupDoneId = null },
-                title = { Text("Project added") },
-                text = { Text("Now give App Hub your zip${sp?.let { " (${Commands.fileBase(it)}_${Commands.bump(it.version)}.zip)" } ?: ""}. It pushes it to GitHub and builds it.") },
-                confirmButton = { TextButton({ vm.selId = sid; vm.askZip = true; vm.setupDoneId = null; nav.navigate("deploy") { popUpTo("dash"); launchSingleTop = true } }) { Text("Choose zip", color = Green) } },
-                dismissButton = { TextButton({ vm.setupDoneId = null }) { Text("Later") } })
+            HubDialog("Project added", { vm.setupDoneId = null }, listOf(
+                dPrimary("Choose zip") { vm.selId = sid; vm.askZip = true; vm.setupDoneId = null; nav.navigate("deploy") { popUpTo("dash"); launchSingleTop = true } },
+                dCancel("Later") { vm.setupDoneId = null }), icon = Icons.Default.Check) {
+                DialogText("Now give App Hub your zip${sp?.let { " (${Commands.fileBase(it)}_${Commands.bump(it.version)}.zip)" } ?: ""}. It pushes it to GitHub and builds it.")
+            }
         }
         // v52: "Deploy to" replaces "Import from" (existing repos are still added from Accounts > Open ...)
         val toAccounts = { nav.navigate("accounts") { launchSingleTop = true }; Unit }
@@ -1090,44 +1074,18 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
 // ---------- v27: "Zip name does not match" dialog ----------
 /** Warning icon, the zip name, a side-by-side "named after / selected" comparison and three full-width buttons (no more wrapping labels). */
 @Composable fun ZipMismatchDialog(zip: String, named: Project?, selected: Project, onNamed: () -> Unit, onSelected: () -> Unit, onCancel: () -> Unit) {
-    val shape = RoundedCornerShape(20.dp)
-    Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).background(Surf, shape).border(1.dp, Amber.copy(alpha = 0.6f), shape).padding(18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(38.dp).background(Amber.copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Warning, null, tint = Amber, modifier = Modifier.size(20.dp))
-                }
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text("Wrong app?", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text("The zip name does not match the selected app.", fontSize = 12.sp, color = Muted)
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-            Mono(zip, Modifier.fillMaxWidth().background(Bg, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 8.dp), Cyan)
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                MismatchCard("Zip is named after", named?.name ?: "no app", named?.repo ?: "no matching app or repo", if (named != null) Green else Muted, Modifier.weight(1f))
-                Icon(Icons.Default.SwapHoriz, null, tint = Muted, modifier = Modifier.padding(horizontal = 6.dp).size(18.dp))
-                MismatchCard("Selected now", selected.name, selected.repo, Amber, Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(16.dp))
-            if (named != null) {
-                Button(onNamed, Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
-                    Icon(Icons.Default.CloudUpload, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                    Text("Push to ${named.name}", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onSelected, Modifier.fillMaxWidth().height(46.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.7f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Amber)) {
-                    Text("Push to ${selected.name}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            } else {
-                Button(onSelected, Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) {
-                    Text("Push to ${selected.name}", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            TextButton(onCancel, Modifier.fillMaxWidth()) { Text("Cancel", color = Muted) }
+    HubDialog("Wrong app?", onCancel, buildList {
+        if (named != null) {
+            add(dPrimary("Push to ${named.name}", onClick = onNamed))
+            add(dSecondary("Push to ${selected.name}", Amber, onSelected))
+        } else add(dPrimary("Push to ${selected.name}", Amber, onClick = onSelected))
+        add(dCancel(onClick = onCancel))
+    }, icon = Icons.Default.Warning, tone = Amber, sub = "The zip name does not match the selected app.") {
+        Mono(zip, Modifier.fillMaxWidth().background(Bg, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 8.dp), Cyan)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            MismatchCard("Zip is named after", named?.name ?: "no app", named?.repo ?: "no matching app or repo", if (named != null) Green else Muted, Modifier.weight(1f))
+            Icon(Icons.Default.SwapHoriz, null, tint = Muted, modifier = Modifier.padding(horizontal = 6.dp).size(18.dp))
+            MismatchCard("Selected now", selected.name, selected.repo, Amber, Modifier.weight(1f))
         }
     }
 }
@@ -1136,35 +1094,29 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
 /** v42: asked before a push when the zip holds something that looks like a secret. Back or tapping outside cancels. */
 @Composable fun SecretDialog(a: SecretAsk, onAnyway: () -> Unit, onLeave: () -> Unit, onCancel: () -> Unit) {
     val whole = a.pack.findings.any { it.wholeFile }
-    AlertDialog(onDismissRequest = onCancel,
-        title = { Text("Possible secrets in this zip") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Once pushed, a secret stays in the repo history, even if the repo is private.", fontSize = 12.sp, color = Muted)
-                a.pack.findings.take(6).forEach { Mono("${it.path}\n  ${it.why}", color = Amber) }
-                if (a.pack.findings.size > 6) Text("+ ${a.pack.findings.size - 6} more", fontSize = 12.sp, color = Muted)
-                if (whole) Text("Leave out & push skips the whole-file secrets. Secrets inside code files stay, remove them in the code.", fontSize = 11.sp, color = Muted)
-            }
-        },
-        confirmButton = { TextButton(if (whole) onLeave else onAnyway) { Text(if (whole) "Leave out & push" else "Push anyway") } },
-        dismissButton = { Row { TextButton(onCancel) { Text("Cancel") }; if (whole) TextButton(onAnyway) { Text("Push anyway") } } })
+    HubDialog("Possible secrets in this zip", onCancel, buildList {
+        if (whole) { add(dPrimary("Leave out & push", onClick = onLeave)); add(dSecondary("Push anyway", Red, onAnyway)) }
+        else add(dPrimary("Push anyway", Amber, onClick = onAnyway))
+        add(dCancel(onClick = onCancel))
+    }, icon = Icons.Default.Lock, tone = Amber, sub = "Once pushed, a secret stays in the repo history, even if the repo is private.") {
+        a.pack.findings.take(6).forEach { DialogItem(it.path, it.why) }
+        if (a.pack.findings.size > 6) DialogNote("+ ${a.pack.findings.size - 6} more")
+        if (whole) DialogNote("Leave out & push skips the whole-file secrets. Secrets inside code files stay, remove them in the code.")
+    }
 }
 
 /** v49: file type check: the zip does not fit the project type, or has files that should not be pushed. */
 @Composable fun TypeDialog(a: TypeAsk, onAnyway: () -> Unit, onLeave: () -> Unit, onCancel: () -> Unit) {
     val drop = TypeCheck.dropSet(a.issues, a.pack.entries).size
-    AlertDialog(onDismissRequest = onCancel,
-        title = { Text("Check these files") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("${a.p.name} is a ${a.p.kind.label}.", fontSize = 12.sp, color = Muted)
-                a.issues.take(6).forEach { Mono(if (it.path.isBlank()) it.why else "${it.path}\n  ${it.why}", color = Amber) }
-                if (a.issues.size > 6) Text("+ ${a.issues.size - 6} more", fontSize = 12.sp, color = Muted)
-                if (drop > 0) Text("Leave out & push skips $drop file(s).", fontSize = 11.sp, color = Muted)
-            }
-        },
-        confirmButton = { TextButton(if (drop > 0) onLeave else onAnyway) { Text(if (drop > 0) "Leave out & push" else "Push anyway") } },
-        dismissButton = { Row { TextButton(onCancel) { Text("Cancel") }; if (drop > 0) TextButton(onAnyway) { Text("Push anyway") } } })
+    HubDialog("Check these files", onCancel, buildList {
+        if (drop > 0) { add(dPrimary("Leave out & push", onClick = onLeave)); add(dSecondary("Push anyway", Red, onAnyway)) }
+        else add(dPrimary("Push anyway", Amber, onClick = onAnyway))
+        add(dCancel(onClick = onCancel))
+    }, icon = Icons.Default.Warning, tone = Amber, sub = "${a.p.name} is a ${a.p.kind.label}.") {
+        a.issues.take(6).forEach { if (it.path.isBlank()) DialogItem(it.why) else DialogItem(it.path, it.why) }
+        if (a.issues.size > 6) DialogNote("+ ${a.issues.size - 6} more")
+        if (drop > 0) DialogNote("Leave out & push skips $drop file(s).")
+    }
 }
 
 /** v42: environment variables of a Vercel project. Names are listed, values are write-only and never stored in App Hub. */
@@ -1206,47 +1158,23 @@ fun fmtBytes(b: Long): String = if (b < 1_048_576L) "${b / 1024} KB" else "%.1f 
         Spacer(Modifier.height(12.dp))
     }
     del?.let { e ->
-        AlertDialog(onDismissRequest = { del = null },
-            title = { Text("Delete ${e.key}?") },
-            text = { Text("It is removed from Vercel for production, preview and development. Running deployments keep what they have until the next deployment.") },
-            confirmButton = { TextButton({ del = null; vm.deleteEnv(p, e) }) { Text("Delete", color = Red) } },
-            dismissButton = { TextButton({ del = null }) { Text("Cancel") } })
+        HubDialog("Delete ${e.key}?", { del = null }, listOf(
+            dPrimary("Delete", Red) { del = null; vm.deleteEnv(p, e) }, dCancel { del = null }), icon = Icons.Default.Delete, tone = Red) {
+            DialogText("It is removed from Vercel for production, preview and development. Running deployments keep what they have until the next deployment.")
+        }
     }
 }
 
 @Composable fun OldVersionDialog(zip: String, zipVer: String, pushedVer: String, p: Project, onPush: () -> Unit, onCancel: () -> Unit) {
-    val shape = RoundedCornerShape(20.dp)
     val same = zipVer.filter { it.isDigit() } == pushedVer.filter { it.isDigit() }
-    Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).background(Surf, shape).border(1.dp, Amber.copy(alpha = 0.6f), shape).padding(18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(38.dp).background(Amber.copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.History, null, tint = Amber, modifier = Modifier.size(20.dp))
-                }
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text(if (same) "Already pushed?" else "Older version?", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text(if (same) "GitHub already has this version." else "This zip is older than what is on GitHub.", fontSize = 12.sp, color = Muted)
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-            Mono(zip, Modifier.fillMaxWidth().background(Bg, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 8.dp), Cyan)
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                MismatchCard("Zip version", zipVer.ifBlank { "-" }, p.name, Amber, Modifier.weight(1f))
-                Icon(Icons.Default.SwapHoriz, null, tint = Muted, modifier = Modifier.padding(horizontal = 6.dp).size(18.dp))
-                MismatchCard("On GitHub now", pushedVer.ifBlank { "-" }, p.repo, Green, Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(16.dp))
-            Button(onCancel, Modifier.fillMaxWidth().height(46.dp), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
-                Text("Cancel", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onPush, Modifier.fillMaxWidth().height(46.dp), border = BorderStroke(1.dp, Amber.copy(alpha = 0.7f)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Amber)) {
-                Icon(Icons.Default.CloudUpload, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                Text("Push ${zipVer.ifBlank { "it" }}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+    HubDialog(if (same) "Already pushed?" else "Older version?", onCancel, listOf(
+        dPrimary("Cancel", onClick = onCancel), dSecondary("Push ${zipVer.ifBlank { "it" }}", Amber, onPush)),
+        icon = Icons.Default.History, tone = Amber, sub = if (same) "GitHub already has this version." else "This zip is older than what is on GitHub.") {
+        Mono(zip, Modifier.fillMaxWidth().background(Bg, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 8.dp), Cyan)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            MismatchCard("Zip version", zipVer.ifBlank { "-" }, p.name, Amber, Modifier.weight(1f))
+            Icon(Icons.Default.SwapHoriz, null, tint = Muted, modifier = Modifier.padding(horizontal = 6.dp).size(18.dp))
+            MismatchCard("On GitHub now", pushedVer.ifBlank { "-" }, p.repo, Green, Modifier.weight(1f))
         }
     }
 }
