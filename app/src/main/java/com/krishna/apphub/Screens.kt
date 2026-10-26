@@ -94,7 +94,7 @@ fun installLabel(vm: HubVM, p: Project, upd: Boolean): String = when {
 }
 
 @Composable fun BigButton(t: String, icon: ImageVector, onClick: () -> Unit) =
-    Button(onClick, Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+    Button(onClick, Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = onFill(Green))) {
         Icon(icon, null); Spacer(Modifier.width(8.dp)); Text(t, fontWeight = FontWeight.Bold)
     }
 
@@ -306,7 +306,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         }
         }
         if (ps.isEmpty()) EmptyState(Icons.Default.Apps, "No apps yet", "Add your own app, or bring back the preset apps.", Modifier.padding(top = 12.dp)) {
-            Button({ vm.restorePresets() }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { Text("Add presets") }
+            Button({ vm.restorePresets() }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = onFill(Green))) { Text("Add presets") }
             OutlinedButton({ nav.navigate("add") }) { Text("Add app") }
         } else if (shown.isEmpty()) {
             val (ic, t, d) = when {
@@ -365,11 +365,11 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 else Icon(Icons.Default.Build, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp)); BtnText("Build")
             }
-            Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+            Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = onFill(Green))) {
                 Icon(Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); BtnText("Deploy")
             }
-            if (upd || dl != null) Button({ nav.navigate("install/${p.id}") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Color.Black)) {
-                if (dl != null) CircularProgressIndicator({ dl / 100f }, Modifier.size(14.dp), color = Color.Black, strokeWidth = 2.dp)
+            if (upd || dl != null) Button({ nav.navigate("install/${p.id}") }, Modifier.weight(1f), contentPadding = BtnPad, colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = onFill(Amber))) {
+                if (dl != null) CircularProgressIndicator({ dl / 100f }, Modifier.size(14.dp), color = onFill(Amber), trackColor = onFill(Amber).copy(alpha = 0.3f), strokeWidth = 2.dp)
                 else Icon(Icons.Default.Download, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp)); BtnText(if (dl != null) "$dl%" else if (vm.isInstalled(p) == false) "Install" else "Update")
             }
@@ -405,7 +405,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
 
 @Composable fun HubSwitch(checked: Boolean, onChange: (Boolean) -> Unit) = Switch(checked, onChange,
     colors = SwitchDefaults.colors(
-        checkedThumbColor = Color.Black, checkedTrackColor = Green, checkedBorderColor = Green,
+        checkedThumbColor = onFill(Green), checkedTrackColor = Green, checkedBorderColor = Green,
         uncheckedThumbColor = Muted, uncheckedTrackColor = Color.Transparent, uncheckedBorderColor = Muted
     ))
 
@@ -472,7 +472,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             vm.update(p.copy(name = name.trim().ifBlank { p.name }, repo = r, packageName = if (type == ProjectType.APP) pkg.trim() else p.packageName, stack = stack.trim(), version = ver.trim().ifBlank { p.version },
                 type = type.name, liveUrl = if (type == ProjectType.APP) p.liveUrl else cleanUrl(url)))
             vm.toast("Saved")
-        }, Modifier.fillMaxWidth().height(46.dp), enabled = dirty, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+        }, Modifier.fillMaxWidth().height(46.dp), enabled = dirty, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = onFill(Green))) {
             Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(if (dirty) "Save changes" else "Saved", fontWeight = FontWeight.Bold)
         }
         Panel {
@@ -531,7 +531,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             Mono("${"%.1f".format(lf.length() / 1048576.0)} MB • ${agoMs(lf.lastModified())}", color = Muted)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button({ vm.useFile(lf) }, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color.Black)) { Text("Use this zip") }
+                Button({ vm.useFile(lf) }, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = onFill(Cyan))) { Text("Use this zip") }
                 OutlinedButton({ if (p != null) vm.deployFile(ctx, p, lf) }) { Text("Push now") }
             }
         }
@@ -605,7 +605,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
             if (last.ok == true) {
                 Spacer(Modifier.height(8.dp))
-                Button({ nav.navigate("install/${p.id}") }, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color.Black)) {
+                Button({ nav.navigate("install/${p.id}") }, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = onFill(Cyan))) {
                     Icon(Icons.Default.Download, null, Modifier.size(16.dp)); Text(" Install this build")
                 }
             }
@@ -664,7 +664,7 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
             prog != null -> Panel(border = Cyan) {
                 Text("Downloading ${(prog * 100).toInt()}%", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green)
+                LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green, gapSize = 0.dp, drawStopIndicator = {})
                 rel?.let { if (it.sizeKb > 0) Mono("${"%.1f".format(it.sizeKb * prog / 1024.0)} / ${"%.1f".format(it.sizeKb / 1024.0)} MB", Modifier.padding(top = 4.dp), Muted) }
                 Text("Keeps going if you leave this page.", fontSize = 11.sp, color = Muted)
             }
@@ -688,7 +688,7 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
                 else -> "Download & install"
             }
             Button({ if (ready) vm.installCached(ctx, p) else vm.download(ctx, p, r, true) }, Modifier.fillMaxWidth().height(48.dp), enabled = prog == null,
-                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = onFill(Green))) {
                 Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp)); Text(label, fontWeight = FontWeight.Bold)
             }
             if (phone == true && p.packageName.isNotBlank()) OutlinedButton({ openApp(ctx, vm, p) }, Modifier.fillMaxWidth()) {

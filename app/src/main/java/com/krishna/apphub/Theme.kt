@@ -10,6 +10,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Density
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontFamily
 
 /** v74: one colour set per theme. [green] is the main accent of the theme (buttons, titles, switches). */
@@ -56,11 +58,22 @@ val Red: Color get() = Pal.p.red
 val Amber: Color get() = Pal.p.amber
 val Muted: Color get() = Pal.p.muted
 
-private fun scheme(p: Palette, accent: Color) =
-    if (p.light) lightColorScheme(primary = accent, onPrimary = Color.Black, secondary = p.cyan, background = p.bg, surface = p.surf,
-        onSurface = p.text, onBackground = p.text, error = p.red, surfaceVariant = p.surfVar, outline = p.line)
-    else darkColorScheme(primary = accent, onPrimary = Color.Black, secondary = p.cyan, background = p.bg, surface = p.surf,
-        onSurface = p.text, onBackground = p.text, error = p.red, surfaceVariant = p.surfVar, outline = p.line)
+/** v80: text / icon colour for a button or chip filled with [c]: white on the darker fills of the light themes, black on the bright ones. */
+fun onFill(c: Color): Color {
+    val l = c.luminance()
+    val white = 1.05f / (l + 0.05f); val black = (l + 0.05f) / 0.05f
+    return if (white >= black * 0.8f) Color.White else Color.Black
+}
+
+private fun scheme(p: Palette, accent: Color): ColorScheme {
+    val tint = lerp(p.surf, accent, 0.22f)   // v80: selected chips, tracks and the like use the theme, not the default lilac
+    return if (p.light) lightColorScheme(primary = accent, onPrimary = onFill(accent), secondary = p.cyan, background = p.bg, surface = p.surf,
+        onSurface = p.text, onBackground = p.text, error = p.red, surfaceVariant = p.surfVar, outline = p.line,
+        secondaryContainer = tint, onSecondaryContainer = p.text, primaryContainer = tint, onPrimaryContainer = p.text)
+    else darkColorScheme(primary = accent, onPrimary = onFill(accent), secondary = p.cyan, background = p.bg, surface = p.surf,
+        onSurface = p.text, onBackground = p.text, error = p.red, surfaceVariant = p.surfVar, outline = p.line,
+        secondaryContainer = tint, onSecondaryContainer = p.text, primaryContainer = tint, onPrimaryContainer = p.text)
+}
 
 private fun mono(): Typography {
     val t = Typography(); val m = FontFamily.Monospace

@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -57,7 +58,7 @@ import androidx.navigation.NavHostController
         }
         if (adopt) Text("Makes this project work with App Hub: workflow, version, secrets and delivery. Send it to Claude with the project.", fontSize = 12.sp, color = Muted)
         else {
-            OutlinedTextField(note, { note = it }, Modifier.fillMaxWidth(), minLines = 4, label = { Text(Prompts.hint(task, p.kind)) })
+            HubField("Details", note, { note = it }, Prompts.hint(task, p.kind), minLines = 4)
             if (task == "Fix error") Mono(if (err.isBlank()) "No build error on record." else "Build error included (${err.lines().count { it.isNotBlank() }} lines)", color = Muted)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 HubSwitch(deliver, { deliver = it; vm.prefs.promptDeliver = it })
@@ -98,9 +99,28 @@ private val CardShape = RoundedCornerShape(14.dp)
         }
     }
 
+/**
+ * v80: one input box for the prompt pages. The label sits above the box, the box is inset (darker than the card it sits in),
+ * the border turns green when you type, and a single-line box has a clear (x) button.
+ */
+@Composable fun HubField(label: String, value: String, onChange: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier,
+                         singleLine: Boolean = false, minLines: Int = 1, icon: ImageVector? = null, hint: String = "") {
+    Column(modifier) {
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Muted, modifier = Modifier.padding(start = 2.dp, bottom = 4.dp))
+        OutlinedTextField(value, onChange, Modifier.fillMaxWidth(), singleLine = singleLine, minLines = minLines,
+            placeholder = { Text(placeholder, fontSize = 14.sp, color = Muted.copy(alpha = 0.75f)) },
+            leadingIcon = icon?.let { ic -> { Icon(ic, null, Modifier.size(18.dp), tint = Muted) } },
+            trailingIcon = if (singleLine && value.isNotEmpty()) ({ IconButton({ onChange("") }, Modifier.size(36.dp)) { Icon(Icons.Default.Close, null, Modifier.size(16.dp), tint = Muted) } }) else null,
+            supportingText = if (hint.isNotBlank()) ({ Text(hint, fontSize = 11.sp, color = Muted) }) else null,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, unfocusedBorderColor = Line, cursorColor = Green,
+                focusedContainerColor = Bg, unfocusedContainerColor = Bg))
+    }
+}
+
 /** Page 2: an idea card (two per row). The chosen one gets a green border. */
 @Composable private fun IdeaCard(name: String, pitch: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) =
-    Column(modifier.fillMaxHeight().background(Surf, CardShape).border(1.dp, if (selected) Green else Line, CardShape).clip(CardShape)
+    Column(modifier.fillMaxHeight().background(if (selected) lerp(Surf, Green, 0.12f) else Surf, CardShape).border(1.dp, if (selected) Green else Line, CardShape).clip(CardShape)
         .clickable(onClick = onClick).padding(10.dp)) {
         Text(name, color = if (selected) Green else Cyan, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(2.dp))
@@ -109,7 +129,7 @@ private val CardShape = RoundedCornerShape(14.dp)
 
 /** Page 3: one choice with a short reason, radio style. */
 @Composable private fun OptionCard(title: String, sub: String, selected: Boolean, onClick: () -> Unit) =
-    Row(Modifier.fillMaxWidth().background(Surf, CardShape).border(1.dp, if (selected) Green else Line, CardShape).clip(CardShape)
+    Row(Modifier.fillMaxWidth().background(if (selected) lerp(Surf, Green, 0.12f) else Surf, CardShape).border(1.dp, if (selected) Green else Line, CardShape).clip(CardShape)
         .clickable(onClick = onClick).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(20.dp).border(2.dp, if (selected) Green else Muted, CircleShape).padding(4.dp)) {
             if (selected) Box(Modifier.fillMaxSize().background(Green, CircleShape))
@@ -201,9 +221,10 @@ private fun hostNote(h: String) = when (h) {
                             ProjectType.SERVER -> "An API or a bot backend with a health check."
                         }, fontSize = 12.sp, color = Muted)
                         Panel {
-                            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Name") })
-                            Spacer(Modifier.height(8.dp))
-                            OutlinedTextField(pitch, { pitch = it }, Modifier.fillMaxWidth(), minLines = 2, label = { Text("What is it?") })
+                            HubField("Name", name, { name = it }, "e.g. QuickTasks", singleLine = true, icon = Icons.Default.Edit)
+                            Spacer(Modifier.height(12.dp))
+                            HubField("What is it?", pitch, { pitch = it }, "One line: what it does and who it is for", minLines = 3,
+                                hint = "Short is fine. Claude asks the rest.")
                         }
                         Text("Or start from an idea", color = Muted, fontSize = 12.sp)
                         if (app) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -249,7 +270,7 @@ private fun hostNote(h: String) = when (h) {
             }
         }
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val green = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)
+            val green = ButtonDefaults.buttonColors(containerColor = Green, contentColor = onFill(Green))
             if (step == 2) {   // the ready page is always step 2 (an app skips step 1)
                 Button({
                     vm.copy(if (app) Prompts.buildPrompt(name.trim(), pitch.trim()) else Prompts.newProject(kind, name.trim(), pitch.trim(), curStack, curHost), quiet = true)

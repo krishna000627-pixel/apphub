@@ -125,7 +125,7 @@ private fun deployLook(st: String): Pair<String, Color> = when (st) {
             OutlinedButton({ open(sv.dashboardUrl) }, Modifier.weight(1f), contentPadding = pad) { BtnText("Open") }
             if (!sv.suspended) OutlinedButton({ vm.renderDeploy(sv) }, Modifier.weight(1f), contentPadding = pad) { BtnText("Deploy") }
             if (!added && sv.repo.isNotBlank()) Button({ type?.let { vm.importProject(sv.name, sv.repo, it, sv.url) } }, Modifier.weight(1f), contentPadding = pad,
-                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { BtnText("Add") }
+                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = onFill(Green))) { BtnText("Add") }
         }
     }
 }

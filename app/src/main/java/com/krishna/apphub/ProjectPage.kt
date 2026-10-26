@@ -197,7 +197,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button({ goDeploy(vm, nav, p) }, Modifier.weight(1f), contentPadding = PadBtn,
-                        colors = ButtonDefaults.buttonColors(containerColor = if (pend) Amber else Green, contentColor = Color.Black)) {
+                        colors = ButtonDefaults.buttonColors(containerColor = if (pend) Amber else Green, contentColor = onFill(if (pend) Amber else Green))) {
                         Icon(if (pend) Icons.Default.AddCircle else Icons.Default.CloudUpload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp))
                         BtnText(if (pend) "Push ${vm.waitLabel(p)}" else "Deploy")
                     }
@@ -344,7 +344,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
         }
         if (all.isEmpty()) item {
             EmptyState(Icons.Default.Build, "No builds yet", "Deploy a zip and the first build starts on GitHub.") {
-                Button({ goDeploy(vm, nav, p) }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { Text("Deploy a zip") }
+                Button({ goDeploy(vm, nav, p) }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = onFill(Green))) { Text("Deploy a zip") }
             }
         } else if (shown.isEmpty()) item { Text("No ${filter} builds loaded.", color = Muted, fontSize = 12.sp) }
         item { Spacer(Modifier.height(16.dp)) }
@@ -402,7 +402,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
     }, icon = Icons.Default.History, tone = Cyan, sub = "${ago(r.time)} • ${"%.1f".format(r.sizeKb / 1024.0)} MB" + if (onPhone) " • on this phone" else "") {
         Mono(vm.notesFor(p, r.tag, r.notes).take(400))
         if (prog != null) {
-            LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green)
+            LinearProgressIndicator({ prog }, Modifier.fillMaxWidth(), color = Green, gapSize = 0.dp, drawStopIndicator = {})
             Mono("Downloading ${(prog * 100).toInt()}%", color = Cyan)
         }
         if (err != null && prog == null) Text(err, color = Red, fontSize = 12.sp)
@@ -439,7 +439,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
             if (log.isEmpty()) item {
                 EmptyState(Icons.Default.NewReleases, "Nothing logged yet",
                     "Ask for the zip with the app prompt (zip and version rules on). It carries whatsnew.txt. App Hub reads it, keeps it here, and never pushes it.") {
-                    Button({ vm.selId = id; nav.navigate("aprompt/$id") }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { Text("Open prompt") }
+                    Button({ vm.selId = id; nav.navigate("aprompt/$id") }, colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = onFill(Green))) { Text("Open prompt") }
                 }
             }
             item { Spacer(Modifier.height(16.dp)) }

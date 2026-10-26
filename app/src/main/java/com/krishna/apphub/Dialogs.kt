@@ -77,7 +77,7 @@ fun dCancel(label: String = "Cancel", onClick: () -> Unit) = DAct(label, DAct.CA
     val label = @Composable { Text(a.label, fontSize = 14.sp, fontWeight = if (a.style == DAct.FILLED) FontWeight.Bold else FontWeight.Normal, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
     when {
         a.style == DAct.FILLED -> Button(a.onClick, m, enabled = a.enabled, contentPadding = pad,
-            colors = ButtonDefaults.buttonColors(containerColor = c, contentColor = Color.Black)) { label() }
+            colors = ButtonDefaults.buttonColors(containerColor = c, contentColor = onFill(c))) { label() }
         a.style == DAct.OUTLINED || inRow -> OutlinedButton(a.onClick, m, enabled = a.enabled, contentPadding = pad,
             border = BorderStroke(1.dp, c.copy(alpha = 0.7f)), colors = ButtonDefaults.outlinedButtonColors(contentColor = c)) { label() }
         else -> TextButton(a.onClick, m, enabled = a.enabled, contentPadding = pad, colors = ButtonDefaults.textButtonColors(contentColor = c)) { label() }

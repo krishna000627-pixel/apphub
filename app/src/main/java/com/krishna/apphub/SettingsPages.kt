@@ -123,7 +123,7 @@ import androidx.navigation.NavHostController
                     val shown = if (i == 0) Themes.of(vm.themeMode, androidx.compose.foundation.isSystemInDarkTheme()).green
                         else Themes.accents[i]!!.let { if (Pal.p.light) it.second else it.first }
                     Box(Modifier.size(34.dp).clip(CircleShape).background(shown).border(2.dp, if (vm.accent == i) Pal.p.text else Color.Transparent, CircleShape)
-                        .clickable { vm.changeAccent(i) }, contentAlignment = Alignment.Center) { if (i == 0) Text("A", fontSize = 12.sp, color = Color.Black, fontWeight = FontWeight.Bold) }
+                        .clickable { vm.changeAccent(i) }, contentAlignment = Alignment.Center) { if (i == 0) Text("A", fontSize = 12.sp, color = onFill(shown), fontWeight = FontWeight.Bold) }
                 }
             }
             Text("Changes the buttons, titles and switches. The first circle is the theme's own colour.", Modifier.padding(top = 6.dp), fontSize = 11.sp, color = Muted)

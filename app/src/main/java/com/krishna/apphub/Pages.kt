@@ -73,7 +73,7 @@ fun repoOf(url: String): String {
             OutlinedButton(onOpen, Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)) { BtnText("Open") }
             if (!added) Button({ type?.let { onAdd(it) } }, Modifier.weight(1f), enabled = canAdd && type != null,
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) { BtnText(if (type == null) "Pick type" else "Add") }
+                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = onFill(Green))) { BtnText(if (type == null) "Pick type" else "Add") }
         }
     }
 }
