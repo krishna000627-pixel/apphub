@@ -18,6 +18,7 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v81" to listOf("Removed the \"live\" label from the running build card. The steps still update by themselves."),
         "v80" to listOf("The dot at the end of the download bar is gone. Text and icons on buttons now follow the colour behind them (white on the darker buttons of the light themes), and chips and bars use the theme colour instead of lilac. The prompt page has new input boxes: label above, inset box, green border while you type, a clear button, and a hint. Picked idea and option cards get a soft green fill."),
         "v79" to listOf("The build log looks like GitHub.com: one block per step with a status icon, name and time. Tap a step to open it; a running or failed step starts open. While a build runs the steps and the log refresh by themselves and the page follows the newest line. Errors are red, warnings amber, commands cyan, and every line has its number."),
         "v78" to listOf("Live build steps: open a running build on the Builds page and its steps update every 3 seconds, with the running step marked and counting up, and the time of each finished step. A running job's log page checks again every 4 seconds, follows the newest line, and fills in as soon as GitHub has the text."),

@@ -319,7 +319,6 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                     var now by remember { mutableStateOf(System.currentTimeMillis()) }
                     LaunchedEffect(r.id, r.ok) { vm.loadJobs(p, r.id).join(); while (r.ok == null) { delay(3_000); vm.loadJobs(p, r.id).join() } }
                     LaunchedEffect(r.id, r.ok) { while (r.ok == null) { now = System.currentTimeMillis(); delay(1_000) } }
-                    if (r.ok == null) Mono("● live", Modifier.padding(top = 6.dp), Amber)
                     val js = vm.jobs[r.id]
                     if (js == null) Mono("loading steps…", Modifier.padding(top = 6.dp), Muted) else js.forEach { j ->
                         Mono("${mark(j.ok)} ${j.name}", Modifier.padding(top = 6.dp), okColor(j.ok))

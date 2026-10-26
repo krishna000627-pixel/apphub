@@ -12,6 +12,9 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v81
+- Removed the "● live" line from the open running build card (`BuildsBody`, ProjectPage.kt). The live refresh itself is unchanged. The log page (`LogView.kt`) still shows its own "● live" tag. versionCode 81, versionName "81.0". Not compiled here: CI is the first build.
+
 ## v80
 - `onFill(c)` (Theme.kt): white or black text for a fill, whichever reads better (white is picked when its contrast is at least 80% of black's, so the dark teal / amber fills of the light themes get white). Every `contentColor = Color.Black` on a button is now `onFill(<its containerColor>)`; the dashboard download circle, the Switch thumb and the accent swatch "A" use it too, and `onPrimary` in the scheme. Never write `Color.Black` on an accent fill again. The scheme also sets `secondaryContainer` / `primaryContainer` (surface blended 22% toward the accent), so FilterChip selected, progress tracks and nav bits are no longer the default lilac. Download bars (`InstallScreen`, release page) use `gapSize = 0.dp, drawStopIndicator = {}` (needs material3 1.3, BOM 2024.10.01 has it). New public `HubField(label, value, onChange, placeholder, ...)` in PromptPages.kt (label above, inset `Bg` box, green focus border, clear button, hint) used for Name, What is it? and the project prompt Details; other forms still use OutlinedTextField. Selected `IdeaCard` / `OptionCard` get a 12% green fill. versionCode 80, versionName "80.0". Not compiled here: CI is the first build.
 
