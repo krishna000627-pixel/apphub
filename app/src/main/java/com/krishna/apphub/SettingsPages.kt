@@ -123,7 +123,7 @@ import androidx.navigation.NavHostController
                     val shown = if (i == 0) Themes.of(vm.themeMode, androidx.compose.foundation.isSystemInDarkTheme()).green
                         else Themes.accents[i]!!.let { if (Pal.p.light) it.second else it.first }
                     Box(Modifier.size(34.dp).clip(CircleShape).background(shown).border(2.dp, if (vm.accent == i) Pal.p.text else Color.Transparent, CircleShape)
-                        .clickable { vm.setAccent(i) }, contentAlignment = Alignment.Center) { if (i == 0) Text("A", fontSize = 12.sp, color = Color.Black, fontWeight = FontWeight.Bold) }
+                        .clickable { vm.changeAccent(i) }, contentAlignment = Alignment.Center) { if (i == 0) Text("A", fontSize = 12.sp, color = Color.Black, fontWeight = FontWeight.Bold) }
                 }
             }
             Text("Changes the buttons, titles and switches. The first circle is the theme's own colour.", Modifier.padding(top = 6.dp), fontSize = 11.sp, color = Muted)
@@ -134,7 +134,7 @@ import androidx.navigation.NavHostController
                 listOf("Small", "Normal", "Large").forEachIndexed { i, l ->
                     val on = vm.textSize == i
                     Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).border(1.dp, if (on) Green else Line, RoundedCornerShape(10.dp))
-                        .clickable { vm.setTextSize(i) }.padding(vertical = 9.dp), contentAlignment = Alignment.Center) {
+                        .clickable { vm.changeTextSize(i) }.padding(vertical = 9.dp), contentAlignment = Alignment.Center) {
                         Text(l, fontSize = 13.sp, color = if (on) Green else Muted, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
                     }
                 }

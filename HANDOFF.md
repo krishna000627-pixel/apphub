@@ -12,6 +12,9 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v75
+- Build fix only. `HubVM.kt`: `var accent` / `var textSize` already generate `setAccent(I)V` / `setTextSize(I)V`, so the functions of the same name clashed ("Platform declaration clash"). Renamed the functions to `changeAccent` / `changeTextSize` (callers in `SettingsPages.kt`). Rule: never name a function `setX` next to a `var x` in the same class. versionCode 75, versionName "75.0". No new dependencies. Not compiled here: CI is the first build.
+
 ## v74
 - New `Dialogs.kt`: `HubDialog(title, onDismiss, actions, icon, tone, sub) { body }` is the only dialog look now (no `AlertDialog` left in the project). Icon circle + title (+ one grey line), scrolling body, then buttons: 2 actions sit side by side (cancel left), 3+ are full width and stacked (main action on top, cancel as plain text). `tone` colours border, icon and main button (Green normal, Amber risky, Red destructive, Cyan info). Actions are built with `dPrimary` (filled, black text), `dSecondary` (outlined) and `dCancel`. Body helpers: `DialogText`, `DialogNote`, `DialogCard`, `DialogItem(path, why)`.
 - Moved to `HubDialog`: Which repo? (Pages.kt), Push X? / Remove / Undo push / Install previous / Clear APKs / Export / Import / Project added / Delete env var / Wrong app / Possible secrets / Check these files / Older version (Screens.kt), Make public (HostingPage.kt), Older release (ProjectPage.kt), Delete file (Files.kt). Texts and button actions are unchanged.

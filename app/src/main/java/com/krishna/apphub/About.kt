@@ -18,6 +18,7 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v75" to listOf("Fixed the build error from v74 so the new themes, accent colour and text size install and work. Nothing else changed."),
         "v74" to listOf("Six new themes (AMOLED black, Midnight blue, Sunset, Violet, Slate, Paper) plus an accent colour and a text size on the Theme page. Dialogs share one cleaner look (icon, short text, full width buttons) and use less space. Push type and Theme are rows in Settings that open their own pages. Push type has details, a pick, and a switch to delete files you removed from the zip (off by default). Partial zips: partial.txt lists the deletes, the prompt page has a Partial zip switch, and App Hub checks it before the push."),
         "v73" to listOf("New push type: Settings > Push type > Git pack. It uses the git protocol (one request, raw files, no base64), checks the repo afterwards and falls back to the API if anything is off. The log shows MB and seconds for both push types."),
         "v72" to listOf("Deploy: a failed file upload is retried up to 3 times, big files go two at a time, and the failure line says the size and the reason. The file check warns about files over 4 MB and can leave them out."),

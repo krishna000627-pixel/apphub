@@ -288,9 +288,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var themeMode by mutableIntStateOf(prefs.themeMode)   // v71
     fun setTheme(m: Int) { themeMode = m; prefs.themeMode = m }
     var accent by mutableIntStateOf(prefs.accent)   // v74
-    fun setAccent(a: Int) { accent = a; prefs.accent = a }
+    fun changeAccent(a: Int) { accent = a; prefs.accent = a }   // v75: not setAccent, that clashes with the setter of `accent`
     var textSize by mutableIntStateOf(prefs.textSize)
-    fun setTextSize(s: Int) { textSize = s; prefs.textSize = s }
+    fun changeTextSize(s: Int) { textSize = s; prefs.textSize = s }   // v75: not setTextSize, same clash
     fun togglePin(p: Project) { val v = !isPinned(p.id); pins[p.id] = v; prefs.setPinned(p.id, v) }
     // v63: mute the alerts of one app; re-run or cancel a build
     private val mutes = mutableStateMapOf<Long, Boolean>()
