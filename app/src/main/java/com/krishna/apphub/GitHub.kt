@@ -32,7 +32,7 @@ class GitHub(private val prefs: Prefs) {
     data class Info(val desc: String, val lang: String, val branch: String, val sizeKb: Int, val issues: Int, val priv: Boolean, val pushed: String, val stars: Int)
     data class Commit(val sha: String, val msg: String, val author: String, val time: String)
     data class Release(val tag: String, val time: String, val notes: String, val sizeKb: Long)
-    data class Step(val name: String, val ok: Boolean?)
+    data class Step(val name: String, val ok: Boolean?, val running: Boolean = false, val sec: Int = -1, val startMs: Long = 0L)   // v78: running + timing for the live steps
     data class Job(val id: Long, val name: String, val ok: Boolean?, val steps: List<Step>)
     data class Rel(val tag: String, val body: String, val assetUrl: String, val time: String = "", val sizeKb: Long = 0L)
 
@@ -389,8 +389,19 @@ class GitHub(private val prefs: Prefs) {
         return (0 until a.length()).map {
             val o = a.getJSONObject(it)
             val st = o.optJSONArray("steps") ?: JSONArray()
-            Job(o.optLong("id"), o.s("name"), ok(o.s("conclusion")), (0 until st.length()).map { i -> st.getJSONObject(i).let { s -> Step(s.s("name"), ok(s.s("conclusion"))) } })
+            Job(o.optLong("id"), o.s("name"), ok(o.s("conclusion")), (0 until st.length()).map { i -> st.getJSONObject(i).let { s ->
+                val t0 = isoMs(s.s("started_at")); val t1 = isoMs(s.s("completed_at"))
+                Step(s.s("name"), ok(s.s("conclusion")), s.s("status") == "in_progress", if (t0 > 0 && t1 >= t0) ((t1 - t0) / 1000).toInt() else -1, t0)
+            } })
         }
+    }
+
+    private fun isoMs(t: String): Long = runCatching { java.time.Instant.parse(t).toEpochMilli() }.getOrDefault(0L)
+
+    /** v78: true once this job has finished (any result). */
+    suspend fun jobDone(repo: String, jobId: Long): Boolean {
+        val (c, b) = get("/repos/$repo/actions/jobs/$jobId"); if (c != 200) return false
+        return JSONObject(b).s("status") == "completed"
     }
 
     suspend fun jobLog(repo: String, jobId: Long): String {

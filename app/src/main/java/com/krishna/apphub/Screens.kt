@@ -10,11 +10,17 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -64,6 +70,14 @@ import java.io.File
 
 @Composable fun Panel(mod: Modifier = Modifier, border: Color = Line, content: @Composable ColumnScope.() -> Unit) =
     Column(mod.fillMaxWidth().background(Surf, RoundedCornerShape(12.dp)).border(1.dp, border, RoundedCornerShape(12.dp)).padding(12.dp), content = content)
+
+/** v77: tap feedback for a whole card. While it is held the full box (rounded corners included) tints at once. No ripple circle: on a tall card it spread out slowly and only half covered the box. */
+fun Modifier.boxClick(shape: Shape = RoundedCornerShape(12.dp), onClick: () -> Unit): Modifier = composed {
+    val src = remember { MutableInteractionSource() }
+    val down by src.collectIsPressedAsState()
+    this.clip(shape).clickable(interactionSource = src, indication = null, onClick = onClick)
+        .drawWithContent { drawContent(); if (down) drawRect(Green.copy(alpha = 0.12f)) }
+}
 
 /** Single-line button label (never wraps letter by letter when buttons share a row). */
 @Composable fun BtnText(t: String, size: Int = 13) = Text(t, fontSize = size.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
@@ -316,7 +330,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     val upd = vm.hasUpdate(p)
     val pend = vm.pending(p)
     val dl = dlPct(vm, p)
-    Panel(Modifier.clickable { nav.navigate("detail/${p.id}") }, border = if (p.lastStatus == "failed") Red.copy(alpha = 0.6f) else Line) {
+    Panel(Modifier.boxClick { nav.navigate("detail/${p.id}") }, border = if (p.lastStatus == "failed") Red.copy(alpha = 0.6f) else Line) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(40.dp).background(Line, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(p.kind.icon(), null, tint = Cyan) }
             Spacer(Modifier.width(10.dp))
@@ -376,7 +390,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
 /** Clear on/off look: green track + dark thumb when on, outlined track + grey thumb when off. */
 /** v44: a setup switch shown like a project row: icon, title, who is connected, and the switch. The whole row is tappable. */
 @Composable fun ConnRow(icon: ImageVector, title: String, status: String, statusColor: Color, on: Boolean, onTap: () -> Unit) {
-    Panel(Modifier.clickable { onTap() }) {
+    Panel(Modifier.boxClick { onTap() }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = Cyan, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(12.dp))
@@ -613,6 +627,14 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         val base = if (tail) vm.logLines.takeLast(200) else vm.logLines
         base.filter { (!errOnly || isErr(it)) && (q.isBlank() || it.contains(q, true)) }
     }
+    val ls = rememberLazyListState()
+    var prev by remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) { onDispose { vm.stopLog() } }   // v78: closing the page ends the live poll
+    LaunchedEffect(shown.size) {   // v78: while live, follow the newest line, unless you scrolled up to read
+        val last = ls.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        if (vm.logLive && shown.isNotEmpty() && (prev == 0 || last >= prev - 2)) ls.scrollToItem(shown.lastIndex)
+        prev = shown.size
+    }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header(vm.logTitle, nav) {
             IconButton({ vm.copy(shown.joinToString("\n")) }, Modifier.size(40.dp)) { Icon(Icons.Default.ContentCopy, null) }
@@ -623,9 +645,10 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             FilterChip(tail, { tail = !tail }, { Text("Last 200", fontSize = 12.sp) })
             FilterChip(errOnly, { errOnly = !errOnly }, { Text("Errors only", fontSize = 12.sp) })
             Mono("${shown.size} lines", color = Muted)
+            if (vm.logLive) Mono("● live", color = Amber)
         }
         if (vm.logLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Green)
-        LazyColumn(Modifier.weight(1f)) { items(shown) { l -> Mono(l, color = if (isErr(l)) Red else Color.Unspecified) } }
+        LazyColumn(Modifier.weight(1f), state = ls) { items(shown) { l -> Mono(l, color = if (isErr(l)) Red else Color.Unspecified) } }
     }
 }
 

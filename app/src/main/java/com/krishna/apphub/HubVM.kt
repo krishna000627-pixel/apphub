@@ -249,6 +249,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var logTitle by mutableStateOf("")
     var logLines by mutableStateOf<List<String>>(emptyList())
     var logLoading by mutableStateOf(false)
+    /** v78: the open job is still running, so the log page keeps asking for new lines. */
+    var logLive by mutableStateOf(false)
+    private var logPoll: Job? = null
 
     // ---- local snapshot: last known GitHub data, only for the first paint. Live data replaces it within 3 s (autoSync). ----
     private val snapDir get() = File(getApplication<Application>().cacheDir, "snap")
@@ -1199,13 +1202,30 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (changed) saveSnap(p)
     }
 
-    fun openLog(p: Project, j: GitHub.Job) = viewModelScope.launch {
-        logTitle = "${p.name} • ${j.name}"; logLines = emptyList(); logLoading = true
-        val t = gh.jobLog(p.repo, j.id)
-        val ts = Regex("^\\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z ")
-        logLines = if (t.isBlank()) listOf("No log available (the job may still be running).") else t.lines().map { it.replaceFirst(ts, "") }
-        logLoading = false
+    /** v78: opens a job log. A running job is polled every 4 s (up to 30 min) until it ends; the page stops the poll when it closes (stopLog). */
+    fun openLog(p: Project, j: GitHub.Job) {
+        logPoll?.cancel()
+        logTitle = "${p.name} • ${j.name}"; logLines = emptyList(); logLoading = true; logLive = j.ok == null
+        logPoll = viewModelScope.launch {
+            val ts = Regex("^\\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z ")
+            suspend fun load() {
+                val t = gh.jobLog(p.repo, j.id)
+                if (t.isNotBlank()) logLines = t.lines().map { it.replaceFirst(ts, "") }
+                else if (logLines.isEmpty()) logLines = listOf(if (logLive) "The job is running. GitHub gives the log text when the job ends; this page fills in by itself. The steps update live on the Builds page." else "No log available.")
+                logLoading = false
+            }
+            load()
+            var n = 0
+            while (logLive && n++ < 450) {
+                delay(4_000)
+                val done = gh.jobDone(p.repo, j.id)
+                load()
+                if (done) logLive = false
+            }
+            logLive = false
+        }
     }
+    fun stopLog() { logPoll?.cancel(); logLive = false }
 
     // ---- v49: the whole build history, 100 at a time ----
     val olderRuns = mutableStateMapOf<Long, List<GitHub.Run>>()

@@ -18,6 +18,8 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v78" to listOf("Live build steps: open a running build on the Builds page and its steps update every 3 seconds, with the running step marked and counting up, and the time of each finished step. A running job's log page checks again every 4 seconds, follows the newest line, and fills in as soon as GitHub has the text."),
+        "v77" to listOf("Tapping a card (build, app, release) now tints the whole card at once, with no half-covering circle."),
         "v76" to listOf("A file turns red while it is being deleted. The Build button shows a small spinner inside the button while it starts the build."),
         "v75" to listOf("Fixed the build error from v74 so the new themes, accent colour and text size install and work. Nothing else changed."),
         "v74" to listOf("Six new themes (AMOLED black, Midnight blue, Sunset, Violet, Slate, Paper) plus an accent colour and a text size on the Theme page. Dialogs share one cleaner look (icon, short text, full width buttons) and use less space. Push type and Theme are rows in Settings that open their own pages. Push type has details, a pick, and a switch to delete files you removed from the zip (off by default). Partial zips: partial.txt lists the deletes, the prompt page has a Partial zip switch, and App Hub checks it before the push."),

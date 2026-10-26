@@ -296,7 +296,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
         items(shown, key = { it.id }) { r ->
             val st = statusWord(r.ok)
             val open = openRun == r.id
-            Panel(Modifier.clickable { if (open) openRun = null else { openRun = r.id; vm.loadJobs(p, r.id) } }) {
+            Panel(Modifier.boxClick { openRun = if (open) null else r.id }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(10.dp).background(okColor(r.ok), CircleShape))
                     Spacer(Modifier.width(10.dp))
@@ -315,10 +315,25 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                         if (r.ok == null) OutlinedButton({ vm.cancelRun(p, r.id) }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("Cancel build") }
                         else OutlinedButton({ vm.rerun(p, r.id) }, Modifier.weight(1f), contentPadding = PadBtn) { BtnText("Re-run") }
                     }
+                    // v78: live steps. While the build runs the steps are asked again every 3 s and the running step counts up every second.
+                    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+                    LaunchedEffect(r.id, r.ok) { vm.loadJobs(p, r.id).join(); while (r.ok == null) { delay(3_000); vm.loadJobs(p, r.id).join() } }
+                    LaunchedEffect(r.id, r.ok) { while (r.ok == null) { now = System.currentTimeMillis(); delay(1_000) } }
+                    if (r.ok == null) Mono("● live", Modifier.padding(top = 6.dp), Amber)
                     val js = vm.jobs[r.id]
                     if (js == null) Mono("loading steps…", Modifier.padding(top = 6.dp), Muted) else js.forEach { j ->
                         Mono("${mark(j.ok)} ${j.name}", Modifier.padding(top = 6.dp), okColor(j.ok))
-                        j.steps.forEach { s -> Mono("   ${mark(s.ok)} ${s.name}", color = if (s.ok == false) Red else Muted) }
+                        j.steps.forEach { s ->
+                            val t = when {
+                                s.sec >= 0 -> fmtDur(s.sec)
+                                s.running && s.startMs > 0 -> fmtDur(((now - s.startMs) / 1000).toInt().coerceAtLeast(0))
+                                else -> ""
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Mono("   ${if (s.running) "▸" else mark(s.ok)} ${s.name}", Modifier.weight(1f), if (s.running) Amber else if (s.ok == false) Red else Muted)
+                                if (t.isNotEmpty()) Mono(t, color = Muted)
+                            }
+                        }
                         TextButton({ vm.openLog(p, j); nav.navigate("log") }) { Text("View full log", fontSize = 12.sp, color = Cyan) }
                     }
                 }
@@ -346,7 +361,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         itemsIndexed(rl) { i, r ->
             val saved = i > 0 && vm.hasOld(p, r.tag)
-            Panel(Modifier.clickable { if (i == 0) nav.navigate("install/$id") else if (r.sizeKb > 0) sel = r else vm.toast("No APK on this release") },
+            Panel(Modifier.boxClick { if (i == 0) nav.navigate("install/$id") else if (r.sizeKb > 0) sel = r else vm.toast("No APK on this release") },
                 border = if (i == 0 && upd) Amber else Line) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(r.tag, Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Cyan)

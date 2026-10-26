@@ -12,6 +12,12 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v78
+- Live builds. `GitHub.Step(name, ok, running, sec, startMs)` now carries the step state and timing (`jobs()` reads status / started_at / completed_at); `GitHub.jobDone(repo, jobId)` reads one job. Builds page (`BuildsBody`): an open card with `r.ok == null` re-reads the jobs every 3 s (`LaunchedEffect(r.id, r.ok)`, one last read when the result arrives) and a 1 s ticker drives the running step's timer (device clock vs GitHub clock, so a few seconds of skew is possible). `HubVM.openLog` is no longer a `launch` itself: it keeps `logPoll`, polls the log every 4 s while `logLive` (max 30 min) and stops when `jobDone`; `stopLog()` runs when the log page closes. GitHub normally gives a job's log text only after the job ends (the log endpoint answers 404 before), so while running the log page shows a short notice and fills in by itself; if GitHub does return partial text it is shown live. `LogScreen` follows the newest line unless you scrolled up. versionCode 78, versionName "78.0". Not compiled here: CI is the first build.
+
+## v77
+- `Modifier.boxClick(shape, onClick)` (Screens.kt, next to `Panel`): clips to the card shape, `clickable(indication = null)` and draws a Green 12% tint over the whole box while pressed. It replaces the ripple circle on the 4 clickable `Panel`s (dashboard project card, Builds card, release card, Screens.kt:379 card). Use it for any big clickable card; plain `clickable` is still fine for small rows. versionCode 77, versionName "77.0". Not compiled here: CI is the first build.
+
 ## v76
 - Files.kt `NodeRow`: when `busy` (this file is the one in `HubVM.deletingFile`) the row gets a red tint, red icon box, red name and the line "Deleting…"; taps are off while busy. HubVM `buildingId` (Long, -1 = none) + `build(p)` keeps it set for the dispatch plus 700 ms; Screens.kt Build button swaps its 16 dp icon for a 16 dp `CircularProgressIndicator` (same slot, so it stays inside the button). versionCode 76, versionName "76.0". Not compiled here: CI is the first build.
 
