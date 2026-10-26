@@ -526,6 +526,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                 Mono("files   : ${pack.entries.size}  (skipped ${pack.skipped})")
                 Mono("size    : ${"%.1f".format(pack.bytes / 1048576.0)} MB")
                 if (pack.whatsNew.isNotBlank()) Mono("whatsnew: found, kept in the log (not pushed)", color = Green)
+                if (pack.partial) Mono("partial : yes, ${pack.deletes.size} delete line(s) (not pushed)", color = Cyan)
                 if (p != null && !vm.nameMatches(p, pack.name)) Text("⚠ This zip name doesn't match ${p.name}", color = Amber, fontSize = 12.sp)
                 if (pack.findings.isNotEmpty()) Text("⚠ ${pack.findings.size} possible secret(s) in this zip. You are asked before the push.", color = Amber, fontSize = 12.sp)
             }
@@ -865,7 +866,7 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
         Panel {   // v74: Push type and Theme are sub pages now
             NavRow(Icons.Default.CloudUpload, Cyan, "Push type", if (vm.prefs.pushMode == 1) "Git pack" else "API") { nav.navigate("settings/push") { launchSingleTop = true } }
             RowLine()
-            NavRow(Icons.Default.Palette, Cyan, "Theme", listOf("Dark", "White", "System").getOrElse(vm.themeMode) { "Dark" }) { nav.navigate("settings/theme") { launchSingleTop = true } }
+            NavRow(Icons.Default.Palette, Cyan, "Theme", Themes.names.getOrElse(vm.themeMode) { "Dark" } + if (vm.accent > 0) " · " + Themes.accentNames[vm.accent] else "") { nav.navigate("settings/theme") { launchSingleTop = true } }
         }
         // v43: logins moved to their own page (Accounts)
         Panel {

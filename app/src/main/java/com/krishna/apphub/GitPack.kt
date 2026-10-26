@@ -49,11 +49,13 @@ object GitPack {
         return d
     }
 
+    private fun empty(d: Dir): Boolean = d.files.isEmpty() && d.dirs.values.all { empty(it) }
+
     private fun treeOf(d: Dir, out: MutableList<Obj>): String {
         d.sha?.let { return it }
         val ents = ArrayList<Pair<ByteArray, ByteArray>>()   // (sort key, entry): git sorts a folder as if its name ended with "/"
         for ((name, ms) in d.files) ents.add(name.toByteArray() to entry(ms.first, name, ms.second))
-        for ((name, sub) in d.dirs) ents.add((name + "/").toByteArray() to entry("40000", name, treeOf(sub, out)))
+        for ((name, sub) in d.dirs) if (!empty(sub)) ents.add((name + "/").toByteArray() to entry("40000", name, treeOf(sub, out)))
         ents.sortWith { a, b -> cmp(a.first, b.first) }
         val content = ents.fold(ByteArray(0)) { acc, e -> acc + e.second }
         val sha = hash("tree", content)
@@ -63,7 +65,7 @@ object GitPack {
     }
 
     /** [remote] = the repo's current listing, [todo] = new and changed files (paths relative to the repo root). */
-    fun build(remote: List<Remote>, todo: List<Pair<String, ByteArray>>, parent: String, message: String, login: String): Built {
+    fun build(remote: List<Remote>, todo: List<Pair<String, ByteArray>>, gone: Set<String>, parent: String, message: String, login: String): Built {
         val root = Dir()
         for (e in remote.sortedBy { it.path }) {
             val parts = e.path.split("/")
@@ -71,6 +73,13 @@ object GitPack {
                 "tree" -> dirAt(root, parts).sha = e.sha
                 else -> dirAt(root, parts.dropLast(1)).files[parts.last()] = e.mode.trimStart('0').ifBlank { "100644" }.let { m -> if (m == "40000") "100644" else m } to e.sha
             }
+        }
+        for (path in gone) {   // v74: removed files; everything above one is a new tree, and a folder left empty disappears
+            val parts = path.split("/")
+            var d = root
+            d.sha = null
+            for (p in parts.dropLast(1)) { d = d.dirs[p] ?: break; d.sha = null }
+            d.files.remove(parts.last())
         }
         val objs = ArrayList<Obj>()
         val blobShas = HashMap<String, String>()

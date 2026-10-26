@@ -124,7 +124,22 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("push_mode", 0)
         set(v) { sp.edit().putInt("push_mode", v).apply() }
 
-    /** v71: 0 = dark, 1 = white, 2 = follow the phone. */
+    /** v74: a push also deletes repo files that are not in the zip (off by default). */
+    var deleteMissing: Boolean
+        get() = sp.getBoolean("push_delete", false)
+        set(v) { sp.edit().putBoolean("push_delete", v).apply() }
+
+    /** v74: accent colour, 0 = the theme's own (Themes.accents). */
+    var accent: Int
+        get() = sp.getInt("accent", 0)
+        set(v) { sp.edit().putInt("accent", v).apply() }
+
+    /** v74: text size, 0 small, 1 normal, 2 large. */
+    var textSize: Int
+        get() = sp.getInt("text_size", 1)
+        set(v) { sp.edit().putInt("text_size", v).apply() }
+
+    /** v71: 0 = dark, 1 = white, 2 = follow the phone, 3.. = more themes (v74). */
     var themeMode: Int
         get() = sp.getInt("theme_mode", 0)
         set(v) { sp.edit().putInt("theme_mode", v).apply() }
@@ -242,6 +257,10 @@ class Prefs(ctx: Context) {
     fun setServerState(id: Long, v: Int) { sp.edit().putInt("ss_$id", v).apply() }
     fun serverFails(id: Long) = sp.getInt("sf_$id", 0)
     fun setServerFails(id: Long, v: Int) { sp.edit().putInt("sf_$id", v).apply() }
+
+    var promptPartial: Boolean          // v74: ask for a partial zip (only changed files + partial.txt)
+        get() = sp.getBoolean("pm_partial", false)
+        set(v) { sp.edit().putBoolean("pm_partial", v).apply() }
 
     var promptDeliver: Boolean          // Prompt Maker: Add zip name + version bump rules
         get() = sp.getBoolean("pm_deliver", true)

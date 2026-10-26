@@ -287,6 +287,10 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     fun isPinned(id: Long) = pins[id] ?: prefs.pinned(id)
     var themeMode by mutableIntStateOf(prefs.themeMode)   // v71
     fun setTheme(m: Int) { themeMode = m; prefs.themeMode = m }
+    var accent by mutableIntStateOf(prefs.accent)   // v74
+    fun setAccent(a: Int) { accent = a; prefs.accent = a }
+    var textSize by mutableIntStateOf(prefs.textSize)
+    fun setTextSize(s: Int) { textSize = s; prefs.textSize = s }
     fun togglePin(p: Project) { val v = !isPinned(p.id); pins[p.id] = v; prefs.setPinned(p.id, v) }
     // v63: mute the alerts of one app; re-run or cancel a build
     private val mutes = mutableStateMapOf<Long, Boolean>()
@@ -577,7 +581,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         deploying = true; deployLog.clear(); deployGen++
         try {
             deployLog += "Comparing ${pack.entries.size} files with ${p.repo}…"
-            gh.pushFiles(p.repo, pack.entries.map { it.path to it.bytes }, "preview", dryRun = true) { deployLog += it }
+            gh.pushFiles(p.repo, pack.entries.map { it.path to it.bytes }, "preview", dryRun = true, partial = pack.partial, deletes = pack.deletes) { deployLog += it }
         } finally { deploying = false }
     }
 
@@ -1296,7 +1300,8 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (pack.findings.isNotEmpty() && !secretsChecked) { secretAsk = SecretAsk(p, pack, note, src); return@launch }
         // v49: file type check: does the zip fit the project type, and is there junk (apk, archives, node_modules)
         if (!typesChecked) {
-            val issues = TypeCheck.scan(p.kind, pack.entries)
+            // v74: a partial zip is not expected to look like a whole project, so only its own checks and the file checks apply
+            val issues = if (pack.partial) PartialCheck.scan(p, pack) + TypeCheck.scan(p.kind, pack.entries).filter { it.path.isNotBlank() } else TypeCheck.scan(p.kind, pack.entries)
             if (issues.isNotEmpty()) { typeAsk = TypeAsk(p, pack, note, src, issues); return@launch }
         }
         deploying = true; deployLog.clear(); deployGen++
@@ -1319,7 +1324,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             if (prefs.notifiedRun(p.id) == 0L && before != 0L) prefs.setNotifiedRun(p.id, before)
             val pushStart = System.currentTimeMillis()
             deployLog += "Pushing ${files.size} files to ${p.repo}…"
-            val res = gh.pushFiles(p.repo, files, msg) { deployLog += it }
+            val res = gh.pushFiles(p.repo, files, msg, partial = pack.partial, deletes = pack.deletes) { deployLog += it }
             if (res.ok) {
                 (src ?: zipFound[p.id]?.takeIf { it.name == pack.name } ?: zipLatest[p.id]?.takeIf { it.name == pack.name })
                     ?.let { prefs.setZipSeen(p.id, Downloads.key(it)); zipFound.remove(p.id) }
@@ -1327,7 +1332,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
                     projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(version = ver)) }
                     prefs.setPushedVer(p.id, ver); pushedV[p.id] = ver
                     if (pack.whatsNew.isNotBlank()) { prefs.addWhatsNew(p.repo, ver, pack.whatsNew); whatsNewRev++; deployLog += "• What's new saved from whatsnew.txt (not pushed)" }
-                    deployLog += "✓ Pushed $ver (${res.added} new, ${res.changed} updated). Watching the build…"
+                    deployLog += "✓ Pushed $ver (${res.added} new, ${res.changed} updated${if (res.removed > 0) ", ${res.removed} deleted" else ""}). Watching the build…"
                     if (isVercel(p)) watchVercel(p, pushStart, deployGen) else watch(p, before, deployGen)
                 }
             }

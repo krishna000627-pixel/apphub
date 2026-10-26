@@ -13,11 +13,12 @@ object Zipper {
     /** v42: something that looks like a secret. [wholeFile] = the file itself is the secret (.env, key file), so it can be left out of the push. */
     class Finding(val path: String, val why: String, val wholeFile: Boolean)
     /** [whatsNew] = text of whatsnew.txt from the zip root (v68). It is read here and never part of [entries], so it is never pushed. */
-    class Pack(val name: String, val version: String, val entries: List<Entry>, val skipped: Int, val bytes: Long, val findings: List<Finding> = emptyList(), val whatsNew: String = "") {
+    class Pack(val name: String, val version: String, val entries: List<Entry>, val skipped: Int, val bytes: Long, val findings: List<Finding> = emptyList(), val whatsNew: String = "",
+                val partial: Boolean = false, val deletes: List<String> = emptyList()) {
         /** The same zip without these files (used by "Leave out & push"). */
         fun without(paths: Set<String>): Pack {
             val keep = entries.filter { it.path !in paths }
-            return Pack(name, version, keep, skipped + (entries.size - keep.size), keep.sumOf { it.bytes.size.toLong() }, findings.filter { it.path !in paths }, whatsNew)
+            return Pack(name, version, keep, skipped + (entries.size - keep.size), keep.sumOf { it.bytes.size.toLong() }, findings.filter { it.path !in paths }, whatsNew, partial, deletes)
         }
     }
 
@@ -53,13 +54,42 @@ object Zipper {
         var skipped = 0
         val out = ArrayList<Entry>()
         var whats = ""
+        var partial = false
+        val deletes = ArrayList<String>()
         for ((p0, bytes) in raw) {
             val path = if (strip) p0.substringAfter('/') else p0
             if (path.equals("whatsnew.txt", true) || path.equals("whatsnew.md", true)) { whats = String(bytes, Charsets.UTF_8).trim().take(4000); continue }   // v68: read, never pushed
+            if (path.equals("partial.txt", true)) {   // v74: "this zip holds only changed files"; read, checked, never pushed
+                partial = true
+                String(bytes, Charsets.UTF_8).lines().map { it.trim() }.filter { it.startsWith("delete:", true) }
+                    .map { it.substringAfter(':').trim().replace('\\', '/').removePrefix("./").trimStart('/') }
+                    .filter { it.isNotBlank() && !it.contains("..") }.forEach { deletes.add(it) }
+                continue
+            }
             if (skip(path, bytes.size)) { skipped++; continue }
             out.add(Entry(path, bytes))
         }
-        return Pack(name, versionOf(name), out, skipped, out.sumOf { it.bytes.size.toLong() }, SecretScan.scan(out), whats)
+        return Pack(name, versionOf(name), out, skipped, out.sumOf { it.bytes.size.toLong() }, SecretScan.scan(out), whats, partial, deletes.distinct())
+    }
+}
+
+/** v74: partial zips. A zip with partial.txt at its root holds only the changed files; its "delete: path" lines are the only deletes. */
+object PartialCheck {
+    private val protectedNames = setOf("app/build.gradle.kts", "app/build.gradle", "build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle")
+    fun isProtected(path: String) = path.startsWith(".github/") || path.startsWith(".git/") || path in protectedNames
+
+    /** Problems found in the zip itself, before anything is pushed (the repo-side checks run during the push). */
+    fun scan(p: Project, pack: Zipper.Pack): List<Zipper.Finding> {
+        val out = ArrayList<Zipper.Finding>()
+        if (!pack.partial) return out
+        if (pack.entries.isEmpty() && pack.deletes.isEmpty()) out.add(Zipper.Finding("partial.txt", "partial zip with no files and no delete lines, nothing would change", false))
+        if (p.kind == ProjectType.APP && pack.entries.isNotEmpty() && pack.entries.none { it.path == "app/build.gradle.kts" || it.path == "app/build.gradle" })
+            out.add(Zipper.Finding("app/build.gradle.kts", "missing: a partial zip must carry the file with versionCode / versionName so the version is bumped", false))
+        val inZip = pack.entries.map { it.path }.toSet()
+        pack.deletes.filter { it in inZip }.take(5).forEach { out.add(Zipper.Finding(it, "listed as delete: and also in the zip, the delete is ignored", false)) }
+        pack.deletes.filter { isProtected(it) }.take(5).forEach { out.add(Zipper.Finding(it, "protected, it will not be deleted", false)) }
+        if (pack.deletes.size > 20) out.add(Zipper.Finding("", "${pack.deletes.size} delete lines, check the list before pushing", false))
+        return out
     }
 }
 

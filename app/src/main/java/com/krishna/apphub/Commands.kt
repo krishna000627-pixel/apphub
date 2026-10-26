@@ -11,6 +11,17 @@ object Prompts {
     fun whatsNewRule(v: String) = "Also put a file named whatsnew.txt at the top level of the project folder: 3 to 6 short lines, each starting with \"- \", in plain words, " +
         "saying what is new for the user in $v. App Hub reads it for the release notes and never pushes it to GitHub."
 
+    /** v74: the zip part of a delivery rule: the whole project, or only what changed. */
+    fun zipRule(base: String, next: String, partial: Boolean) =
+        if (partial) "zip ONLY the files you created or changed (full paths from the project root, no unchanged files) as ${base}_$next.zip with a top-level folder ${base}_$next/."
+        else "zip the whole project as ${base}_$next.zip with a top-level folder ${base}_$next/."
+
+    /** v74: how a partial zip says so. App Hub reads and checks partial.txt and never pushes it. */
+    fun partialRule(partial: Boolean) = if (!partial) "" else
+        " Partial zip: always include the file that holds the version (app/build.gradle.kts for apps), plus every file you changed or created, nothing else. " +
+        "Also put a file named partial.txt at the top level of the project folder: first line \"partial\", then one line \"delete: path/from/project/root\" for every file I must remove from the repo " +
+        "(a path ending with / removes the whole folder; no delete lines if nothing is removed). Never list a file under delete: that is also in the zip. App Hub reads and checks partial.txt and never pushes it."
+
     /** v51: previews go in a file inside the zip. Drawing them in the chat fills the context window. */
     const val PREVIEW = "Put every preview (logo, avatars, themes, screens) in a NEW file in the zip, for example preview.html, and never draw it in the chat. Do not add it to the app until I approve it."
 
@@ -99,16 +110,16 @@ object Prompts {
         return head + rules + "\n\nBefore coding: ask me up to 3 short questions if anything is unclear. Please keep the solution simple and production ready." + delivery(p)
     }
 
-    fun delivery(p: Project): String {
+    fun delivery(p: Project, partial: Boolean = false): String {
         val next = Commands.bump(p.version)
         val base = Commands.fileBase(p)
-        if (p.kind != ProjectType.APP) return "\n\nDelivery rules: zip the whole project as ${base}_$next.zip with a top-level folder ${base}_$next/. " +
+        if (p.kind != ProjectType.APP) return "\n\nDelivery rules: ${zipRule(base, next, partial)} " +
             "Always bump the version to $next (in package.json if there is one, and where it is shown: " +
             "${if (p.kind == ProjectType.WEBSITE) "the site footer" else "the /health response"}), even for a string-only change. " +
-            "After the zip, list every file you created or changed (path + one short note). ${whatsNewRule(next)} $PREVIEW"
-        return "\n\nDelivery rules: zip the whole project as ${base}_$next.zip with a top-level folder ${base}_$next/. " +
+            "After the zip, list every file you created or changed (path + one short note). ${whatsNewRule(next)} $PREVIEW${partialRule(partial)}"
+        return "\n\nDelivery rules: ${zipRule(base, next, partial)} " +
             "Always bump the version to $next (versionCode and versionName), even for a string-only change. " +
-            "After the zip, list every file you created or changed (path + one short note). ${whatsNewRule(next)} $PREVIEW"
+            "After the zip, list every file you created or changed (path + one short note). ${whatsNewRule(next)} $PREVIEW${partialRule(partial)}"
     }
 
     /** What the text box under step 4 asks for, per task. */
@@ -123,10 +134,10 @@ object Prompts {
     }
 
     /** [vercel] = the project deploys on Vercel (websites / servers only). */
-    fun make(task: String, p: Project, stack: String, error: String, deliver: Boolean = false, change: String = "", vercel: Boolean = false): String {
+    fun make(task: String, p: Project, stack: String, error: String, deliver: Boolean = false, change: String = "", vercel: Boolean = false, partial: Boolean = false): String {
         if (task == "Adopt") return adopt(p)   // v65: already ends with the delivery rules
         return (if (p.kind == ProjectType.APP) body(task, p, stack, error, change.trim()) else webBody(task, p, stack, error, change.trim(), vercel)) +
-            if (deliver) delivery(p) else ""
+            if (deliver) delivery(p, partial) else ""
     }
 
     /** Prompts for an existing website or server. */

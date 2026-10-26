@@ -54,8 +54,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val vm: HubVM = viewModel()
-            val light = vm.themeMode == 1 || (vm.themeMode == 2 && !isSystemInDarkTheme())   // v71: 0 dark, 1 white, 2 follow the phone
-            HubTheme(light) {
+            HubTheme(vm.themeMode, vm.accent, vm.textSize, isSystemInDarkTheme()) {   // v74: 0 dark, 1 white, 2 follow the phone, 3.. more themes (Theme.kt)
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { App(vm) }
             }
         }

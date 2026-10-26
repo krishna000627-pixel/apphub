@@ -452,7 +452,7 @@ class GitHub(private val prefs: Prefs) {
         return if (c4 == 200) true to message else false to "Branch update failed ($c4)"
     }
 
-    data class PushResult(val ok: Boolean, val committed: Boolean = false, val added: Int = 0, val changed: Int = 0, val same: Int = 0, val sha: String = "", val branch: String = "")
+    data class PushResult(val ok: Boolean, val committed: Boolean = false, val added: Int = 0, val changed: Int = 0, val same: Int = 0, val sha: String = "", val branch: String = "", val removed: Int = 0)
 
     /** The file as text if it is valid UTF-8 (so it can travel inline), else null. */
     private fun textOf(b: ByteArray): String? {
@@ -507,7 +507,7 @@ class GitHub(private val prefs: Prefs) {
      * Checks the repo afterwards (every old file still there with the same content, every new file as sent) and puts the branch back if anything is off.
      */
     private suspend fun packPush(repo: String, branch: String, parent: String, listing: List<GitPack.Remote>, remote: Map<String, String>,
-                                 todo: List<Pair<String, ByteArray>>, message: String): Pair<String?, String> = withContext(Dispatchers.IO) {
+                                 todo: List<Pair<String, ByteArray>>, gone: Set<String>, message: String): Pair<String?, String> = withContext(Dispatchers.IO) {
         try {
             val login = prefs.login
             if (login.isBlank()) return@withContext null to "no login"
@@ -524,7 +524,7 @@ class GitHub(private val prefs: Prefs) {
             if (head.substringBefore(' ') != parent) return@withContext null to "the branch moved since the last read"
             if (lines.none { it.contains("report-status") }) return@withContext null to "server has no report-status"   // the capabilities sit on the first ref line
             // 2. the objects
-            val built = GitPack.build(listing, todo, parent, message, login)
+            val built = GitPack.build(listing, todo, gone, parent, message, login)
             // 3. one request: the command, then the pack, streamed (chunked)
             val cmd = GitPack.pktLine("$parent ${built.commit} $ref\u0000 report-status agent=apphub\n") + "0000".toByteArray()
             val body = object : RequestBody() {
@@ -553,7 +553,7 @@ class GitHub(private val prefs: Prefs) {
                     val arr = tj.optJSONArray("tree") ?: JSONArray()
                     val now = HashMap<String, String>()
                     for (k in 0 until arr.length()) { val o = arr.getJSONObject(k); if (o.s("type") == "blob") now[o.s("path")] = o.s("sha") }
-                    val expect = HashMap(remote); expect.putAll(built.blobShas)
+                    val expect = HashMap(remote); expect.putAll(built.blobShas); expect.keys.removeAll(gone)
                     good = now == expect
                     break
                 }
@@ -576,7 +576,7 @@ class GitHub(private val prefs: Prefs) {
         else -> "HTTP $c " + runCatching { JSONObject(b).optString("message") }.getOrDefault("").take(60)
     }
 
-    suspend fun pushFiles(repo: String, files: List<Pair<String, ByteArray>>, message: String, dryRun: Boolean = false, log: (String) -> Unit): PushResult {
+    suspend fun pushFiles(repo: String, files: List<Pair<String, ByteArray>>, message: String, dryRun: Boolean = false, partial: Boolean = false, deletes: List<String> = emptyList(), log: (String) -> Unit): PushResult {
         val (c0, b0) = get("/repos/$repo")
         if (c0 != 200) { log("✗ Cannot open $repo ($c0). Check login and repo name."); return PushResult(false) }
         val branch = JSONObject(b0).s("default_branch").ifBlank { "main" }
@@ -618,21 +618,45 @@ class GitHub(private val prefs: Prefs) {
                 else -> same++
             }
         }
-        log("• $added new, $changed changed, $same unchanged (skipped)")
+        // v74: files the repo has but the zip does not (only when Settings > Push type > Delete removed files is on)
+        val gone = HashSet<String>()
+        if (partial) {
+            // a partial zip (partial.txt): only its own "delete:" lines count, a folder line ends with "/"
+            if (!known) { if (deletes.isNotEmpty()) log("• Could not read the repo, the ${deletes.size} delete line(s) were skipped.") }
+            else {
+                val inZip = files.map { it.first }.toHashSet()
+                var absent = 0; var kept = 0; var clash = 0
+                for (d in deletes) {
+                    val hits = if (d.endsWith("/")) remote.keys.filter { it.startsWith(d) } else listOf(d).filter { it in remote }
+                    if (hits.isEmpty()) { absent++; continue }
+                    for (h in hits) when { h in inZip -> clash++; PartialCheck.isProtected(h) -> kept++; else -> gone.add(h) }
+                }
+                log("• Partial zip: ${files.size} file(s), ${deletes.size} delete line(s)" +
+                    (if (absent > 0) ", $absent not in the repo" else "") + (if (kept > 0) ", $kept protected" else "") + (if (clash > 0) ", $clash also in the zip (kept)" else ""))
+            }
+        } else if (prefs.deleteMissing && known) {
+            val inZip = files.map { it.first }.toHashSet()
+            val cand = remote.keys.filter { it !in inZip && !PartialCheck.isProtected(it) }
+            if (cand.size * 2 > remote.size) log("• Delete skipped: ${cand.size} of ${remote.size} repo files are not in this zip. For a partial zip add partial.txt (see Settings > Push type).")
+            else gone.addAll(cand)
+        }
+        log("• $added new, $changed changed, $same unchanged (skipped)" + if (gone.isNotEmpty()) ", ${gone.size} to delete" else "")
         marks.take(30).forEach { log(it) }
         if (marks.size > 30) log("  … and ${marks.size - 30} more")
-        if (todo.isEmpty()) { log("✓ Nothing to push, the repo already has these files."); return PushResult(true, false, 0, 0, same) }
-        if (dryRun) { log("• Preview only, nothing was pushed."); return PushResult(true, false, added, changed, same) }
+        gone.sorted().take(10).forEach { log("  - $it") }
+        if (gone.size > 10) log("  … and ${gone.size - 10} more to delete")
+        if (todo.isEmpty() && gone.isEmpty()) { log("✓ Nothing to push, the repo already has these files."); return PushResult(true, false, 0, 0, same) }
+        if (dryRun) { log("• Preview only, nothing was pushed."); return PushResult(true, false, added, changed, same, removed = gone.size) }
 
         // v73: Git pack push (opt-in in Settings): the git protocol, one request. Anything odd falls back to the API below.
         val t0 = System.nanoTime()
         val mb = todo.sumOf { it.second.size } / 1048576.0
         if (prefs.pushMode == 1) {
-            val (sha, why) = if (known) packPush(repo, branch, parent, remoteEntries, remote, todo, message) else null to "could not read the repo listing"
+            val (sha, why) = if (known) packPush(repo, branch, parent, remoteEntries, remote, todo, gone, message) else null to "could not read the repo listing"
             if (sha != null) {
                 log("• Git pack push: ${"%.1f".format(mb)} MB in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s")
                 log("• commit ${sha.take(7)} on $branch")
-                return PushResult(true, true, added, changed, same, sha, branch)
+                return PushResult(true, true, added, changed, same, sha, branch, gone.size)
             }
             log("• Git pack push not used ($why), using the API")
         }
@@ -689,6 +713,7 @@ class GitHub(private val prefs: Prefs) {
             if (path in inline) e.put("content", inline[path]) else e.put("sha", shas[path])
             entries.put(e)
         }
+        for (g in gone) entries.put(JSONObject().put("path", g).put("mode", "100644").put("type", "blob").put("sha", JSONObject.NULL))   // v74: a null sha removes the path
         val (c3, b3) = send("POST", "/repos/$repo/git/trees", JSONObject().put("base_tree", baseTree).put("tree", entries))
         if (c3 != 201) { log("✗ tree failed ($c3)"); return PushResult(false) }
         val (c4, b4) = send("POST", "/repos/$repo/git/commits",
@@ -699,7 +724,7 @@ class GitHub(private val prefs: Prefs) {
         if (c5 != 200) { log("✗ branch update failed ($c5)"); return PushResult(false) }
         log("• API push: ${"%.1f".format(mb)} MB in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s")
         log("• commit ${newSha.take(7)} on $branch")
-        return PushResult(true, true, added, changed, same, newSha, branch)
+        return PushResult(true, true, added, changed, same, newSha, branch, gone.size)
     }
 
     // ---- install / update ----

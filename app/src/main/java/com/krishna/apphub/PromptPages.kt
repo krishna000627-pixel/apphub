@@ -46,6 +46,7 @@ import androidx.navigation.NavHostController
     var task by rememberSaveable(id) { mutableStateOf(if (vm.task in tasks) vm.task else tasks.first()) }
     var note by rememberSaveable(id, task) { mutableStateOf("") }
     var deliver by remember { mutableStateOf(vm.prefs.promptDeliver) }
+    var partial by remember { mutableStateOf(vm.prefs.promptPartial) }
     val err = vm.errors[id] ?: p.lastError
     val adopt = task == "Adopt"
     val needsNote = !adopt && task != "Fix error"
@@ -62,10 +63,17 @@ import androidx.navigation.NavHostController
                 HubSwitch(deliver, { deliver = it; vm.prefs.promptDeliver = it })
                 Text("  Zip name, version and whatsnew.txt", fontSize = 12.sp)
             }
+            if (deliver) Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    HubSwitch(partial, { partial = it; vm.prefs.promptPartial = it })
+                    Text("  Partial zip (only changed files)", fontSize = 12.sp)
+                }
+                Text(if (partial) "Claude sends only what it changed plus partial.txt. App Hub checks it before the push and applies its delete lines." else "Claude sends the whole project every time.", Modifier.padding(start = 52.dp), fontSize = 11.sp, color = Muted)
+            }
         }
         BigButton("Copy prompt", Icons.Default.ContentCopy) {
             if (needsNote && note.isBlank()) vm.toast("Write what you want first")
-            else vm.copy(Prompts.make(task, p, p.stack, err, deliver, note, vm.isVercel(p)))
+            else vm.copy(Prompts.make(task, p, p.stack, err, deliver, note, vm.isVercel(p), partial && deliver))
         }
         Spacer(Modifier.height(12.dp))
     }
