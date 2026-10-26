@@ -618,40 +618,6 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
 // v65: the old Prompt Maker screen is split: PromptPages.kt (AppPromptScreen for one project, NewProjectScreen for new ones)
 
 // ---------- full build log ----------
-@Composable fun LogScreen(vm: HubVM, nav: NavHostController) {
-    var q by remember { mutableStateOf("") }
-    var tail by remember { mutableStateOf(false) }
-    var errOnly by remember { mutableStateOf(false) }
-    fun isErr(l: String) = l.startsWith("e: ") || l.contains("error", true) || l.contains("FAILED") || l.contains("What went wrong")
-    val shown = remember(vm.logLines, q, tail, errOnly) {
-        val base = if (tail) vm.logLines.takeLast(200) else vm.logLines
-        base.filter { (!errOnly || isErr(it)) && (q.isBlank() || it.contains(q, true)) }
-    }
-    val ls = rememberLazyListState()
-    var prev by remember { mutableIntStateOf(0) }
-    DisposableEffect(Unit) { onDispose { vm.stopLog() } }   // v78: closing the page ends the live poll
-    LaunchedEffect(shown.size) {   // v78: while live, follow the newest line, unless you scrolled up to read
-        val last = ls.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-        if (vm.logLive && shown.isNotEmpty() && (prev == 0 || last >= prev - 2)) ls.scrollToItem(shown.lastIndex)
-        prev = shown.size
-    }
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Header(vm.logTitle, nav) {
-            IconButton({ vm.copy(shown.joinToString("\n")) }, Modifier.size(40.dp)) { Icon(Icons.Default.ContentCopy, null) }
-        }
-        OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Search log") },
-            leadingIcon = { Icon(Icons.Default.Search, null) })
-        Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            FilterChip(tail, { tail = !tail }, { Text("Last 200", fontSize = 12.sp) })
-            FilterChip(errOnly, { errOnly = !errOnly }, { Text("Errors only", fontSize = 12.sp) })
-            Mono("${shown.size} lines", color = Muted)
-            if (vm.logLive) Mono("● live", color = Amber)
-        }
-        if (vm.logLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Green)
-        LazyColumn(Modifier.weight(1f), state = ls) { items(shown) { l -> Mono(l, color = if (isErr(l)) Red else Color.Unspecified) } }
-    }
-}
-
 // ---------- install / update ----------
 private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
     val i = ctx.packageManager.getLaunchIntentForPackage(p.packageName)

@@ -383,26 +383,28 @@ class GitHub(private val prefs: Prefs) {
         return if (send("PATCH", "/repos/$repo/releases/$id", JSONObject().put("body", body)).first in 200..299) 1 else -1
     }
 
+    private fun parseJob(o: JSONObject): Job {
+        val st = o.optJSONArray("steps") ?: JSONArray()
+        return Job(o.optLong("id"), o.s("name"), ok(o.s("conclusion")), (0 until st.length()).map { i -> st.getJSONObject(i).let { s ->
+            val t0 = isoMs(s.s("started_at")); val t1 = isoMs(s.s("completed_at"))
+            Step(s.s("name"), ok(s.s("conclusion")), s.s("status") == "in_progress", if (t0 > 0 && t1 >= t0) ((t1 - t0) / 1000).toInt() else -1, t0)
+        } })
+    }
+
     suspend fun jobs(repo: String, runId: Long): List<Job> {
         val (c, b) = get("/repos/$repo/actions/runs/$runId/jobs"); if (c != 200) return emptyList()
         val a = JSONObject(b).getJSONArray("jobs")
-        return (0 until a.length()).map {
-            val o = a.getJSONObject(it)
-            val st = o.optJSONArray("steps") ?: JSONArray()
-            Job(o.optLong("id"), o.s("name"), ok(o.s("conclusion")), (0 until st.length()).map { i -> st.getJSONObject(i).let { s ->
-                val t0 = isoMs(s.s("started_at")); val t1 = isoMs(s.s("completed_at"))
-                Step(s.s("name"), ok(s.s("conclusion")), s.s("status") == "in_progress", if (t0 > 0 && t1 >= t0) ((t1 - t0) / 1000).toInt() else -1, t0)
-            } })
-        }
+        return (0 until a.length()).map { parseJob(a.getJSONObject(it)) }
+    }
+
+    /** v79: one job with its steps right now, and whether it has ended. null = could not be read. */
+    suspend fun job(repo: String, jobId: Long): Pair<Job, Boolean>? {
+        val (c, b) = get("/repos/$repo/actions/jobs/$jobId"); if (c != 200) return null
+        val o = JSONObject(b)
+        return parseJob(o) to (o.s("status") == "completed")
     }
 
     private fun isoMs(t: String): Long = runCatching { java.time.Instant.parse(t).toEpochMilli() }.getOrDefault(0L)
-
-    /** v78: true once this job has finished (any result). */
-    suspend fun jobDone(repo: String, jobId: Long): Boolean {
-        val (c, b) = get("/repos/$repo/actions/jobs/$jobId"); if (c != 200) return false
-        return JSONObject(b).s("status") == "completed"
-    }
 
     suspend fun jobLog(repo: String, jobId: Long): String {
         val (c, b) = exec(rb("$api/repos/$repo/actions/jobs/$jobId/logs").build())

@@ -18,6 +18,7 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v79" to listOf("The build log looks like GitHub.com: one block per step with a status icon, name and time. Tap a step to open it; a running or failed step starts open. While a build runs the steps and the log refresh by themselves and the page follows the newest line. Errors are red, warnings amber, commands cyan, and every line has its number."),
         "v78" to listOf("Live build steps: open a running build on the Builds page and its steps update every 3 seconds, with the running step marked and counting up, and the time of each finished step. A running job's log page checks again every 4 seconds, follows the newest line, and fills in as soon as GitHub has the text."),
         "v77" to listOf("Tapping a card (build, app, release) now tints the whole card at once, with no half-covering circle."),
         "v76" to listOf("A file turns red while it is being deleted. The Build button shows a small spinner inside the button while it starts the build."),

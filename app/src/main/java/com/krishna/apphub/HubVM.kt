@@ -251,6 +251,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     var logLoading by mutableStateOf(false)
     /** v78: the open job is still running, so the log page keeps asking for new lines. */
     var logLive by mutableStateOf(false)
+    /** v79: the steps of the open job (kept fresh while it runs) and its result, for the GitHub-style log page. */
+    var logSteps by mutableStateOf<List<GitHub.Step>>(emptyList())
+    var logOk by mutableStateOf<Boolean?>(null)
     private var logPoll: Job? = null
 
     // ---- local snapshot: last known GitHub data, only for the first paint. Live data replaces it within 3 s (autoSync). ----
@@ -1202,24 +1205,29 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (changed) saveSnap(p)
     }
 
-    /** v78: opens a job log. A running job is polled every 4 s (up to 30 min) until it ends; the page stops the poll when it closes (stopLog). */
+    /** v78/v79: opens a job log. A running job is read again every 3 s (up to 30 min): its steps (status, time) and the log text. The log page calls stopLog() when it closes. */
     fun openLog(p: Project, j: GitHub.Job) {
         logPoll?.cancel()
         logTitle = "${p.name} • ${j.name}"; logLines = emptyList(); logLoading = true; logLive = j.ok == null
+        logSteps = j.steps; logOk = j.ok
         logPoll = viewModelScope.launch {
-            val ts = Regex("^\\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z ")
+            val ts = Regex("^\uFEFF?\\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z ")
+            suspend fun fresh(): Boolean {   // true when the job has ended
+                val c = gh.job(p.repo, j.id) ?: return false
+                logSteps = c.first.steps; logOk = c.first.ok
+                return c.second
+            }
             suspend fun load() {
                 val t = gh.jobLog(p.repo, j.id)
                 if (t.isNotBlank()) logLines = t.lines().map { it.replaceFirst(ts, "") }
-                else if (logLines.isEmpty()) logLines = listOf(if (logLive) "The job is running. GitHub gives the log text when the job ends; this page fills in by itself. The steps update live on the Builds page." else "No log available.")
                 logLoading = false
             }
-            load()
+            var done = fresh(); load()
+            if (done) logLive = false
             var n = 0
-            while (logLive && n++ < 450) {
-                delay(4_000)
-                val done = gh.jobDone(p.repo, j.id)
-                load()
+            while (logLive && n++ < 600) {
+                delay(3_000)
+                done = fresh(); load()
                 if (done) logLive = false
             }
             logLive = false
