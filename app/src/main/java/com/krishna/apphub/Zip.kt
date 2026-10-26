@@ -13,19 +13,17 @@ object Zipper {
     /** v42: something that looks like a secret. [wholeFile] = the file itself is the secret (.env, key file), so it can be left out of the push. */
     class Finding(val path: String, val why: String, val wholeFile: Boolean)
     /** [whatsNew] = text of whatsnew.txt from the zip root (v68). It is read here and never part of [entries], so it is never pushed. */
-    class Pack(val name: String, val version: String, val entries: List<Entry>, val skipped: Int, val bytes: Long, val findings: List<Finding> = emptyList(), val whatsNew: String = "",
-        /** v72: paths that were in the zip but are not pushed (skipped, whatsnew, left out). They are never deleted from the repo. */
-        val ignored: Set<String> = emptySet()) {
+    class Pack(val name: String, val version: String, val entries: List<Entry>, val skipped: Int, val bytes: Long, val findings: List<Finding> = emptyList(), val whatsNew: String = "") {
         /** The same zip without these files (used by "Leave out & push"). */
         fun without(paths: Set<String>): Pack {
             val keep = entries.filter { it.path !in paths }
-            return Pack(name, version, keep, skipped + (entries.size - keep.size), keep.sumOf { it.bytes.size.toLong() }, findings.filter { it.path !in paths }, whatsNew, ignored + paths)
+            return Pack(name, version, keep, skipped + (entries.size - keep.size), keep.sumOf { it.bytes.size.toLong() }, findings.filter { it.path !in paths }, whatsNew)
         }
     }
 
     private val skipDirs = listOf(".git/", "build/", ".gradle/", "__MACOSX/", ".idea/")
 
-    fun skip(path: String, size: Int): Boolean =
+    private fun skip(path: String, size: Int): Boolean =
         path.isBlank() || path.contains("../") || skipDirs.any { path.startsWith(it) } || path.endsWith(".jks") ||
             path.endsWith(".DS_Store") || path == "keystore.properties" || path == "local.properties" || size > 50_000_000
 
@@ -55,14 +53,13 @@ object Zipper {
         var skipped = 0
         val out = ArrayList<Entry>()
         var whats = ""
-        val ignored = HashSet<String>()
         for ((p0, bytes) in raw) {
             val path = if (strip) p0.substringAfter('/') else p0
-            if (path.equals("whatsnew.txt", true) || path.equals("whatsnew.md", true)) { whats = String(bytes, Charsets.UTF_8).trim().take(4000); ignored.add(path); continue }   // v68: read, never pushed
-            if (skip(path, bytes.size)) { skipped++; ignored.add(path); continue }
+            if (path.equals("whatsnew.txt", true) || path.equals("whatsnew.md", true)) { whats = String(bytes, Charsets.UTF_8).trim().take(4000); continue }   // v68: read, never pushed
+            if (skip(path, bytes.size)) { skipped++; continue }
             out.add(Entry(path, bytes))
         }
-        return Pack(name, versionOf(name), out, skipped, out.sumOf { it.bytes.size.toLong() }, SecretScan.scan(out), whats, ignored)
+        return Pack(name, versionOf(name), out, skipped, out.sumOf { it.bytes.size.toLong() }, SecretScan.scan(out), whats)
     }
 }
 
@@ -141,6 +138,10 @@ object TypeCheck {
         }
         entries.filter { e -> junkExt.any { e.path.lowercase().endsWith(it) } }.take(8)
             .forEach { out.add(Zipper.Finding(it.path, "build output or archive", true)) }
+        // v72: big files are the ones that fail to upload on a phone connection
+        entries.filter { it.bytes.size > 4_000_000 }.sortedByDescending { it.bytes.size }.take(8).forEach { e ->
+            if (out.none { f -> f.path == e.path }) out.add(Zipper.Finding(e.path, "big file, ${"%.1f".format(e.bytes.size / 1048576.0)} MB (large uploads can fail on a phone connection)", true))
+        }
         val nm = paths.filter { it.startsWith("node_modules/") || it.contains("/node_modules/") }
         if (nm.isNotEmpty()) out.add(Zipper.Finding(nm.first().substringBefore("node_modules/") + "node_modules/", "${nm.size} dependency files (install on build instead)", true))
         return out

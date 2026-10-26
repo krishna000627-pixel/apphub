@@ -539,7 +539,6 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         OutlinedTextField(note, { note = it }, label = { Text("Note") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         if (pack != null && p != null) Mono("commit : ${pack.version.ifBlank { Commands.bump(p.version) }}: ${note.ifBlank { "update from App Hub" }}", color = Muted)
         Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.autoInstall, { vm.updateAutoInstall(it) }); Text("  Auto-install", fontSize = 12.sp) }
-        Row(verticalAlignment = Alignment.CenterVertically) { HubSwitch(vm.deleteRemoved, { vm.updateDeleteRemoved(it) }); Text("  Delete repo files that are not in the zip", fontSize = 12.sp) }
         if (pack != null && p != null) OutlinedButton({ vm.preview(p, pack) }, Modifier.fillMaxWidth(), enabled = !vm.deploying) {
             Icon(Icons.Default.Compare, null, Modifier.size(16.dp)); Text(" Preview", fontSize = 13.sp)
         }
@@ -870,6 +869,14 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header("Settings")
+        Panel {   // v73
+            Text("Push type", fontWeight = FontWeight.Bold)
+            var pm by remember { mutableIntStateOf(vm.prefs.pushMode) }
+            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("API", "Git pack").forEachIndexed { i, l -> FilterChip(pm == i, { pm = i; vm.prefs.pushMode = i }, { Text(l) }) }
+            }
+            Text(if (pm == 1) "Like git push: one request, the raw files. Checked after, falls back to API if anything is off." else "One request per big file.", Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Muted)
+        }
         Panel {   // v71
             Text("Theme", fontWeight = FontWeight.Bold)
             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

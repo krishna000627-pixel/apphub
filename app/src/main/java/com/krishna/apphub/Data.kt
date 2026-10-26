@@ -119,6 +119,11 @@ class Prefs(ctx: Context) {
     fun addWhatsNew(repo: String, ver: String, text: String) = putWhatsNew(repo, whatsNew(repo).filter { it.ver != ver } + WN(ver, System.currentTimeMillis(), text.take(4000), false))
     fun markWhatsNewWritten(repo: String, ver: String) = putWhatsNew(repo, whatsNew(repo).map { if (it.ver == ver) WN(it.ver, it.time, it.text, true) else it })
 
+    /** v73: how Deploy sends files. 0 = GitHub API (one request per file), 1 = Git pack (the git protocol: one request). */
+    var pushMode: Int
+        get() = sp.getInt("push_mode", 0)
+        set(v) { sp.edit().putInt("push_mode", v).apply() }
+
     /** v71: 0 = dark, 1 = white, 2 = follow the phone. */
     var themeMode: Int
         get() = sp.getInt("theme_mode", 0)
@@ -155,11 +160,6 @@ class Prefs(ctx: Context) {
     var autoInstall: Boolean
         get() = sp.getBoolean("auto_install", true)
         set(v) { sp.edit().putBoolean("auto_install", v).apply() }
-
-    /** v72: a push also deletes repo files that are no longer in the zip. */
-    var deleteRemoved: Boolean
-        get() = sp.getBoolean("delete_removed", true)
-        set(v) { sp.edit().putBoolean("delete_removed", v).apply() }
 
     /** When build runs / details were last pulled from GitHub (millis), so screens can skip the sync while the cache is fresh. */
     fun syncedAt(id: Long) = sp.getLong("sy_$id", 0L)

@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.json.JSONObject
 import android.util.Base64
 import org.json.JSONArray
@@ -451,7 +452,7 @@ class GitHub(private val prefs: Prefs) {
         return if (c4 == 200) true to message else false to "Branch update failed ($c4)"
     }
 
-    data class PushResult(val ok: Boolean, val committed: Boolean = false, val added: Int = 0, val changed: Int = 0, val same: Int = 0, val sha: String = "", val branch: String = "", val removed: Int = 0)
+    data class PushResult(val ok: Boolean, val committed: Boolean = false, val added: Int = 0, val changed: Int = 0, val same: Int = 0, val sha: String = "", val branch: String = "")
 
     /** The file as text if it is valid UTF-8 (so it can travel inline), else null. */
     private fun textOf(b: ByteArray): String? {
@@ -499,8 +500,83 @@ class GitHub(private val prefs: Prefs) {
      * Pushes only what changed: new files are created, changed files are updated, identical files are skipped
      * (compared by git blob hash against the repo's current tree). Result is ONE commit, or none if nothing changed.
      */
-    suspend fun pushFiles(repo: String, files: List<Pair<String, ByteArray>>, message: String, dryRun: Boolean = false,
-                          deleteMissing: Boolean = false, protect: Set<String> = emptySet(), log: (String) -> Unit): PushResult {
+    private val gitHttp = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(300, TimeUnit.SECONDS).writeTimeout(600, TimeUnit.SECONDS).build()
+
+    /**
+     * v73: pushes with the git protocol. Returns (new commit sha, "") when the branch moved, else (null, reason) and nothing changed.
+     * Checks the repo afterwards (every old file still there with the same content, every new file as sent) and puts the branch back if anything is off.
+     */
+    private suspend fun packPush(repo: String, branch: String, parent: String, listing: List<GitPack.Remote>, remote: Map<String, String>,
+                                 todo: List<Pair<String, ByteArray>>, message: String): Pair<String?, String> = withContext(Dispatchers.IO) {
+        try {
+            val login = prefs.login
+            if (login.isBlank()) return@withContext null to "no login"
+            val auth = "Basic " + Base64.encodeToString("x-access-token:${prefs.token}".toByteArray(), Base64.NO_WRAP)
+            val ua = "git/2.43.0 apphub"
+            val ref = "refs/heads/$branch"
+            // 1. discovery: is the branch where we think it is, and does the server take report-status?
+            val disc = Request.Builder().url("https://github.com/$repo.git/info/refs?service=git-receive-pack").header("Authorization", auth).header("User-Agent", ua).build()
+            val lines = gitHttp.newCall(disc).execute().use { r ->
+                if (r.code != 200) return@withContext null to "discovery HTTP ${r.code}"
+                GitPack.pkt(r.body?.bytes() ?: ByteArray(0))
+            }
+            val head = lines.firstOrNull { it.substringBefore('\u0000').trim().endsWith(" $ref") } ?: return@withContext null to "branch not found"
+            if (head.substringBefore(' ') != parent) return@withContext null to "the branch moved since the last read"
+            if (lines.none { it.contains("report-status") }) return@withContext null to "server has no report-status"   // the capabilities sit on the first ref line
+            // 2. the objects
+            val built = GitPack.build(listing, todo, parent, message, login)
+            // 3. one request: the command, then the pack, streamed (chunked)
+            val cmd = GitPack.pktLine("$parent ${built.commit} $ref\u0000 report-status agent=apphub\n") + "0000".toByteArray()
+            val body = object : RequestBody() {
+                override fun contentType() = "application/x-git-receive-pack-request".toMediaType()
+                override fun isOneShot() = false
+                override fun writeTo(sink: BufferedSink) { sink.write(cmd); GitPack.writePack(built.objects, sink.outputStream()) }
+            }
+            val post = Request.Builder().url("https://github.com/$repo.git/git-receive-pack").header("Authorization", auth).header("User-Agent", ua)
+                .header("Accept", "application/x-git-receive-pack-result").post(body).build()
+            val answer = gitHttp.newCall(post).execute().use { r ->
+                if (r.code != 200) return@withContext null to "push HTTP ${r.code}"
+                GitPack.pkt(r.body?.bytes() ?: ByteArray(0))
+            }
+            val unpack = answer.firstOrNull { it.startsWith("unpack ") }?.trim().orEmpty()
+            val bad = answer.firstOrNull { it.startsWith("ng ") }
+            if (unpack != "unpack ok") return@withContext null to (unpack.ifBlank { "no answer from the server" })
+            if (bad != null) return@withContext null to bad.trim().take(120)
+            if (answer.none { it.startsWith("ok $ref") }) return@withContext null to "the server did not confirm the branch"
+            // 4. check the result, put the branch back if it is not exactly old files + new files
+            var good = false
+            for (attempt in 1..3) {
+                val (cv, bv) = get("/repos/$repo/git/trees/${built.rootTree}?recursive=1")
+                if (cv == 200) {
+                    val tj = JSONObject(bv)
+                    if (tj.optBoolean("truncated")) { good = true; break }   // too big to compare; the pack was accepted by the server
+                    val arr = tj.optJSONArray("tree") ?: JSONArray()
+                    val now = HashMap<String, String>()
+                    for (k in 0 until arr.length()) { val o = arr.getJSONObject(k); if (o.s("type") == "blob") now[o.s("path")] = o.s("sha") }
+                    val expect = HashMap(remote); expect.putAll(built.blobShas)
+                    good = now == expect
+                    break
+                }
+                delay(800)
+            }
+            if (!good) {
+                send("PATCH", "/repos/$repo/git/refs/heads/$branch", JSONObject().put("sha", parent).put("force", true))
+                return@withContext null to "the result did not match, branch put back"
+            }
+            built.commit to ""
+        } catch (e: Exception) { null to (e.message ?: "network error").take(80) }
+    }
+
+    /** v72: a short reason for a failed blob upload. */
+    private fun uploadWhy(c: Int, b: String): String = when {
+        c == 0 -> if (b.contains("timeout", true) || b.contains("timed out", true)) "timed out" else b.take(60)
+        c == 403 || c == 429 -> "GitHub rate limit, wait a minute"
+        c == 413 -> "too large for the GitHub API"
+        c in 500..599 -> "GitHub server error $c"
+        else -> "HTTP $c " + runCatching { JSONObject(b).optString("message") }.getOrDefault("").take(60)
+    }
+
+    suspend fun pushFiles(repo: String, files: List<Pair<String, ByteArray>>, message: String, dryRun: Boolean = false, log: (String) -> Unit): PushResult {
         val (c0, b0) = get("/repos/$repo")
         if (c0 != 200) { log("✗ Cannot open $repo ($c0). Check login and repo name."); return PushResult(false) }
         val branch = JSONObject(b0).s("default_branch").ifBlank { "main" }
@@ -520,13 +596,14 @@ class GitHub(private val prefs: Prefs) {
 
         // what the repo has right now
         val remote = HashMap<String, String>()
+        val remoteEntries = ArrayList<GitPack.Remote>()   // v73: the whole listing, for Git pack push
         val (c6, b6) = get("/repos/$repo/git/trees/$baseTree?recursive=1")
         var known = false
         if (c6 == 200) {
             val tj = JSONObject(b6)
             known = !tj.optBoolean("truncated")
             val arr = tj.optJSONArray("tree") ?: JSONArray()
-            for (k in 0 until arr.length()) { val o = arr.getJSONObject(k); if (o.s("type") == "blob") remote[o.s("path")] = o.s("sha") }
+            for (k in 0 until arr.length()) { val o = arr.getJSONObject(k); remoteEntries.add(GitPack.Remote(o.s("path"), o.s("mode"), o.s("type"), o.s("sha"))); if (o.s("type") == "blob") remote[o.s("path")] = o.s("sha") }
         }
         if (!known) { remote.clear(); log("• could not compare with the repo, uploading everything") }
 
@@ -541,27 +618,24 @@ class GitHub(private val prefs: Prefs) {
                 else -> same++
             }
         }
-        // v72: files that are in the repo but no longer in the zip are removed in the same commit
-        val gone = ArrayList<String>()
-        if (deleteMissing && known) {
-            val have = files.map { it.first }.toHashSet()
-            val zipHasWorkflow = have.any { it.startsWith(".github/workflows/") }
-            for (path in remote.keys.sorted()) {
-                if (path in have || path in protect || Zipper.skip(path, 0)) continue
-                if (path.startsWith(".github/workflows/") && !zipHasWorkflow) continue   // a zip without a workflow must not break the build
-                gone.add(path)
-            }
-            if (gone.size > maxOf(10, remote.size / 2)) {
-                log("• ${gone.size} repo files are not in this zip. That looks like a partial zip, so nothing was deleted.")
-                gone.clear()
-            }
-        }
-        log("• $added new, $changed changed, $same unchanged (skipped)" + if (gone.isNotEmpty()) ", ${gone.size} to delete" else "")
-        gone.forEach { marks.add("  - $it") }
+        log("• $added new, $changed changed, $same unchanged (skipped)")
         marks.take(30).forEach { log(it) }
         if (marks.size > 30) log("  … and ${marks.size - 30} more")
-        if (todo.isEmpty() && gone.isEmpty()) { log("✓ Nothing to push, the repo already has these files."); return PushResult(true, false, 0, 0, same) }
-        if (dryRun) { log("• Preview only, nothing was pushed."); return PushResult(true, false, added, changed, same, removed = gone.size) }
+        if (todo.isEmpty()) { log("✓ Nothing to push, the repo already has these files."); return PushResult(true, false, 0, 0, same) }
+        if (dryRun) { log("• Preview only, nothing was pushed."); return PushResult(true, false, added, changed, same) }
+
+        // v73: Git pack push (opt-in in Settings): the git protocol, one request. Anything odd falls back to the API below.
+        val t0 = System.nanoTime()
+        val mb = todo.sumOf { it.second.size } / 1048576.0
+        if (prefs.pushMode == 1) {
+            val (sha, why) = if (known) packPush(repo, branch, parent, remoteEntries, remote, todo, message) else null to "could not read the repo listing"
+            if (sha != null) {
+                log("• Git pack push: ${"%.1f".format(mb)} MB in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s")
+                log("• commit ${sha.take(7)} on $branch")
+                return PushResult(true, true, added, changed, same, sha, branch)
+            }
+            log("• Git pack push not used ($why), using the API")
+        }
 
         // Text files go inline in the tree request (no extra call each). Only binary or big files need a blob upload.
         var inlineBytes = 0
@@ -573,25 +647,39 @@ class GitHub(private val prefs: Prefs) {
         val blobFiles = todo.filter { it.first !in inline }
         val shas = HashMap<String, String>()
         if (blobFiles.isNotEmpty()) {
-            val gate = Semaphore(8)
+            val small = Semaphore(6)
+            val big = Semaphore(2)   // v72: files of 1 MB or more go two at a time
             var done = 0
             val res = coroutineScope {
                 blobFiles.map { (path, bytes) ->
                     async {
-                        gate.withPermit {
-                            val (c, b) = send("POST", "/repos/$repo/git/blobs",
-                                JSONObject().put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64"))
-                            if (c == 201) {
+                        (if (bytes.size >= 1_000_000) big else small).withPermit {
+                            var sha: String? = null
+                            var why = ""
+                            for (attempt in 1..3) {   // v72: up to 3 tries; a rate limit or a bad moment on the network often passes
+                                val (c, b) = send("POST", "/repos/$repo/git/blobs",
+                                    JSONObject().put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64"))
+                                if (c == 201) { sha = JSONObject(b).getString("sha"); break }
+                                why = uploadWhy(c, b)
+                                if (c in 400..499 && c != 403 && c != 408 && c != 429) break   // too large or refused: trying again will not help
+                                delay(attempt * 3000L)
+                            }
+                            if (sha != null) {
                                 done++
                                 if (done % 10 == 0 || done == blobFiles.size) log("  uploaded $done/${blobFiles.size}")
-                                path to JSONObject(b).getString("sha")
-                            } else path to null
+                            }
+                            Triple(path, sha, "${"%.1f".format(bytes.size / 1048576.0)} MB, $why")
                         }
                     }
                 }.awaitAll()
             }
-            val bad = res.firstOrNull { it.second == null }
-            if (bad != null) { log("✗ upload failed: ${bad.first}"); return PushResult(false) }
+            val bad = res.filter { it.second == null }
+            if (bad.isNotEmpty()) {
+                bad.take(5).forEach { log("✗ upload failed: ${it.first} (${it.third})") }
+                if (bad.size > 5) log("  … and ${bad.size - 5} more")
+                log("• Nothing was pushed. Run it again, or leave big files out (the file check offers that).")
+                return PushResult(false)
+            }
             res.forEach { shas[it.first] = it.second!! }
         }
         log("• ${inline.size} text files sent inline, ${blobFiles.size} uploaded")
@@ -601,7 +689,6 @@ class GitHub(private val prefs: Prefs) {
             if (path in inline) e.put("content", inline[path]) else e.put("sha", shas[path])
             entries.put(e)
         }
-        for (path in gone) entries.put(JSONObject().put("path", path).put("mode", "100644").put("type", "blob").put("sha", JSONObject.NULL))   // null sha = delete
         val (c3, b3) = send("POST", "/repos/$repo/git/trees", JSONObject().put("base_tree", baseTree).put("tree", entries))
         if (c3 != 201) { log("✗ tree failed ($c3)"); return PushResult(false) }
         val (c4, b4) = send("POST", "/repos/$repo/git/commits",
@@ -610,8 +697,9 @@ class GitHub(private val prefs: Prefs) {
         val newSha = JSONObject(b4).getString("sha")
         val c5 = send("PATCH", "/repos/$repo/git/refs/heads/$branch", JSONObject().put("sha", newSha)).first
         if (c5 != 200) { log("✗ branch update failed ($c5)"); return PushResult(false) }
+        log("• API push: ${"%.1f".format(mb)} MB in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s")
         log("• commit ${newSha.take(7)} on $branch")
-        return PushResult(true, true, added, changed, same, newSha, branch, gone.size)
+        return PushResult(true, true, added, changed, same, newSha, branch)
     }
 
     // ---- install / update ----
