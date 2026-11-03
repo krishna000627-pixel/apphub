@@ -12,6 +12,10 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v82
+- Home stats: "Passing" became "Building" (Stage.BUILDING). Each box (Apps, Building, Failing, To push) is tappable: sets `focus` in `Dashboard` (Screens.kt), hides stats/chips, header shows back arrow + "Name (n)". `Stat` got an optional onClick.
+- Files page (Files.kt): refresh icon replaced by a three dots menu: "Download source code" (`HubVM.downloadSource` -> `GitHub.downloadSource`, repo zipball saved as <repo>_source.zip in Downloads, numbered if it exists) and "Reload files". versionCode 82, versionName "82.0". Not compiled here: CI is the first build.
+
 ## v81
 - Removed the "● live" line from the open running build card (`BuildsBody`, ProjectPage.kt). The live refresh itself is unchanged. The log page (`LogView.kt`) still shows its own "● live" tag. versionCode 81, versionName "81.0". Not compiled here: CI is the first build.
 

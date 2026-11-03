@@ -519,6 +519,24 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         filesLoading = false
     }
 
+    /** v82: saves the whole repo (default branch) as a zip straight into Downloads. */
+    var sourceBusy by mutableStateOf(false)
+    fun downloadSource(p: Project) = viewModelScope.launch {
+        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Accounts)"); return@launch }
+        if (sourceBusy) return@launch
+        sourceBusy = true
+        toast("Downloading source code…")
+        val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+        val base = p.repo.substringAfter('/').ifBlank { p.name }
+        var dest = java.io.File(dir, "${base}_source.zip")
+        var n = 1
+        while (dest.exists()) { dest = java.io.File(dir, "${base}_source ($n).zip"); n++ }
+        val r = runCatching { dir.mkdirs(); gh.downloadSource(p.repo, dest) }
+        if (r.isSuccess) toast("Saved ${dest.name} in Downloads")
+        else { dest.delete(); toast("Could not download: ${r.exceptionOrNull()?.message ?: "error"}") }
+        sourceBusy = false
+    }
+
     /** v31: content of one repo file for the file page. */
     suspend fun readFile(p: Project, path: String): GitHub.Blob = gh.readBlob(p.repo, path)
 

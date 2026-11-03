@@ -809,6 +809,9 @@ class GitHub(private val prefs: Prefs) {
         }
     }
 
+    /** v82: the repo as a zip (GitHub zipball of the default branch). */
+    suspend fun downloadSource(repo: String, dest: File) = download("$api/repos/$repo/zipball", dest) { _, _ -> }
+
     fun install(ctx: Context, f: File) {
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", f)
         ctx.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")

@@ -296,7 +296,16 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
     delPath?.let { path -> DeleteFileDialog(p, path, { delPath = null }) { delPath = null; vm.deleteFile(p, path) } }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header("Files", nav) {
-            IconButton({ vm.loadFiles(p) }, Modifier.size(40.dp), enabled = !vm.filesLoading) { Icon(Icons.Default.Refresh, null, tint = Muted) }
+            var menu by remember { mutableStateOf(false) }
+            Box {
+                IconButton({ menu = true }, Modifier.size(40.dp)) { Icon(Icons.Default.MoreVert, null, tint = Muted) }
+                DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem({ Text("Download source code") }, { menu = false; vm.downloadSource(p) }, enabled = !vm.sourceBusy,
+                        leadingIcon = { Icon(Icons.Default.Download, null) })
+                    DropdownMenuItem({ Text("Reload files") }, { menu = false; vm.loadFiles(p) }, enabled = !vm.filesLoading,
+                        leadingIcon = { Icon(Icons.Default.Refresh, null) })
+                }
+            }
         }
         FilesHead(vm, p, dir, { dir = it }, fq, { fq = it })
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {

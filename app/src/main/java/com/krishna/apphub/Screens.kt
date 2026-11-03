@@ -98,8 +98,9 @@ fun installLabel(vm: HubVM, p: Project, upd: Boolean): String = when {
         Icon(icon, null); Spacer(Modifier.width(8.dp)); Text(t, fontWeight = FontWeight.Bold)
     }
 
-@Composable fun Stat(label: String, value: Int, c: Color, mod: Modifier) =
-    Column(mod.background(Surf, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp)).padding(vertical = 6.dp),
+@Composable fun Stat(label: String, value: Int, c: Color, mod: Modifier, onClick: (() -> Unit)? = null) =
+    Column(mod.clip(RoundedCornerShape(10.dp)).background(Surf, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp))
+        .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier).padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Text("$value", color = c, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         Text(label, fontSize = 10.sp, color = Muted)
@@ -245,30 +246,34 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     var f by remember { mutableStateOf("All") }
     var q by remember { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
+    var focus by remember { mutableStateOf<String?>(null) }   // v82: tap Apps / Building / Failing / To push to show only those
     LaunchedEffect(Unit) { vm.autoSync() }   // fresh data at once, silently
     val ctx = LocalContext.current
     fun hit(p: Project, k: String) = when (k) {
         "Pinned" -> vm.isPinned(p.id); "To push" -> vm.pending(p); "Errors" -> p.lastStatus == "failed"; "Updates" -> vm.hasUpdate(p)
+        "Building" -> vm.buildStage(p) == Stage.BUILDING; "Failing" -> p.lastStatus == "failed"; "Apps" -> true
         else -> ProjectType.values().firstOrNull { it.plural == k }?.let { t -> p.kind == t } ?: true
     }
-    val shown = ps.filter { hit(it, if (searching) "All" else f) && (q.isBlank() || it.name.contains(q, true) || it.repo.contains(q, true)) }
+    val shown = ps.filter { hit(it, if (searching) "All" else focus ?: f) && (q.isBlank() || it.name.contains(q, true) || it.repo.contains(q, true)) }
         .sortedWith(compareByDescending<Project> { vm.isPinned(it.id) }.thenBy { it.name.lowercase() })
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         // v47: tap the name to refresh, search sits where the refresh icon was (opens in the header, no box above the list)
         BackHandler(searching) { searching = false; q = "" }
+        BackHandler(focus != null && !searching) { focus = null }
         Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 4.dp).height(40.dp), verticalAlignment = Alignment.CenterVertically) {
             if (searching) {
                 SearchField(q, { q = it }, { searching = false }, Modifier.weight(1f))
             } else {
-                Row(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).clickable { vm.refreshAll() }.padding(vertical = 8.dp, horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("App Hub", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Green, maxLines = 1)
+                if (focus != null) IconButton({ focus = null }, Modifier.size(40.dp)) { Icon(Icons.Default.ArrowBack, null) }
+                Row(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).clickable { if (focus != null) focus = null else vm.refreshAll() }.padding(vertical = 8.dp, horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (focus != null) "$focus (${shown.size})" else "App Hub", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Green, maxLines = 1)
                     if (vm.refreshing) { Spacer(Modifier.width(10.dp)); CircularProgressIndicator(Modifier.size(14.dp), color = Green, strokeWidth = 2.dp) }
                 }
-                IconButton({ searching = true }, Modifier.size(40.dp)) { Icon(Icons.Default.Search, null) }
+                IconButton({ focus = null; searching = true }, Modifier.size(40.dp)) { Icon(Icons.Default.Search, null) }
                 IconButton({ nav.navigate("add") }, Modifier.size(40.dp)) { Icon(Icons.Default.Add, null, tint = Green) }
             }
         }
-        if (!searching) Column {   // v49: while searching only the header and the list stay
+        if (!searching && focus == null) Column {   // v49: while searching only the header and the list stay
         if (vm.sessionExpired) Panel(Modifier.padding(bottom = 6.dp), border = Red.copy(alpha = 0.7f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -288,10 +293,10 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         // v27 feature 1: shown at once when you come back from GitHub
         if (vm.loginBusy) Text("Finishing login…", Modifier.padding(bottom = 6.dp), fontSize = 12.sp, color = Cyan)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Stat("Apps", ps.size, Cyan, Modifier.weight(1f))
-            Stat("Passing", ps.count { it.lastStatus == "passed" }, Green, Modifier.weight(1f))
-            Stat("Failing", ps.count { it.lastStatus == "failed" }, Red, Modifier.weight(1f))
-            Stat("To push", ps.count { vm.pending(it) }, Amber, Modifier.weight(1f))
+            Stat("Apps", ps.size, Cyan, Modifier.weight(1f)) { focus = "Apps" }
+            Stat("Building", ps.count { vm.buildStage(it) == Stage.BUILDING }, Green, Modifier.weight(1f)) { focus = "Building" }
+            Stat("Failing", ps.count { it.lastStatus == "failed" }, Red, Modifier.weight(1f)) { focus = "Failing" }
+            Stat("To push", ps.count { vm.pending(it) }, Amber, Modifier.weight(1f)) { focus = "To push" }
         }
         // v71: the "ready to install" banner is gone; the card of that app already has the Install / Update button
         Spacer(Modifier.height(6.dp))
@@ -311,6 +316,9 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
         } else if (shown.isEmpty()) {
             val (ic, t, d) = when {
                 q.isNotBlank() -> Triple(Icons.Default.Search, "No match", "No app matches \"$q\".")
+                focus == "Building" -> Triple(Icons.Default.CheckCircle, "Nothing building", "No app is building right now.")
+                focus == "Failing" -> Triple(Icons.Default.CheckCircle, "No failing builds", "All your builds are fine.")
+                focus == "To push" -> Triple(Icons.Default.CloudUpload, "Nothing to push", "A new zip in Downloads shows up here.")
                 f == "Pinned" -> Triple(Icons.Default.Star, "Nothing pinned", "Tap the star on an app to keep it at the top.")
                 f == "To push" -> Triple(Icons.Default.CloudUpload, "Nothing to push", "A new zip in Downloads shows up here.")
                 f == "Errors" -> Triple(Icons.Default.CheckCircle, "No failing builds", "All your builds are fine.")
