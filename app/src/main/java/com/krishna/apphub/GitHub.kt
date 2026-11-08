@@ -809,8 +809,26 @@ class GitHub(private val prefs: Prefs) {
         }
     }
 
-    /** v82: the repo as a zip (GitHub zipball of the default branch). */
-    suspend fun downloadSource(repo: String, dest: File) = download("$api/repos/$repo/zipball", dest) { _, _ -> }
+    /**
+     * v83: the repo as a zip (GitHub zipball of the default branch).
+     * The zipball endpoint is not a release asset: it answers 415 to "Accept: application/octet-stream",
+     * so it gets its own request with the normal GitHub Accept header, no Range, and a fresh file every time.
+     * GitHub answers 302 to codeload.github.com; OkHttp follows it and drops the token on the other host.
+     */
+    suspend fun downloadSource(repo: String, dest: File) = withContext(Dispatchers.IO) {
+        dest.delete()
+        http.newCall(rb("$api/repos/$repo/zipball").build()).execute().use { resp ->
+            if (!resp.isSuccessful) error(
+                when (resp.code) {
+                    401, 403 -> "no access to this repo (HTTP ${resp.code})"
+                    404 -> "repo not found (HTTP 404)"
+                    else -> "HTTP ${resp.code}"
+                }
+            )
+            val body = resp.body ?: error("empty response")
+            body.byteStream().use { i -> java.io.FileOutputStream(dest).use { o -> i.copyTo(o, 16384) } }
+        }
+    }
 
     fun install(ctx: Context, f: File) {
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", f)
