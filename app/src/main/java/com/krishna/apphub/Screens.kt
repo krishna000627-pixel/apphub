@@ -223,6 +223,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             composable("deploy") { DeployScreen(vm, nav) }
             composable("settings") { SettingsScreen(vm, nav) }
             composable("settings/push") { PushTypeScreen(vm, nav) }   // v74
+            composable("settings/autowf") { AutoWorkflowsScreen(vm, nav) }   // v92
             composable("settings/storage") { StorageScreen(vm, nav) }   // v87
             composable("settings/theme") { ThemeScreen(vm, nav) }
             composable("about") { AboutScreen(vm, nav) }
@@ -882,6 +883,8 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
         Header("Settings")
         Panel {   // v74: Push type and Theme are sub pages now
             NavRow(Icons.Default.CloudUpload, Cyan, "Push type", if (vm.prefs.pushMode == 1) "Git pack" else "API") { nav.navigate("settings/push") { launchSingleTop = true } }
+            RowLine()
+            NavRow(Icons.Default.AccountTree, Cyan, "Workflows", "What App Hub adds and updates by itself") { nav.navigate("settings/autowf") { launchSingleTop = true } }   // v92
             RowLine()
             NavRow(Icons.Default.Storage, Cyan, "Storage", "Private repo limit: clean GitHub artifacts") { nav.navigate("settings/storage") { launchSingleTop = true } }   // v87
             RowLine()

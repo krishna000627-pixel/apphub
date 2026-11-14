@@ -12,6 +12,12 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v92
+- build.yml (detect job): app module = folder whose build file has com.android.application (output `module`, "" = root), `wrapper` = gradlew + wrapper properties exist (then ./gradlew, no gradle-version; else setup-gradle installs `gradle` option). Steps: SDK licences, Find APK (fails with a listing when none), upload/release use the found dir.
+- `HubVM.autoWorkflows(force)`: runs 6 s after start and from Settings > Workflows ("Check all repos now"). Once per project per app versionCode (`Prefs.wfAutoVer`); needs login. Adds housekeeping.yml when missing (switch `wfAutoAdd`), build.yml for an APP repo with no workflow at all, pages.yml for a non-Vercel website with none; replaces OUTDATED App Hub files (switch `wfAutoKeep`; old "Build APK" counts as App Hub's). One commit per repo "ci: App Hub workflows [skip ci]", partial = true. Log in `Prefs.wfAutoLog` (40 lines). A failed read is retried next start; a failed push is logged and not retried until the next update.
+- Workflows page: "What the workflows need" (Wf.Need): Gradle files, wrapper, 4 signing secrets (`GitHub.secretNames`), other workflows. Route `settings/autowf` = AutoWorkflowsScreen.
+- versionCode 92, versionName "92.0". Not compiled here and the new build.yml has not run on GitHub yet.
+
 ## v91
 - Duplicate-workflow guard: `GitHub.workflowFiles` lists .github/workflows; `Wf.State.others` = files that are not App Hub's three. Workflows page: Add dialog for build.yml / pages.yml shows an amber warning and the button reads "Add anyway" when others exist. Deploy (first push, no workflow in the zip): build.yml / pages.yml are skipped (logged) when others exist; housekeeping.yml is still added.
 - Storage page groups by live visibility (`gh.repoInfo(...).second`): Private (counts against 500 MB) / Public / Visibility not read. `changeVisibility` clears `stor[id]` and the page reloads when `repoPrivate` changes. "Keep 1 day" no longer depends on project kind.

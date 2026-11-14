@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,7 +67,9 @@ object Wf {
         }
     }
     /** What the page knows about one repo. [raw] = the options file as it is in the repo (null = none yet). */
-    class State(val files: Map<String, St>, val cfg: Cfg, val raw: JSONObject?, val others: List<String> = emptyList())
+    class State(val files: Map<String, St>, val cfg: Cfg, val raw: JSONObject?, val others: List<String> = emptyList(), val needs: List<Need> = emptyList())
+    /** v92: one thing the workflows need from the repo, and whether it is there. [fix] = where App Hub can put it right. */
+    class Need(val title: String, val ok: Boolean, val note: String)
 }
 
 private fun stText(s: Wf.St) = when (s) {
@@ -119,6 +122,15 @@ private fun stText(s: Wf.St) = when (s) {
             if (vm.wfBusy) Text("Working…", Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Cyan)
             else if (vm.wfMsg.isNotBlank()) Text(vm.wfMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
         }
+        if (st != null && st.needs.isNotEmpty()) Panel {   // v92
+            SectionTitle(Icons.Default.Checklist, "What the workflows need")
+            st.needs.forEach { n ->
+                Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.Top) {
+                    Text(if (n.ok) "✓ " else "✗ ", color = if (n.ok) Green else Amber, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Column { Text(n.title, fontSize = 13.sp); Text(n.note, fontSize = 11.sp, color = Muted) }
+                }
+            }
+        }
         Wf.all.forEach { d ->
             val s = st?.files?.get(d.file)
             Panel {
@@ -162,6 +174,31 @@ private fun stText(s: Wf.St) = when (s) {
                 Modifier.padding(top = 6.dp), fontSize = 11.sp, color = Muted)
         }
         BigButton(if (dirty) "Save options" else "Options saved", Icons.Default.Save) { if (dirty && !vm.wfBusy) vm.saveWfCfg(p, now) }
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+
+/** v92: Settings > Workflows (all projects): what App Hub does by itself after an update. */
+@Composable fun AutoWorkflowsScreen(vm: HubVM, nav: NavHostController) {
+    var add by remember { mutableStateOf(vm.prefs.wfAutoAdd) }
+    var keep by remember { mutableStateOf(vm.prefs.wfAutoKeep) }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Header("Workflows", nav)
+        Panel {
+            SettingRow(Icons.Default.AddCircle, "Add missing workflows", "After an update: housekeeping.yml in every repo, build.yml in an app repo with no workflow", Cyan) {
+                HubSwitch(add) { add = it; vm.prefs.wfAutoAdd = it } }
+            SettingRow(Icons.Default.Autorenew, "Keep App Hub's files current", "After an update: App Hub's own build / pages / housekeeping files get the newer version", Cyan) {
+                HubSwitch(keep) { keep = it; vm.prefs.wfAutoKeep = it } }
+            Text("Each change is one commit marked [skip ci] (no build starts). A workflow file of your own is never added next to, or replaced.",
+                Modifier.padding(top = 6.dp), fontSize = 11.sp, color = Muted)
+        }
+        BigButton(if (vm.wfAutoBusy) "Checking…" else "Check all repos now", Icons.Default.PlayArrow) { if (!vm.wfAutoBusy) vm.autoWorkflows(force = true) }
+        Panel {
+            SectionTitle(Icons.Default.History, "Done automatically")
+            val log = vm.wfAutoLog
+            if (log.isEmpty()) Text("Nothing yet.", fontSize = 12.sp, color = Muted) else log.forEach { Mono(it, color = if (it.contains("✗")) Amber else Color.Unspecified) }
+        }
         Spacer(Modifier.height(12.dp))
     }
 }

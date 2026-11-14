@@ -285,6 +285,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             if (prefs.seeded) listOf("questblock", "bgbrowser", "apphub").forEach { prefs.setPresetSeen(it) }  // already offered before v12
             seedMissing(onlyNew = true); prefs.seeded = true
             fixOwners()
+            delay(6000); autoWorkflows()   // v92: after an update, once per project
         }
     }
 
@@ -922,8 +923,74 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         val raw = c.bytes?.let { runCatching { JSONObject(String(it)) }.getOrNull() }
         val own = Wf.all.map { it.file }
         val others = (gh.workflowFiles(p.repo) ?: emptyList()).filter { it !in own }   // v91: workflows of the repo that are not App Hub's
-        wf[p.id] = Wf.State(files, Wf.Cfg.from(raw), raw, others)
+        val tree = (repoFiles[p.id] ?: gh.files(p.repo))?.map { it.path }?.toSet()
+        val secrets = gh.secretNames(p.repo)
+        val needs = buildList {
+            if (tree != null && p.kind == ProjectType.APP) {
+                val gradle = tree.any { it.endsWith("build.gradle") || it.endsWith("build.gradle.kts") }
+                add(Wf.Need("Android project", gradle, if (gradle) "Gradle build files found" else "No build.gradle in the repo yet: the build job stays off"))
+                val wr = "gradlew" in tree && "gradle/wrapper/gradle-wrapper.properties" in tree
+                add(Wf.Need("Gradle wrapper", wr, if (wr) "Used as it is" else "Not in the repo: the workflow installs Gradle ${Wf.Cfg.from(raw).gradle} itself"))
+            }
+            if (secrets != null && p.kind == ProjectType.APP) {
+                val miss = listOf("KEYSTORE_BASE64", "KEYSTORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD").filter { it !in secrets }
+                add(Wf.Need("Signing secrets", miss.isEmpty(), if (miss.isEmpty()) "4 of 4 set" else "Missing ${miss.joinToString(", ")}: builds use the debug key. Re-send them in Settings > Signing"))
+            }
+            if (others.isNotEmpty()) add(Wf.Need("One workflow per job", false, "Also in the repo: ${others.joinToString(", ")}. Check they do not build or deploy twice"))
+        }
+        wf[p.id] = Wf.State(files, Wf.Cfg.from(raw), raw, others, needs)
         wfBusy = false
+    }
+
+    // ---- v92: automatic workflows after an update ----
+    var wfAutoBusy by mutableStateOf(false)
+    var wfAutoLog by mutableStateOf(prefs.wfAutoLog)
+
+    private fun wfLog(line: String) { val l = (listOf(line) + prefs.wfAutoLog).take(40); prefs.wfAutoLog = l; wfAutoLog = l }
+
+    /**
+     * Once per app version and project (or when forced): adds housekeeping.yml where it is missing, adds build.yml to an app repo that has no
+     * workflow at all, and replaces App Hub's own outdated files with the bundled ones. A file of yours is never touched and no build.yml / pages.yml
+     * is added next to workflows of your own. One commit per repo, marked [skip ci], partial (nothing else is deleted).
+     */
+    fun autoWorkflows(force: Boolean = false) = viewModelScope.launch {
+        if (wfAutoBusy || login.isBlank() || sessionExpired) return@launch
+        val add = prefs.wfAutoAdd; val keep = prefs.wfAutoKeep
+        if (!add && !keep) { if (force) toast("Both switches are off"); return@launch }
+        val ctx = getApplication<Application>()
+        val ver = runCatching { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(ctx.packageManager.getPackageInfo(ctx.packageName, 0)) }.getOrDefault(0L)
+        if (force) prefs.clearWfAutoVer()
+        wfAutoBusy = true
+        var changed = 0
+        for (p in projects.value.filter { it.repo.contains("/") && prefs.wfAutoVer(it.id) < ver }) {
+            val others = gh.workflowFiles(p.repo) ?: continue   // could not read: try again next time
+            val own = Wf.all.map { it.file }
+            val foreign = others.filter { it !in own }
+            val push = mutableListOf<Pair<String, ByteArray>>(); val notes = mutableListOf<String>()
+            var failed = false
+            for (d in Wf.all) {
+                val wanted = when (d.file) { "build.yml" -> p.kind == ProjectType.APP; "pages.yml" -> p.kind == ProjectType.WEBSITE && !isVercel(p); else -> true }
+                val b = gh.readBlob(p.repo, Wf.path(d.file))
+                val missing = b.bytes == null && b.err.startsWith("File not found")
+                if (b.bytes == null && !missing) { failed = true; break }
+                val st = Wf.status(d.file, if (missing) null else String(b.bytes!!), String(Wf.asset(ctx, d.file)), readError = false)
+                when {
+                    st == Wf.St.MISSING && add && wanted && (d.file == "housekeeping.yml" || (d.file == "build.yml" && others.isEmpty()) || (d.file == "pages.yml" && foreign.isEmpty() && others.isEmpty())) ->
+                        { push += Wf.path(d.file) to Wf.asset(ctx, d.file); notes += "${d.file} added" }
+                    st == Wf.St.OUTDATED && keep -> { push += Wf.path(d.file) to Wf.asset(ctx, d.file); notes += "${d.file} updated" }
+                }
+            }
+            if (failed) continue
+            if (push.isNotEmpty()) {
+                val lines = mutableListOf<String>()
+                val r = gh.pushFiles(p.repo, push, "ci: App Hub workflows [skip ci]", partial = true) { lines += it }
+                if (r.ok) { changed++; wfLog("${p.name}: ${notes.joinToString(", ")}"); wf.remove(p.id) }
+                else wfLog("✗ ${p.name}: ${lines.lastOrNull { it.startsWith("✗") }?.removePrefix("✗ ") ?: "push failed (token needs workflow permission?)"}")
+            }
+            prefs.setWfAutoVer(p.id, ver)
+        }
+        wfAutoBusy = false
+        if (force) toast(if (changed > 0) "Changed $changed repo(s)" else "Nothing to change")
     }
 
     /** Adds or updates one workflow file with one commit marked [skip ci] (no build starts). Only App Hub's own file or a missing one. */

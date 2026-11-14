@@ -333,6 +333,13 @@ class GitHub(private val prefs: Prefs) {
     suspend fun dispatch(repo: String) =
         send("POST", "/repos/$repo/actions/workflows/build.yml/dispatches", JSONObject().put("ref", "main")).first == 204
 
+    /** v92: names of the Actions secrets of the repo (values are never readable). null = could not be read. */
+    suspend fun secretNames(repo: String): List<String>? {
+        val (c, b) = get("/repos/$repo/actions/secrets?per_page=100")
+        if (c != 200) return null
+        return runCatching { JSONObject(b).getJSONArray("secrets").let { a -> (0 until a.length()).map { a.getJSONObject(it).optString("name") } } }.getOrNull()
+    }
+
     /** v91: the file names in .github/workflows. Empty = none, null = could not be read. */
     suspend fun workflowFiles(repo: String): List<String>? {
         val (c, b) = get("/repos/$repo/contents/.github/workflows")

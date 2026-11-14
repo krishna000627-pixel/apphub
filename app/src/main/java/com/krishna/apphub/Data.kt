@@ -121,6 +121,23 @@ class Prefs(ctx: Context) {
     fun markWhatsNewWritten(repo: String, ver: String) = putWhatsNew(repo, whatsNew(repo).map { if (it.ver == ver) WN(it.ver, it.time, it.text, true) else it })
     fun markWhatsNewSkipped(repo: String, ver: String) = putWhatsNew(repo, whatsNew(repo).map { if (it.ver == ver && !it.written) WN(it.ver, it.time, it.text, false, true) else it })
 
+    /** v92: after an update, App Hub adds housekeeping.yml to every repo that lacks it (and a build.yml to an app repo with no workflow at all). */
+    var wfAutoAdd: Boolean
+        get() = sp.getBoolean("wf_auto_add", true)
+        set(v) { sp.edit().putBoolean("wf_auto_add", v).apply() }
+    /** v92: after an update, App Hub's own workflow files in a repo are replaced by the newer ones (a file of yours is never touched). */
+    var wfAutoKeep: Boolean
+        get() = sp.getBoolean("wf_auto_keep", true)
+        set(v) { sp.edit().putBoolean("wf_auto_keep", v).apply() }
+    /** v92: the app version (versionCode) a project was last checked for workflows; 0 = never. */
+    fun wfAutoVer(id: Long) = sp.getLong("wa_$id", 0L)
+    fun setWfAutoVer(id: Long, v: Long) { sp.edit().putLong("wa_$id", v).apply() }
+    fun clearWfAutoVer() { val e = sp.edit(); sp.all.keys.filter { it.startsWith("wa_") }.forEach { e.remove(it) }; e.apply() }
+    /** v92: what the automatic check did, newest first (one line each, 40 kept). */
+    var wfAutoLog: List<String>
+        get() = (sp.getString("wf_auto_log", "") ?: "").split("\n").filter { it.isNotBlank() }
+        set(v) { sp.edit().putString("wf_auto_log", v.take(40).joinToString("\n")).apply() }
+
     /** v73: how Deploy sends files. 0 = GitHub API (one request per file), 1 = Git pack (the git protocol: one request). */
     var pushMode: Int
         get() = sp.getInt("push_mode", 0)
