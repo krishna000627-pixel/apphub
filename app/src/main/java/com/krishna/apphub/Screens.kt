@@ -193,6 +193,16 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             DialogNote("Newest zip in Downloads for this app. Only new and changed files are uploaded.")
         }
     }
+    // v84: first build from App Hub: ask once whether the repo's other workflows (never run so far) should start too
+    vm.otherWfAsk?.let { (op, list) ->
+        HubDialog("Start other workflows?", { vm.skipOtherWf() }, listOf(
+            dPrimary("Start") { vm.startOtherWf() },
+            dCancel("Not now") { vm.skipOtherWf() }), icon = Icons.Default.PlayArrow, tone = Cyan, sub = op.name) {
+            DialogText("These never ran for this project:")
+            list.forEach { DialogCard { Text(it.name.ifBlank { it.path }, fontWeight = FontWeight.Bold, color = Cyan, fontSize = 13.sp); Mono(it.path, color = Muted) } }
+            DialogNote("Asked once. One with no manual trigger will not start.")
+        }
+    }
     // contentWindowInsets = 0 so the status bar inset is applied exactly once (statusBarsPadding below)
     // v63/v64: the project pages (project, builds, releases, settings, info, files, file, env, install) are sub pages with a back arrow, so the app bar is hidden there
     val onProject = route != null && listOf("about", "whatsnew/", "detail/", "builds/", "releases/", "psettings/", "aprompt/", "info/", "files/", "file/", "env/", "install/").any { route.startsWith(it) }

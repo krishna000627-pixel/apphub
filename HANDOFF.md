@@ -12,6 +12,12 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v84
+- Other workflows: `GitHub.idleWorkflows` (active workflows except build.yml with zero runs) + `startWorkflow` (dispatch on main). `HubVM.checkOtherWf(p)` runs after a manual Build and when a Deploy build ends; asks once per project (`Prefs.otherWfDone`), dialog in Screens.kt (`vm.otherWfAsk`). Workflows with runs are never offered.
+- What's new "Waiting" fix: `HubVM.syncWhatsNew` starts from the releases (not passed runs), marks an entry written when the release notes already hold the text, else writes them. Runs after every APK download (`fetchApk`) and from `writeWhatsNew` at most every 5 min. The 3-day limit no longer blocks it.
+- Keyboard: `NoAutoKeyboard` (PromptPages.kt) clears focus on the prompt pages; manifest `stateHidden|adjustResize`.
+- Bug prompt: task "Bug" in `Prompts.tasksFor` (app + web/server wording). versionCode 84, versionName "84.0". Not compiled here: CI is the first build.
+
 ## v83
 - Fix: "Download source code" (Files page) showed HTTP 415. Cause: `GitHub.download()` sends `Accept: application/octet-stream` (needed for release assets), but `/repos/<repo>/zipball` does not accept it. `GitHub.downloadSource` now has its own request (normal `application/vnd.github+json` Accept, no Range, fresh file) and clearer 401/403/404 messages. versionCode 83, versionName "83.0". Not compiled here: CI is the first build.
 

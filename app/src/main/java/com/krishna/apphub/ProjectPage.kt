@@ -248,7 +248,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                 RowLine()
                 NavRow(Icons.Default.Info, Cyan, "Info", "Status, versions, addresses") { nav.navigate("info/$id") }
                 RowLine()
-                NavRow(Icons.Default.AutoAwesome, Cyan, "Prompt", "Fix, add, improve, adopt") { vm.selId = id; vm.task = if (err.isNotBlank()) "Fix error" else "Add feature"; nav.navigate("aprompt/$id") }
+                NavRow(Icons.Default.AutoAwesome, Cyan, "Prompt", "Fix, bug, add, improve, adopt") { vm.selId = id; vm.task = if (err.isNotBlank()) "Fix error" else "Add feature"; nav.navigate("aprompt/$id") }
                 RowLine()
                 NavRow(Icons.Default.Tune, Muted, "Settings", "Repo, hosting, signing, alerts") { nav.navigate("psettings/$id") }
             }

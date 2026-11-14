@@ -40,6 +40,13 @@ import androidx.navigation.NavHostController
  *  - NewProjectScreen (the Prompt tab = "Prompt Maker"): only for a NEW app, website or server, one page at a time.
  */
 
+/** v84: the page must not open the keyboard by itself (the first text box used to take focus). Clears focus when the page or task opens. */
+@Composable fun NoAutoKeyboard(vararg keys: Any?) {
+    val fm = androidx.compose.ui.platform.LocalFocusManager.current
+    val kb = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    LaunchedEffect(*keys) { fm.clearFocus(); kb?.hide(); kotlinx.coroutines.delay(250); fm.clearFocus(); kb?.hide() }
+}
+
 /** A project's own prompt page: pick a task, write what you want, copy. The stack is the project's own (change it in its Settings). */
 @Composable fun AppPromptScreen(vm: HubVM, nav: NavHostController, id: Long) {
     val p = projectOrHome(vm, nav, id) ?: return
@@ -51,6 +58,7 @@ import androidx.navigation.NavHostController
     val err = vm.errors[id] ?: p.lastError
     val adopt = task == "Adopt"
     val needsNote = !adopt && task != "Fix error"
+    NoAutoKeyboard(id, task)
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Header("${p.name} prompt", nav)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -186,6 +194,7 @@ private fun hostNote(h: String) = when (h) {
     fun back() { step = if (step == 2 && app) 0 else step - 1 }
     BackHandler(step > 0) { back() }
     LaunchedEffect(step) { copied = false }
+    NoAutoKeyboard(step)
     val total = if (app) 2 else 3
     val pos = if (step == 0) 1 else if (step == 1) 2 else total
     val title = listOf("New project", "Setup", "Ready")[step]

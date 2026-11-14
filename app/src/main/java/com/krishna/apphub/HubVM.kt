@@ -353,7 +353,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     /** Downloads the release APK into the cache (via a .part file so a broken download is never installed). */
     suspend fun fetchApk(p: Project, r: GitHub.Rel, announce: Boolean = false, onProgress: (Long, Long) -> Unit): Boolean {
         val ok = ApkStore.fetch(getApplication<Application>(), gh, prefs, p, r, announce, onProgress)
-        if (ok) cached[p.id] = r.tag
+        if (ok) { cached[p.id] = r.tag; viewModelScope.launch { syncWhatsNew(p) } }   // v84: a downloaded release settles every "Waiting" what's new
         return ok
     }
 
@@ -1278,6 +1278,28 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     }
     fun delete(p: Project) = viewModelScope.launch { prefs.setVercelId(p.repo, ""); vercelLast.remove(p.id); vercelVer.remove(p.id); health.remove(p.id); dropCache(p); ApkStore.clearPrev(getApplication<Application>(), prefs, p.id); ApkStore.clearParts(getApplication<Application>(), p.id); SnapCache.drop(snapDir, p.id); snapped -= p.id; dao.delete(p) }
 
+    // ---- v84: other workflows ----
+    /** The question "start the other workflows too?": the project and its workflows that never ran. null = no question open. */
+    var otherWfAsk by mutableStateOf<Pair<Project, List<GitHub.Wf>>?>(null)
+
+    /**
+     * First build from App Hub for a project (a Deploy that finished, or the Build button): if the repo has other workflows that never ran
+     * (anything that already ran was triggered before, so it is left alone), ask once whether to start them. Asked once per project.
+     */
+    fun checkOtherWf(p: Project) = viewModelScope.launch {
+        if (prefs.otherWfDone(p.id) || otherWfAsk != null || !p.repo.contains("/")) return@launch
+        val list = gh.idleWorkflows(p.repo) ?: return@launch   // could not read: ask again on the next build
+        prefs.setOtherWfDone(p.id)
+        if (list.isNotEmpty()) otherWfAsk = p to list
+    }
+    fun startOtherWf() = viewModelScope.launch {
+        val (p, list) = otherWfAsk ?: return@launch
+        otherWfAsk = null
+        val ok = list.count { gh.startWorkflow(p.repo, it.id) }
+        toast(when { ok == list.size -> "Started $ok"; ok == 0 -> "None can start by hand"; else -> "Started $ok of ${list.size}" })
+    }
+    fun skipOtherWf() { otherWfAsk = null }
+
     /** v76: id of the project whose Build tap is in flight (the Build button shows a spinner), -1 = none. */
     var buildingId by mutableLongStateOf(-1L)
 
@@ -1285,7 +1307,9 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (buildingId != -1L) return@launch
         buildingId = p.id
         try {
-            toast(if (gh.dispatch(p.repo)) "Build triggered on GitHub" else "Trigger failed — push the workflow first")
+            val started = gh.dispatch(p.repo)
+            toast(if (started) "Build triggered on GitHub" else "Trigger failed — push the workflow first")
+            if (started) checkOtherWf(p)   // v84
             delay(700)   // long enough to see the spinner
         } finally { buildingId = -1L }
     }
@@ -1406,6 +1430,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             if (l.id == before) return@repeat
             if (l.ok == null) { setLive("… Build #${l.number} running  ${(System.currentTimeMillis() - t0) / 1000}s"); return@repeat }
             refresh(p).join()
+            checkOtherWf(p)   // v84: the build ended, so anything that starts by itself on push has run; only idle workflows are left
             if (l.ok == true) {
                 setLive("✓ Build #${l.number} passed  ${(System.currentTimeMillis() - t0) / 1000}s")
                 if (p.kind == ProjectType.APP) {
@@ -1639,11 +1664,36 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     private suspend fun writeWhatsNew(p: Project) {
         if (p.kind != ProjectType.APP) return
         val pending = prefs.whatsNew(p.repo).filter { !it.written && System.currentTimeMillis() - it.time < 3 * 86_400_000L }
-        if (pending.isEmpty()) return
         val all = (runs[p.id] ?: emptyList()) + (olderRuns[p.id] ?: emptyList())
         for (w in pending) {
             val run = all.firstOrNull { it.ok == true && it.msg.trim().startsWith("${w.ver}:") } ?: continue
             if (gh.setReleaseBody(p.repo, "build-${run.number}", w.text) == 1) { prefs.markWhatsNewWritten(p.repo, w.ver); whatsNewRev++ }
+        }
+        // v84: still waiting after that (failed run, old entry, run not in the list): look at the real releases, at most every 5 minutes
+        if (prefs.whatsNew(p.repo).any { !it.written } && System.currentTimeMillis() - (wnTry[p.id] ?: 0L) > 300_000L) syncWhatsNew(p)
+    }
+
+    private val wnTry = mutableMapOf<Long, Long>()
+
+    /**
+     * v84: settles every what's new that shows "Waiting" although its release exists. It starts from the releases, not from passed runs, so a run
+     * that shows failed (or fell out of the list, or is older than 3 days) does not block it. A release whose notes already hold the text is
+     * marked as is; otherwise the text is written into the release. A release that is not there yet stays waiting.
+     */
+    private suspend fun syncWhatsNew(p: Project) {
+        if (p.kind != ProjectType.APP || !p.repo.contains("/")) return
+        wnTry[p.id] = System.currentTimeMillis()
+        val pending = prefs.whatsNew(p.repo).filter { !it.written }
+        if (pending.isEmpty()) return
+        val rels = gh.releases(p.repo)
+        if (rels.isEmpty()) return
+        var all = (runs[p.id] ?: emptyList()) + (olderRuns[p.id] ?: emptyList())
+        var fetched = false
+        for (w in pending) {
+            fun candidates() = all.filter { it.msg.trim().startsWith("${w.ver}:") }
+            if (candidates().isEmpty() && !fetched) { all = all + gh.runs(p.repo, 100); fetched = true }   // the run may be older than the loaded list
+            val rel = candidates().sortedByDescending { it.number }.firstNotNullOfOrNull { c -> rels.firstOrNull { it.tag == "build-${c.number}" } } ?: continue
+            if (rel.notes.trim() == w.text.trim() || gh.setReleaseBody(p.repo, rel.tag, w.text) == 1) { prefs.markWhatsNewWritten(p.repo, w.ver); whatsNewRev++ }
         }
     }
 

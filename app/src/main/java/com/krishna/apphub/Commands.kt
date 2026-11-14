@@ -27,8 +27,8 @@ object Prompts {
 
     /** v41: tasks per project type. A server has no UI, so it gets API wording instead of UI/UX. */
     fun tasksFor(kind: ProjectType): List<String> = when (kind) {
-        ProjectType.SERVER -> listOf("Fix error", "Add feature", "Improve API", "Refactor", "Release notes", "Other")
-        else -> listOf("Fix error", "Add feature", "Improve UI", "Refactor", "Release notes", "Other")
+        ProjectType.SERVER -> listOf("Fix error", "Bug", "Add feature", "Improve API", "Refactor", "Release notes", "Other")
+        else -> listOf("Fix error", "Bug", "Add feature", "Improve UI", "Refactor", "Release notes", "Other")
     }
 
     fun ideasPrompt(cat: String, notes: String, kind: ProjectType = ProjectType.APP): String {
@@ -125,6 +125,7 @@ object Prompts {
     /** What the text box under step 4 asks for, per task. */
     fun hint(task: String, kind: ProjectType = ProjectType.APP) = when (task) {
         "Fix error" -> "Extra notes (optional). The latest build error is added automatically."
+        "Bug" -> "What goes wrong, on which screen, and how to see it"
         "Add feature" -> "Describe the feature you want"
         "Improve UI" -> "Which screens or problems should be better?"
         "Improve API" -> "Which endpoints or problems should be better?"
@@ -156,6 +157,9 @@ object Prompts {
             "Fix error" -> "Fix the following ${if (vercel) "Vercel build or deploy" else "build"} error in my $noun ${p.name} (${p.version}).$host\n\nError:\n" +
                 "${error.ifBlank { "<paste error here>" }}\n\n" + (if (change.isBlank()) "" else "Extra notes:\n$change\n\n") + "Project stack: $stack.\n\n" +
                 "Please analyze the error, explain the cause, and provide the exact code changes with updated files.$keep $tail"
+            "Bug" -> "Fix a bug in my $noun ${p.name} (${p.version}).$host\n\nBug:\n${fill("<what goes wrong, where, steps or request to see it>")}\n\n" +
+                "Project stack: $stack.\n\nFirst find the root cause in the code and explain it in 2-3 lines; say what you could not verify because you cannot run it. " +
+                "Fix only that cause, no unrelated changes.$keep If the report is too vague, ask me up to 3 short questions first. $tail"
             "Add feature" -> "Add a new feature to my $noun ${p.name} (${p.version}).$host\n\nFeature:\n${fill("<describe the feature>")}\n\n" +
                 "Project stack: $stack.\n\nProvide complete updated files and any new dependencies or environment variables.$keep $tail"
             "Refactor" -> "Refactor my $noun ${p.name} (${p.version}).$host\n\nTarget:\n${fill("<describe what to clean up>")}\n\n" +
@@ -174,6 +178,10 @@ object Prompts {
             "Fix error" -> "Fix the following build error in my Android project ${p.name} (${p.version}).\n\nError:\n" +
                 "${error.ifBlank { "<paste error here>" }}\n\n" + (if (change.isBlank()) "" else "Extra notes:\n$change\n\n") + "Project stack: $stack.\n\nPlease analyze the error, explain the cause, " +
                 "and provide the exact code changes with updated files. $tail"
+            "Bug" -> "Fix a bug in my Android project ${p.name} (${p.version}).\n\nBug:\n${fill("<what goes wrong, on which screen, steps to see it>")}\n\n" +
+                "Project stack: $stack.\n\nFirst find the root cause in the code and explain it in 2-3 lines; say what you could not verify because you cannot run the app. " +
+                "Fix only that cause, no unrelated changes or redesign. Check the nearby cases that use the same code (rotation, back button, empty data, no network) so the fix breaks nothing. " +
+                "If the report is too vague to find the cause, ask me up to 3 short questions first. $tail"
             "Add feature" -> "Add a new feature to my Android project ${p.name} (${p.version}).\n\nFeature:\n${fill("<describe the feature>")}\n\n" +
                 "Project stack: $stack.\n\nProvide complete updated files and any new dependencies. $tail"
             "Refactor" -> "Refactor my Android project ${p.name} (${p.version}).\n\nTarget:\n${fill("<describe what to clean up>")}\n\n" +

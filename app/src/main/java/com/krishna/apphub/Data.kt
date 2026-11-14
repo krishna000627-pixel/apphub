@@ -209,6 +209,10 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("sync_secs", 3)
         set(v) { sp.edit().putInt("sync_secs", v).apply() }
 
+    /** v84: the "start other workflows?" question is asked once per project (first build from App Hub), then never again. */
+    fun otherWfDone(id: Long) = sp.getBoolean("ow_$id", false)
+    fun setOtherWfDone(id: Long) { sp.edit().putBoolean("ow_$id", true).apply() }
+
     fun zipSeen(id: Long) = s("zs_$id")
     fun setZipSeen(id: Long, v: String) = put("zs_$id", v)
 

@@ -292,6 +292,29 @@ class GitHub(private val prefs: Prefs) {
     suspend fun dispatch(repo: String) =
         send("POST", "/repos/$repo/actions/workflows/build.yml/dispatches", JSONObject().put("ref", "main")).first == 204
 
+    /** v84: a workflow of the repo (file path like .github/workflows/deploy.yml). */
+    data class Wf(val id: Long, val name: String, val path: String)
+
+    /**
+     * v84: the active workflows other than build.yml that never ran yet (no run of any kind = nothing triggered them so far).
+     * A workflow that already has runs was started before, so it is left alone.
+     */
+    suspend fun idleWorkflows(repo: String): List<Wf>? {   // null = could not be read (offline, API error)
+        val (c, b) = get("/repos/$repo/actions/workflows?per_page=100"); if (c != 200) return null
+        val a = JSONObject(b).optJSONArray("workflows") ?: return emptyList()
+        val all = (0 until a.length()).map { a.getJSONObject(it) }
+            .filter { it.optString("state") == "active" && !it.optString("path").endsWith("/build.yml") }
+            .map { Wf(it.optLong("id"), it.optString("name"), it.optString("path")) }
+        return all.filter { w ->
+            val (rc, rb) = get("/repos/$repo/actions/workflows/${w.id}/runs?per_page=1")
+            rc == 200 && runCatching { JSONObject(rb).optInt("total_count") }.getOrDefault(1) == 0
+        }
+    }
+
+    /** v84: starts one workflow by hand. false = it has no manual trigger (workflow_dispatch) or GitHub refused. */
+    suspend fun startWorkflow(repo: String, id: Long) =
+        send("POST", "/repos/$repo/actions/workflows/$id/dispatches", JSONObject().put("ref", "main")).first == 204
+
     private fun parseRuns(a: JSONArray): List<Run> = (0 until a.length()).map {
         val o = a.getJSONObject(it)
         Run(
