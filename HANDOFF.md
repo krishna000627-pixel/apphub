@@ -12,6 +12,25 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v91
+- Duplicate-workflow guard: `GitHub.workflowFiles` lists .github/workflows; `Wf.State.others` = files that are not App Hub's three. Workflows page: Add dialog for build.yml / pages.yml shows an amber warning and the button reads "Add anyway" when others exist. Deploy (first push, no workflow in the zip): build.yml / pages.yml are skipped (logged) when others exist; housekeeping.yml is still added.
+- Storage page groups by live visibility (`gh.repoInfo(...).second`): Private (counts against 500 MB) / Public / Visibility not read. `changeVisibility` clears `stor[id]` and the page reloads when `repoPrivate` changes. "Keep 1 day" no longer depends on project kind.
+- versionCode 91, versionName "91.0". Not compiled here.
+
+## v90
+- Adaptive workflows in assets/: build.yml (detect job: android / node / static from the repo files + `.github/apphub.json`; android job signs with the 4 secrets or debug; node job only builds; concurrency cancels older runs), pages.yml (configure/upload/deploy-pages, folder auto-detected or `pages_dir`), housekeeping.yml (weekly cron + manual: artifacts older than 1 day, build-N releases beyond `keep_releases`, min 2). Line 1 of each holds "apphub-managed".
+- Options file `.github/apphub.json` keys: build_on_push, java, gradle, variant, sign (auto|debug), artifact_days, keep_releases, cleanup, pages, pages_dir (not in UI). jq reads them with `has()` (not `//`, which treats false as missing).
+- App: `Wf.kt` (Wf object, Cfg, status, WorkflowsScreen, route `workflows/{id}`, row in AppSettings). `HubVM.loadWf / applyWf / saveWfCfg`: pushFiles with `partial = true` and "[skip ci]" so nothing else is deleted and no build starts. A file without the mark is "Yours" and never replaced; the old v<=89 build.yml (name: Build APK) counts as App Hub's. Deploy with no workflow in the zip adds build.yml (APP) or pages.yml (WEBSITE, not Vercel) plus housekeeping.yml.
+- Fixed: `GitHub.shortenRetention` (v87) pushed without partial = true; now partial and [skip ci].
+- versionCode 90, versionName "90.0". Not compiled here and the workflows are not run on GitHub yet: CI and the first workflow runs are the test.
+
+## v89
+- File page Share re-reads the file (`vm.readFile`), updates the shown content, and rewrites cacheDir/share (old copy deleted) before `shareFile`. Files page reloads its list on ON_RESUME (quiet) via `androidx.compose.ui.platform.LocalLifecycleOwner` (no new dependency). versionCode 89, versionName "89.0". Not compiled here: CI is the first build.
+
+## v88
+- Deploy log: lines starting "- " (files to delete) and "… N more to delete" are Red (Screens.kt log renderer).
+- Share: `shareFile(ctx, file, mime)` in Files.kt (ACTION_SEND + FileProvider, `cache-path share/` added to res/xml/file_paths.xml). Share icon on the file page (shares the loaded bytes), "Share source code" in the Files three dots (`HubVM.shareSource`: repo zip into cacheDir/share, no copy in Downloads). versionCode 88, versionName "88.0". Not compiled here: CI is the first build.
+
 ## v87
 - What's new: `WN.skipped` ("No release" pill). `syncWhatsNew` marks a pending version skipped when a newer version is written and no release exists for it; the page also syncs when it opens (`syncWhatsNewNow`).
 - Storage manager: Settings > Storage (`Storage.kt`, route `settings/storage`). `GitHub.artifacts / deleteArtifact / shortenRetention` (adds `retention-days: 1` to the upload-artifact step of build.yml with one commit "ci: keep artifacts 1 day"), `HubVM.stor / loadStorage / cleanArtifacts / cleanAllArtifacts / shortenRetention`. The 500 MB bar assumes the free plan (not read from GitHub). The bundled `assets/build.yml` and this repo's workflow now use `retention-days: 1`. versionCode 87, versionName "87.0". Not compiled here: CI is the first build.

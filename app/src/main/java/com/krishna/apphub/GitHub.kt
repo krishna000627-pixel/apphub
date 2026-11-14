@@ -265,7 +265,7 @@ class GitHub(private val prefs: Prefs) {
         val new = Regex("(uses: actions/upload-artifact@[^\\n]*\\n([ \\t]*)with:\\n)").replace(txt) { m -> m.value + m.groupValues[2] + "  retention-days: 1\n" }
         if (new == txt) return "upload step not recognised, edit build.yml by hand"
         val lines = mutableListOf<String>()
-        val r = pushFiles(repo, listOf(path to new.toByteArray()), "ci: keep artifacts 1 day") { lines += it }
+        val r = pushFiles(repo, listOf(path to new.toByteArray()), "ci: keep artifacts 1 day [skip ci]", partial = true) { lines += it }   // v90: partial = never deletes other files
         return if (r.ok) "" else lines.lastOrNull { it.startsWith("✗") }?.removePrefix("✗ ") ?: "push failed"
     }
 
@@ -332,6 +332,15 @@ class GitHub(private val prefs: Prefs) {
 
     suspend fun dispatch(repo: String) =
         send("POST", "/repos/$repo/actions/workflows/build.yml/dispatches", JSONObject().put("ref", "main")).first == 204
+
+    /** v91: the file names in .github/workflows. Empty = none, null = could not be read. */
+    suspend fun workflowFiles(repo: String): List<String>? {
+        val (c, b) = get("/repos/$repo/contents/.github/workflows")
+        if (c == 404) return emptyList()
+        if (c != 200) return null
+        return runCatching { JSONArray(b).let { a -> (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optString("type") == "file" }.map { it.optString("name") } }
+            .filter { it.endsWith(".yml") || it.endsWith(".yaml") } }.getOrNull()
+    }
 
     /** v84: a workflow of the repo (file path like .github/workflows/deploy.yml). */
     data class Wf(val id: Long, val name: String, val path: String)

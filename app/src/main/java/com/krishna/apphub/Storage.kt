@@ -26,7 +26,7 @@ private fun mb(bytes: Long) = "%.1f".format(bytes / 1048576.0)
 
 @Composable fun StorageScreen(vm: HubVM, nav: NavHostController) {
     val ps = vm.projects.collectAsState().value.filter { it.repo.contains("/") }
-    LaunchedEffect(ps.size) { vm.storMsg = ""; vm.loadStorage() }
+    LaunchedEffect(ps.size, vm.repoPrivate.toMap()) { vm.storMsg = ""; vm.loadStorage() }   // v91: also again when a repo is made private / public
     val priv = ps.mapNotNull { p -> vm.stor[p.id]?.takeIf { it.priv == true } }
     val usedMb = priv.sumOf { it.bytes } / 1048576.0
     val total = ps.sumOf { vm.stor[it.id]?.count ?: 0 }
@@ -45,23 +45,37 @@ private fun mb(bytes: Long) = "%.1f".format(bytes / 1048576.0)
             else if (vm.storMsg.isNotBlank()) Text(vm.storMsg, Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Amber)
         }
         if (total > 0) BigButton("Delete all artifacts ($total)", Icons.Default.DeleteSweep) { if (!vm.storBusy) vm.cleanAllArtifacts() }
-        ps.forEach { p ->
-            val s = vm.stor[p.id]
-            Panel {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(p.name, fontWeight = FontWeight.Bold, color = Cyan)
-                        Text(if (s == null) "Loading…" else "${s.count} artifact(s) • ${mb(s.bytes)} MB", fontSize = 12.sp, color = Muted)
-                    }
-                    if (s?.priv != null) Pill(if (s.priv) "Private" else "Public", if (s.priv) Green else Muted)
-                }
-                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton({ vm.cleanArtifacts(p) }, Modifier.weight(1f), enabled = !vm.storBusy && (s?.count ?: 0) > 0, contentPadding = PadB) { BtnText("Delete") }
-                    if (p.kind == ProjectType.APP) OutlinedButton({ vm.shortenRetention(p) }, Modifier.weight(1f), enabled = !vm.storBusy, contentPadding = PadB) { BtnText("Keep 1 day") }
-                }
+        // v91: grouped by the repo's visibility as GitHub reports it now (read again on every open / refresh / visibility change), not by project type
+        val groups = listOf(
+            "Private · counts against the limit" to ps.filter { vm.stor[it.id]?.priv == true },
+            "Public · no limit" to ps.filter { vm.stor[it.id]?.priv == false },
+            "Visibility not read" to ps.filter { vm.stor[it.id]?.priv == null })
+        groups.forEach { (title, list) ->
+            if (list.isNotEmpty()) {
+                val sum = list.sumOf { vm.stor[it.id]?.bytes ?: 0L }
+                Text("$title • ${mb(sum)} MB", Modifier.padding(top = 6.dp, start = 2.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    color = when (title.first()) { 'P' -> if (title.startsWith("Private")) Green else Muted; else -> Amber })
+                list.forEach { p -> StorRow(vm, p) }
             }
         }
         if (ps.isEmpty()) EmptyState(Icons.Default.Storage, "No repos yet", "Add a project with a GitHub repo first.") {}
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+@Composable private fun StorRow(vm: HubVM, p: Project) {
+    val s = vm.stor[p.id]
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(p.name, fontWeight = FontWeight.Bold, color = Cyan)
+                Text(if (s == null) "Loading…" else "${s.count} artifact(s) • ${mb(s.bytes)} MB", fontSize = 12.sp, color = Muted)
+            }
+            if (s?.priv != null) Pill(if (s.priv) "Private" else "Public", if (s.priv) Green else Muted)
+        }
+        Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton({ vm.cleanArtifacts(p) }, Modifier.weight(1f), enabled = !vm.storBusy && (s?.count ?: 0) > 0, contentPadding = PadB) { BtnText("Delete") }
+            OutlinedButton({ vm.shortenRetention(p) }, Modifier.weight(1f), enabled = !vm.storBusy, contentPadding = PadB) { BtnText("Keep 1 day") }   // any project type: it only edits a build.yml that uploads artifacts
+        }
     }
 }

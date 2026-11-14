@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -196,6 +197,14 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
     }
 }
 
+/** v88: sends a file to another app (Claude, WhatsApp, Drive...) through the Android share sheet. */
+fun shareFile(ctx: android.content.Context, f: java.io.File, mime: String) {
+    val uri = androidx.core.content.FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", f)
+    ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType(mime)
+        .putExtra(android.content.Intent.EXTRA_STREAM, uri).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION), null)
+        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+}
+
 /** v31: one repo file as its own page: path, size, line count, line numbers, in-file search, copy, open on GitHub, delete. Images are shown as images. */
 @Composable fun FileViewerScreen(vm: HubVM, nav: NavHostController, id: Long, path: String) {
     val p = projectOrHome(vm, nav, id) ?: return
@@ -207,6 +216,8 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
     var find by remember { mutableStateOf(false) }
     var q by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf(false) }
+    var sharing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val lines = (body as? Body.Txt)?.lines ?: emptyList()
     if (confirm) DeleteFileDialog(p, path, { confirm = false }) { confirm = false; vm.deleteFile(p, path); nav.popBackStack() }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
@@ -214,6 +225,24 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
             if (body is Body.Txt) {
                 IconButton({ find = !find; if (!find) q = "" }, Modifier.size(40.dp)) { Icon(if (find) Icons.Default.Close else Icons.Default.Search, null, tint = if (find) Green else Muted) }
                 IconButton({ vm.copy(lines.joinToString("\n")) }, Modifier.size(40.dp)) { Icon(Icons.Default.ContentCopy, null, tint = Muted) }
+            }
+            if (blob?.bytes != null) {   // v88: share the file itself; v89: always the latest version from GitHub
+                IconButton({
+                    if (sharing) return@IconButton
+                    sharing = true
+                    scope.launch {
+                        val fresh = runCatching { vm.readFile(p, path) }.getOrNull()?.takeIf { it.bytes != null }   // reload now, the repo may have changed
+                        if (fresh != null) blob = fresh
+                        val b = (fresh ?: blob)?.bytes
+                        if (b != null) {
+                            val dir = java.io.File(ctx.cacheDir, "share").apply { deleteRecursively(); mkdirs() }   // the old shared copy is replaced
+                            val f = java.io.File(dir, name).apply { writeBytes(b) }
+                            val mime = if (body is Body.Txt) "text/plain" else android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
+                            shareFile(ctx, f, mime)
+                        }
+                        sharing = false
+                    }
+                }, Modifier.size(40.dp)) { Icon(Icons.Default.Share, null, tint = if (sharing) Muted else Cyan) }
             }
             IconButton({ openUrl(ctx, "https://github.com/${p.repo}/blob/${vm.infos[id]?.branch ?: "main"}/$path") }, Modifier.size(40.dp)) { Icon(Icons.Default.OpenInNew, null, tint = Muted) }
             IconButton({ confirm = true }, Modifier.size(40.dp), enabled = vm.deletingFile.isEmpty()) { Icon(Icons.Default.Delete, null, tint = Red.copy(alpha = 0.85f)) }
@@ -284,11 +313,17 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
 /** Folder browser on its own page. Back goes up one folder (or clears the search) before leaving the page. */
 @Composable fun FilesScreen(vm: HubVM, nav: NavHostController, id: Long) {
     val p = projectOrHome(vm, nav, id) ?: return
+    val ctx = LocalContext.current
     var fq by remember(id) { mutableStateOf("") }
     var delPath by remember(id) { mutableStateOf<String?>(null) }
     var dir by remember(id) { mutableStateOf("") }
     val list = rememberLazyListState()
     LaunchedEffect(id) { vm.loadFiles(p) }
+    val owner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(owner) {   // v89: coming back to the page (from a file, from another app) reloads the list
+        val o = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME && vm.repoFiles[id] != null) vm.loadFiles(p, quiet = true) }
+        owner.lifecycle.addObserver(o); onDispose { owner.lifecycle.removeObserver(o) }
+    }
     LaunchedEffect(dir, fq) { list.scrollToItem(0) }
     BackHandler(enabled = dir.isNotEmpty() || fq.isNotEmpty()) {
         if (fq.isNotEmpty()) fq = "" else dir = dir.dropLast(1).substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }
@@ -302,6 +337,8 @@ private fun highlight(line: String, q: String) = buildAnnotatedString {
                 DropdownMenu(menu, { menu = false }) {
                     DropdownMenuItem({ Text("Download source code") }, { menu = false; vm.downloadSource(p) }, enabled = !vm.sourceBusy,
                         leadingIcon = { Icon(Icons.Default.Download, null) })
+                    DropdownMenuItem({ Text("Share source code") }, { menu = false; vm.shareSource(ctx, p) }, enabled = !vm.sourceBusy,
+                        leadingIcon = { Icon(Icons.Default.Share, null) })
                     DropdownMenuItem({ Text("Reload files") }, { menu = false; vm.loadFiles(p) }, enabled = !vm.filesLoading,
                         leadingIcon = { Icon(Icons.Default.Refresh, null) })
                 }

@@ -17,6 +17,7 @@ import android.widget.Toast
 import androidx.compose.runtime.*
 import androidx.core.content.pm.PackageInfoCompat
 import androidx.lifecycle.AndroidViewModel
+import org.json.JSONObject
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import kotlinx.coroutines.Dispatchers
@@ -537,6 +538,20 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         sourceBusy = false
     }
 
+    /** v88: downloads the repo zip into the app cache and opens the share sheet (send it straight to Claude). Nothing is left in Downloads. */
+    fun shareSource(ctx: Context, p: Project) = viewModelScope.launch {
+        if (!p.repo.contains("/")) { toast("Log in with GitHub first (Accounts)"); return@launch }
+        if (sourceBusy) return@launch
+        sourceBusy = true
+        toast("Preparing source code…")
+        val dir = java.io.File(ctx.cacheDir, "share").apply { deleteRecursively(); mkdirs() }
+        val dest = java.io.File(dir, "${p.repo.substringAfter('/').ifBlank { p.name }}_source.zip")
+        val r = runCatching { gh.downloadSource(p.repo, dest) }
+        if (r.isSuccess) shareFile(ctx, dest, "application/zip")
+        else { dest.delete(); toast("Could not download: ${r.exceptionOrNull()?.message ?: "error"}") }
+        sourceBusy = false
+    }
+
     /** v31: content of one repo file for the file page. */
     suspend fun readFile(p: Project, path: String): GitHub.Blob = gh.readBlob(p.repo, path)
 
@@ -882,7 +897,56 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         repoBusy = true; repoMsg = ""
         val e = gh.updateVisibility(p.repo, makePrivate)
         repoBusy = false
-        if (e.isBlank()) { repoPrivate[p.id] = makePrivate; repoMsg = if (makePrivate) "Now private." else "Now public." } else repoMsg = "GitHub: $e"
+        if (e.isBlank()) { repoPrivate[p.id] = makePrivate; stor.remove(p.id); repoMsg = if (makePrivate) "Now private." else "Now public." } else repoMsg = "GitHub: $e"
+    }
+
+    // ---- v90: workflows (Settings > Workflows) ----
+    val wf = mutableStateMapOf<Long, Wf.State>()
+    var wfBusy by mutableStateOf(false)
+    var wfMsg by mutableStateOf("")
+
+    /** Reads the three workflow files and the options file of the repo and compares them with the ones bundled in the app. */
+    fun loadWf(p: Project) = viewModelScope.launch {
+        if (!p.repo.contains("/")) { wfMsg = "Log in with GitHub first (Accounts)"; return@launch }
+        if (wfBusy) return@launch
+        wfBusy = true
+        val ctx = getApplication<Application>()
+        val files = mutableMapOf<String, Wf.St>()
+        for (d in Wf.all) {
+            val b = gh.readBlob(p.repo, Wf.path(d.file))
+            val missing = b.bytes == null && b.err.startsWith("File not found")
+            val text = b.bytes?.let { String(it) }
+            files[d.file] = Wf.status(d.file, if (missing) null else text, String(Wf.asset(ctx, d.file)), readError = b.bytes == null && !missing)
+        }
+        val c = gh.readBlob(p.repo, Wf.CFG)
+        val raw = c.bytes?.let { runCatching { JSONObject(String(it)) }.getOrNull() }
+        val own = Wf.all.map { it.file }
+        val others = (gh.workflowFiles(p.repo) ?: emptyList()).filter { it !in own }   // v91: workflows of the repo that are not App Hub's
+        wf[p.id] = Wf.State(files, Wf.Cfg.from(raw), raw, others)
+        wfBusy = false
+    }
+
+    /** Adds or updates one workflow file with one commit marked [skip ci] (no build starts). Only App Hub's own file or a missing one. */
+    fun applyWf(ctx: Context, p: Project, file: String) = viewModelScope.launch {
+        if (wfBusy) return@launch
+        wfBusy = true; wfMsg = ""
+        val lines = mutableListOf<String>()
+        val r = gh.pushFiles(p.repo, listOf(Wf.path(file) to Wf.asset(ctx, file)), "ci: App Hub $file [skip ci]", partial = true) { lines += it }
+        wfMsg = if (r.ok) "$file is in the repo." else lines.lastOrNull { it.startsWith("✗") }?.removePrefix("✗ ") ?: "Push failed"
+        wfBusy = false
+        if (r.ok) loadWf(p)
+    }
+
+    /** Saves the options into .github/apphub.json (unknown keys already there are kept). One commit, [skip ci]. */
+    fun saveWfCfg(p: Project, cfg: Wf.Cfg) = viewModelScope.launch {
+        if (wfBusy) return@launch
+        wfBusy = true; wfMsg = ""
+        val json = cfg.toJson(wf[p.id]?.raw?.let { JSONObject(it.toString()) })
+        val lines = mutableListOf<String>()
+        val r = gh.pushFiles(p.repo, listOf(Wf.CFG to (json.toString(2) + "\n").toByteArray()), "ci: App Hub options [skip ci]", partial = true) { lines += it }
+        wfMsg = if (r.ok) "Options saved in the repo." else lines.lastOrNull { it.startsWith("✗") }?.removePrefix("✗ ") ?: "Push failed"
+        wfBusy = false
+        if (r.ok) loadWf(p)
     }
 
     // ---- v87: storage manager (Settings > Storage): Actions artifacts count against the 500 MB of a private repo on the free plan ----
@@ -1449,15 +1513,23 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         try {
             val files = pack.entries.map { it.path to it.bytes }.toMutableList()
             val noWorkflow = files.none { it.first.startsWith(".github/workflows/") }
-            if (p.kind == ProjectType.APP) {
-                if (noWorkflow && !gh.exists(p.repo, ".github/workflows/build.yml")) {
-                    files.add(".github/workflows/build.yml" to ctx.assets.open("build.yml").readBytes())
-                    deployLog += "• added the standard build workflow"
+            if (noWorkflow) {
+                // v90: first push without any workflow: App Hub's adaptive ones (a file already in the repo is never touched)
+                val want = buildList {
+                    if (p.kind == ProjectType.APP) add("build.yml")
+                    else if (p.kind == ProjectType.WEBSITE && !isVercel(p)) add("pages.yml")
+                    add("housekeeping.yml")
                 }
-            } else if (noWorkflow) {
-                // the standard workflow builds an Android APK, so it is never added to a website or server
-                deployLog += if (isVercel(p)) "• Vercel builds this push by itself, no workflow needed"
-                    else "• no workflow in this zip: include .github/workflows/ with your ${p.kind.label.lowercase()} deploy, or nothing will run"
+                // v91: a repo that already has workflows of its own never gets a second build / pages one (it would run twice on every push)
+                val others = (gh.workflowFiles(p.repo) ?: emptyList()).filter { it !in Wf.all.map { d -> d.file } }
+                for (w in want) {
+                    if (gh.exists(p.repo, Wf.path(w))) continue
+                    if (w != "housekeeping.yml" && others.isNotEmpty()) { deployLog += "• $w not added: the repo already has ${others.joinToString(", ")}"; continue }
+                    files.add(Wf.path(w) to Wf.asset(ctx, w)); deployLog += "• added the $w workflow"
+                }
+                if (p.kind != ProjectType.APP && !(p.kind == ProjectType.WEBSITE && !isVercel(p)) && !isVercel(p))
+                    deployLog += "• no deploy workflow in this zip: include .github/workflows/ with your ${p.kind.label.lowercase()} deploy, or nothing will run"
+                if (isVercel(p)) deployLog += "• Vercel builds this push by itself, no deploy workflow needed"
             }
             val ver = pack.version.ifBlank { Commands.bump(p.version) }
             val msg = "$ver: ${note.replace("\n", " ").trim().ifBlank { "update from App Hub" }}"

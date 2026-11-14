@@ -205,7 +205,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     }
     // contentWindowInsets = 0 so the status bar inset is applied exactly once (statusBarsPadding below)
     // v63/v64: the project pages (project, builds, releases, settings, info, files, file, env, install) are sub pages with a back arrow, so the app bar is hidden there
-    val onProject = route != null && listOf("about", "whatsnew/", "detail/", "builds/", "releases/", "psettings/", "rename/", "aprompt/", "info/", "files/", "file/", "env/", "install/").any { route.startsWith(it) }
+    val onProject = route != null && listOf("about", "whatsnew/", "detail/", "builds/", "releases/", "psettings/", "workflows/", "rename/", "aprompt/", "info/", "files/", "file/", "env/", "install/").any { route.startsWith(it) }
     Scaffold(containerColor = Bg, contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
         if (!onProject) NavigationBar(containerColor = Surf) {
             tabs.forEach { (r, l, i) ->
@@ -246,6 +246,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             composable("builds/{id}", listOf(navArgument("id") { type = NavType.LongType })) { BuildsScreen(vm, nav, it.arguments!!.getLong("id")) }   // v64
             composable("releases/{id}", listOf(navArgument("id") { type = NavType.LongType })) { ReleasesScreen(vm, nav, it.arguments!!.getLong("id")) }
             composable("rename/{id}", listOf(navArgument("id") { type = NavType.LongType })) { RenameRepoScreen(vm, nav, it.arguments!!.getLong("id")) }   // v86
+            composable("workflows/{id}", listOf(navArgument("id") { type = NavType.LongType })) { WorkflowsScreen(vm, nav, it.arguments!!.getLong("id")) }   // v90
             composable("psettings/{id}", listOf(navArgument("id") { type = NavType.LongType })) { ProjectSettingsScreen(vm, nav, it.arguments!!.getLong("id")) }
             composable("install/{id}", listOf(navArgument("id") { type = NavType.LongType })) { InstallScreen(vm, nav, it.arguments!!.getLong("id")) }
         }
@@ -473,6 +474,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             }
             OutlinedTextField(stack, { stack = it }, label = { Text("Tech stack") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
         }
+        Panel { NavRow(Icons.Default.AccountTree, Cyan, "Workflows", "Build, Pages, cleanup and their options") { nav.navigate("workflows/${p.id}") } }   // v90
         HostingPanels(vm, nav, p)   // v62: Repository, Hosting, GitHub Pages and Vercel panels live in HostingPage.kt
         Panel {
             SectionTitle(Icons.Default.Tag, "Version")
@@ -604,6 +606,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
                     t.startsWith("✗") -> Red
                     t.startsWith("✓") || t.startsWith("+ ") -> Green
                     t.startsWith("~ ") -> Amber
+                    t.startsWith("- ") || (t.startsWith("…") && t.contains("to delete")) -> Red   // v88: files that will be deleted
                     else -> Color.Unspecified
                 })
             }
