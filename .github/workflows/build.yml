@@ -45,6 +45,7 @@ jobs:
         with:
           name: ${{ github.event.repository.name }}-apk
           path: app/build/outputs/apk/release/*.apk
+          retention-days: 1
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2

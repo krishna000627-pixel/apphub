@@ -419,6 +419,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
 @Composable fun WhatsNewScreen(vm: HubVM, nav: NavHostController, id: Long) {
     val p = projectOrHome(vm, nav, id) ?: return
     KeepFresh(vm, p)
+    LaunchedEffect(p.id) { vm.syncWhatsNewNow(p) }   // v87: settle Waiting entries as soon as the page opens
     val log = vm.whatsNewLog(p)
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header("${p.name} what's new", nav)
@@ -427,7 +428,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
                 Panel {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(w.ver, Modifier.weight(1f), fontWeight = FontWeight.Bold, color = Cyan)
-                        if (p.kind == ProjectType.APP) Pill(if (w.written) "On release" else "Waiting", if (w.written) Green else Amber)
+                        if (p.kind == ProjectType.APP) Pill(if (w.written) "On release" else if (w.skipped) "No release" else "Waiting", if (w.written) Green else if (w.skipped) Muted else Amber)
                         Spacer(Modifier.width(8.dp))
                         Text(agoMs(w.time), fontSize = 12.sp, color = Muted)
                     }

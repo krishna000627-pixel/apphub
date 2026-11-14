@@ -11,7 +11,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** v68: one entry of a repo's what's new log. */
-class WN(val ver: String, val time: Long, val text: String, val written: Boolean)
+/** [skipped] (v87) = no release exists for this version and a newer one is out, so it stops waiting. */
+class WN(val ver: String, val time: Long, val text: String, val written: Boolean, val skipped: Boolean = false)
 
 @Entity
 data class Project(
@@ -110,14 +111,15 @@ class Prefs(ctx: Context) {
     // v68: the what's new log of a repo, newest last. [written] = it was also put into the GitHub release.
     fun whatsNew(repo: String): List<WN> = runCatching {
         val a = JSONArray(sp.getString("wn_$repo", "[]"))
-        (0 until a.length()).map { a.getJSONObject(it) }.map { WN(it.optString("v"), it.optLong("t"), it.optString("x"), it.optBoolean("w")) }
+        (0 until a.length()).map { a.getJSONObject(it) }.map { WN(it.optString("v"), it.optLong("t"), it.optString("x"), it.optBoolean("w"), it.optBoolean("s")) }
     }.getOrDefault(emptyList())
     private fun putWhatsNew(repo: String, l: List<WN>) {
-        val a = JSONArray(); l.takeLast(500).forEach { a.put(JSONObject().put("v", it.ver).put("t", it.time).put("x", it.text).put("w", it.written)) }
+        val a = JSONArray(); l.takeLast(500).forEach { a.put(JSONObject().put("v", it.ver).put("t", it.time).put("x", it.text).put("w", it.written).put("s", it.skipped)) }
         sp.edit().putString("wn_$repo", a.toString()).apply()
     }
     fun addWhatsNew(repo: String, ver: String, text: String) = putWhatsNew(repo, whatsNew(repo).filter { it.ver != ver } + WN(ver, System.currentTimeMillis(), text.take(4000), false))
     fun markWhatsNewWritten(repo: String, ver: String) = putWhatsNew(repo, whatsNew(repo).map { if (it.ver == ver) WN(it.ver, it.time, it.text, true) else it })
+    fun markWhatsNewSkipped(repo: String, ver: String) = putWhatsNew(repo, whatsNew(repo).map { if (it.ver == ver && !it.written) WN(it.ver, it.time, it.text, false, true) else it })
 
     /** v73: how Deploy sends files. 0 = GitHub API (one request per file), 1 = Git pack (the git protocol: one request). */
     var pushMode: Int

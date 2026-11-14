@@ -236,6 +236,39 @@ class GitHub(private val prefs: Prefs) {
         return when { c == 0 -> "no network"; c == 401 -> "GitHub session expired. Log in again in Accounts"; msg.isNotBlank() -> msg; else -> "HTTP $c" }
     }
 
+    // ---- v87: Actions artifacts (storage manager) ----
+    data class Art(val id: Long, val size: Long, val time: String)
+
+    /** The artifacts that have not expired yet. null = could not be read. */
+    suspend fun artifacts(repo: String): List<Art>? {
+        val out = mutableListOf<Art>()
+        for (page in 1..10) {
+            val (c, b) = get("/repos/$repo/actions/artifacts?per_page=100&page=$page")
+            if (c != 200) return if (page == 1) null else out
+            val o = JSONObject(b); val a = o.optJSONArray("artifacts") ?: break
+            for (i in 0 until a.length()) { val x = a.getJSONObject(i)
+                if (!x.optBoolean("expired")) out += Art(x.optLong("id"), x.optLong("size_in_bytes"), x.optString("created_at")) }
+            if (page * 100 >= o.optInt("total_count")) break
+        }
+        return out
+    }
+    suspend fun deleteArtifact(repo: String, id: Long) = send("DELETE", "/repos/$repo/actions/artifacts/$id", JSONObject()).first in 200..299
+
+    /** Adds "retention-days: 1" to the upload-artifact step of build.yml. Returns "" (done or nothing to change) or the reason. */
+    suspend fun shortenRetention(repo: String): String {
+        val path = ".github/workflows/build.yml"
+        val (c, b) = get("/repos/$repo/contents/$path")
+        if (c == 404) return "no build.yml in this repo"
+        if (c != 200) return "HTTP $c"
+        val txt = runCatching { String(Base64.decode(JSONObject(b).optString("content"), Base64.DEFAULT)) }.getOrNull() ?: return "could not read build.yml"
+        if (txt.contains("retention-days") || !txt.contains("actions/upload-artifact")) return ""
+        val new = Regex("(uses: actions/upload-artifact@[^\\n]*\\n([ \\t]*)with:\\n)").replace(txt) { m -> m.value + m.groupValues[2] + "  retention-days: 1\n" }
+        if (new == txt) return "upload step not recognised, edit build.yml by hand"
+        val lines = mutableListOf<String>()
+        val r = pushFiles(repo, listOf(path to new.toByteArray()), "ci: keep artifacts 1 day") { lines += it }
+        return if (r.ok) "" else lines.lastOrNull { it.startsWith("✗") }?.removePrefix("✗ ") ?: "push failed"
+    }
+
     /** v85: renames the repo on GitHub (same owner). Returns the new "owner/name" and "" on success, otherwise "" and the reason. */
     suspend fun renameRepo(repo: String, newName: String): Pair<String, String> {
         val (c, b) = send("PATCH", "/repos/$repo", JSONObject().put("name", newName))

@@ -12,6 +12,10 @@ Android app (Kotlin, Compose, Room, OkHttp). Package com.krishna.apphub. Manages
 - v6: Add screen switch "New app from newest Name_v*.zip in Downloads" (HubVM.setupFromZip / Commands.setupFromZip): unzip to ~/Name, bootstrap scripts, setup.sh (repo, keys, push, build, install).
 - Not built yet: Files tab, background build notifications.
 
+## v87
+- What's new: `WN.skipped` ("No release" pill). `syncWhatsNew` marks a pending version skipped when a newer version is written and no release exists for it; the page also syncs when it opens (`syncWhatsNewNow`).
+- Storage manager: Settings > Storage (`Storage.kt`, route `settings/storage`). `GitHub.artifacts / deleteArtifact / shortenRetention` (adds `retention-days: 1` to the upload-artifact step of build.yml with one commit "ci: keep artifacts 1 day"), `HubVM.stor / loadStorage / cleanArtifacts / cleanAllArtifacts / shortenRetention`. The 500 MB bar assumes the free plan (not read from GitHub). The bundled `assets/build.yml` and this repo's workflow now use `retention-days: 1`. versionCode 87, versionName "87.0". Not compiled here: CI is the first build.
+
 ## v86
 - Rename moved out of Settings > Repository: project three dots > "Rename repo" -> route `rename/{id}` (`RenameRepoScreen`, HostingPage.kt, listed in `onProject`). `HubVM.renameRepo(p, name, resend)`; with resend it calls `resendSecrets` for the new repo name after the rename. A "Re-send signing secrets only" button is on the page. versionCode 86, versionName "86.0". Not compiled here: CI is the first build.
 

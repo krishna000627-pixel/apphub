@@ -885,6 +885,52 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (e.isBlank()) { repoPrivate[p.id] = makePrivate; repoMsg = if (makePrivate) "Now private." else "Now public." } else repoMsg = "GitHub: $e"
     }
 
+    // ---- v87: storage manager (Settings > Storage): Actions artifacts count against the 500 MB of a private repo on the free plan ----
+    class StorInfo(val priv: Boolean?, val count: Int, val bytes: Long)
+    val stor = mutableStateMapOf<Long, StorInfo>()
+    var storBusy by mutableStateOf(false)
+    var storMsg by mutableStateOf("")
+
+    fun loadStorage() = viewModelScope.launch {
+        if (storBusy) return@launch
+        storBusy = true
+        projects.value.filter { it.repo.contains("/") }.forEach { p ->
+            val arts = gh.artifacts(p.repo)
+            if (arts != null) stor[p.id] = StorInfo(gh.repoInfo(p.repo)?.second, arts.size, arts.sumOf { it.size })
+        }
+        storBusy = false
+    }
+    private suspend fun cleanOne(p: Project): Int {
+        val arts = gh.artifacts(p.repo) ?: return -1
+        var n = 0; for (a in arts) if (gh.deleteArtifact(p.repo, a.id)) n++
+        val left = gh.artifacts(p.repo) ?: emptyList()
+        stor[p.id] = StorInfo(stor[p.id]?.priv, left.size, left.sumOf { it.size })
+        return n
+    }
+    fun cleanArtifacts(p: Project) = viewModelScope.launch {
+        if (storBusy) return@launch
+        storBusy = true; storMsg = ""
+        val n = cleanOne(p)
+        storMsg = if (n < 0) "Could not read ${p.repo}" else "${p.name}: deleted $n artifact(s)"
+        storBusy = false
+    }
+    fun cleanAllArtifacts() = viewModelScope.launch {
+        if (storBusy) return@launch
+        storBusy = true; storMsg = ""
+        var n = 0
+        projects.value.filter { it.repo.contains("/") && (stor[it.id]?.count ?: 0) > 0 }.forEach { p -> n += cleanOne(p).coerceAtLeast(0) }
+        storMsg = "Deleted $n artifact(s)"
+        storBusy = false
+    }
+    /** Edits .github/workflows/build.yml so a build keeps its artifact for 1 day (the APK stays in the release). Makes one commit. */
+    fun shortenRetention(p: Project) = viewModelScope.launch {
+        if (storBusy) return@launch
+        storBusy = true; storMsg = ""
+        val e = gh.shortenRetention(p.repo)
+        storMsg = if (e.isBlank()) "${p.name}: artifacts now kept 1 day" else "${p.name}: $e"
+        storBusy = false
+    }
+
     /** v85: renames the GitHub repo and follows it here: the project row, the keystore / what's new / Vercel link kept under the repo name, and a GitHub Pages address. */
     fun renameRepo(p: Project, newName: String, resend: Boolean = false) = viewModelScope.launch {
         val n = newName.trim()
@@ -1680,14 +1726,14 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     /** Apps: writes logged texts into their GitHub release once the build passed and the release exists (retried for 3 days). */
     private suspend fun writeWhatsNew(p: Project) {
         if (p.kind != ProjectType.APP) return
-        val pending = prefs.whatsNew(p.repo).filter { !it.written && System.currentTimeMillis() - it.time < 3 * 86_400_000L }
+        val pending = prefs.whatsNew(p.repo).filter { !it.written && !it.skipped && System.currentTimeMillis() - it.time < 3 * 86_400_000L }
         val all = (runs[p.id] ?: emptyList()) + (olderRuns[p.id] ?: emptyList())
         for (w in pending) {
             val run = all.firstOrNull { it.ok == true && it.msg.trim().startsWith("${w.ver}:") } ?: continue
             if (gh.setReleaseBody(p.repo, "build-${run.number}", w.text) == 1) { prefs.markWhatsNewWritten(p.repo, w.ver); whatsNewRev++ }
         }
         // v84: still waiting after that (failed run, old entry, run not in the list): look at the real releases, at most every 5 minutes
-        if (prefs.whatsNew(p.repo).any { !it.written } && System.currentTimeMillis() - (wnTry[p.id] ?: 0L) > 300_000L) syncWhatsNew(p)
+        if (prefs.whatsNew(p.repo).any { !it.written && !it.skipped } && System.currentTimeMillis() - (wnTry[p.id] ?: 0L) > 300_000L) syncWhatsNew(p)
     }
 
     private val wnTry = mutableMapOf<Long, Long>()
@@ -1700,7 +1746,7 @@ class HubVM(app: Application) : AndroidViewModel(app) {
     private suspend fun syncWhatsNew(p: Project) {
         if (p.kind != ProjectType.APP || !p.repo.contains("/")) return
         wnTry[p.id] = System.currentTimeMillis()
-        val pending = prefs.whatsNew(p.repo).filter { !it.written }
+        val pending = prefs.whatsNew(p.repo).filter { !it.written && !it.skipped }
         if (pending.isEmpty()) return
         val rels = gh.releases(p.repo)
         if (rels.isEmpty()) return
@@ -1712,7 +1758,13 @@ class HubVM(app: Application) : AndroidViewModel(app) {
             val rel = candidates().sortedByDescending { it.number }.firstNotNullOfOrNull { c -> rels.firstOrNull { it.tag == "build-${c.number}" } } ?: continue
             if (rel.notes.trim() == w.text.trim() || gh.setReleaseBody(p.repo, rel.tag, w.text) == 1) { prefs.markWhatsNewWritten(p.repo, w.ver); whatsNewRev++ }
         }
+        // v87: a version that has no release at all (never built, build failed, release deleted) must not wait for ever once a newer version is on a release
+        val newest = prefs.whatsNew(p.repo).filter { it.written }.maxOfOrNull { Commands.num(it.ver).toIntOrNull() ?: 0 } ?: 0
+        for (w in prefs.whatsNew(p.repo).filter { !it.written && !it.skipped }) {
+            if ((Commands.num(w.ver).toIntOrNull() ?: Int.MAX_VALUE) < newest) { prefs.markWhatsNewSkipped(p.repo, w.ver); whatsNewRev++ }
+        }
     }
+    fun syncWhatsNewNow(p: Project) = viewModelScope.launch { syncWhatsNew(p) }
 
     // ---- feature 2: backup ----
     fun exportBackup(ctx: Context, uri: Uri) = viewModelScope.launch {

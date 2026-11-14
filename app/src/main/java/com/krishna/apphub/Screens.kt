@@ -223,6 +223,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             composable("deploy") { DeployScreen(vm, nav) }
             composable("settings") { SettingsScreen(vm, nav) }
             composable("settings/push") { PushTypeScreen(vm, nav) }   // v74
+            composable("settings/storage") { StorageScreen(vm, nav) }   // v87
             composable("settings/theme") { ThemeScreen(vm, nav) }
             composable("about") { AboutScreen(vm, nav) }
             composable("about/new") { AboutNewScreen(nav) }   // v68: About is a hub with sub pages, like a project
@@ -878,6 +879,8 @@ private fun openApp(ctx: android.content.Context, vm: HubVM, p: Project) {
         Header("Settings")
         Panel {   // v74: Push type and Theme are sub pages now
             NavRow(Icons.Default.CloudUpload, Cyan, "Push type", if (vm.prefs.pushMode == 1) "Git pack" else "API") { nav.navigate("settings/push") { launchSingleTop = true } }
+            RowLine()
+            NavRow(Icons.Default.Storage, Cyan, "Storage", "Private repo limit: clean GitHub artifacts") { nav.navigate("settings/storage") { launchSingleTop = true } }   // v87
             RowLine()
             NavRow(Icons.Default.Palette, Cyan, "Theme", Themes.names.getOrElse(vm.themeMode) { "Dark" } + if (vm.accent > 0) " · " + Themes.accentNames[vm.accent] else "") { nav.navigate("settings/theme") { launchSingleTop = true } }
         }
