@@ -25,7 +25,7 @@ android {
     defaultConfig {
         applicationId = "com.krishna.apphub"
         minSdk = 26; targetSdk = 35
-        versionCode = 84; versionName = "84.0"
+        versionCode = 86; versionName = "86.0"
         buildConfigField("String", "APPHUB_CLIENT_SECRET", "\"${project.findProperty("APPHUB_CLIENT_SECRET") ?: ""}\"")
         buildConfigField("String", "APPHUB_CLIENT_ID", "\"${project.findProperty("APPHUB_CLIENT_ID") ?: "Ov23lid24TxTmpt2GX9e"}\"")
     }

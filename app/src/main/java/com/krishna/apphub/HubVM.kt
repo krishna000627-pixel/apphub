@@ -885,6 +885,23 @@ class HubVM(app: Application) : AndroidViewModel(app) {
         if (e.isBlank()) { repoPrivate[p.id] = makePrivate; repoMsg = if (makePrivate) "Now private." else "Now public." } else repoMsg = "GitHub: $e"
     }
 
+    /** v85: renames the GitHub repo and follows it here: the project row, the keystore / what's new / Vercel link kept under the repo name, and a GitHub Pages address. */
+    fun renameRepo(p: Project, newName: String, resend: Boolean = false) = viewModelScope.launch {
+        val n = newName.trim()
+        if (!Regex("[A-Za-z0-9._-]{1,100}").matches(n)) { repoMsg = "Use letters, numbers, - _ . only"; return@launch }
+        if (n == p.repo.substringAfter("/")) { repoMsg = "That is already the name"; return@launch }
+        repoBusy = true; repoMsg = ""
+        val (full, err) = gh.renameRepo(p.repo, n)
+        repoBusy = false
+        if (err.isNotBlank()) { repoMsg = "GitHub: $err"; return@launch }
+        prefs.moveRepo(p.repo, full)
+        projects.value.firstOrNull { it.id == p.id }?.let { dao.save(it.copy(repo = full, liveUrl = if (it.liveUrl.contains(".github.io")) "" else it.liveUrl)) }
+        repoMsg = "Renamed to $full."
+        val np = p.copy(repo = full)
+        if (resend) resendSecrets(np)   // v86: secrets set again under the new name
+        refresh(np)
+    }
+
     /** Follows the Vercel deployment started by a push, like [watch] follows a CI run. [since] = when the push started (phone clock). */
     private fun watchVercel(p: Project, since: Long, gen: Int) = viewModelScope.launch {
         deployLog += "Waiting for Vercel…"

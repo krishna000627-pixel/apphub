@@ -18,6 +18,8 @@ import androidx.navigation.NavHostController
 /** v28: short release notes shown on the About page (newest first). */
 object ChangeLog {
     val list: List<Pair<String, List<String>>> = listOf(
+        "v86" to listOf("Rename repo moved: open the three dots on an app and tap Rename repo. It has its own page, can set the signing secrets again after the rename, and has a button to re-send them alone. The row in Settings is gone."),
+        "v85" to listOf("Settings > Repository has a Rename repo row. It renames the repo on GitHub and App Hub follows it (keystore, what's new log and Vercel link included)."),
         "v84" to listOf("After your first build from App Hub it asks once if the other workflows of the repo should start too. A what's new that said Waiting although the release was out is fixed as soon as the latest version is downloaded. The prompt page no longer opens the keyboard by itself. New Bug prompt for problems inside the app."),
         "v81" to listOf("Removed the \"live\" label from the running build card. The steps still update by themselves."),
         "v80" to listOf("The dot at the end of the download bar is gone. Text and icons on buttons now follow the colour behind them (white on the darker buttons of the light themes), and chips and bars use the theme colour instead of lilac. The prompt page has new input boxes: label above, inset box, green border while you type, a clear button, and a hint. Picked idea and option cards get a soft green fill."),

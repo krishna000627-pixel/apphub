@@ -143,3 +143,29 @@ fun HubVM.siteName(p: Project): String? {
     if (p.kind != ProjectType.WEBSITE) return hostOf(l)
     return when { l.contains(".vercel.app") -> "Vercel"; l.contains(".github.io") -> "GitHub Pages"; else -> hostOf(l) }
 }
+
+
+/** v86: its own page (project three dots > Rename repo): renames the GitHub repo and can set the signing secrets again, so nothing is lost on the new name. */
+@Composable fun RenameRepoScreen(vm: HubVM, nav: NavHostController, id: Long) {
+    val p = projectOrHome(vm, nav, id) ?: return
+    var name by remember(p.repo) { mutableStateOf(p.repo.substringAfter("/")) }
+    var resend by remember { mutableStateOf(true) }
+    val app = p.kind == ProjectType.APP
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Header("Rename repo", nav)
+        Panel {
+            Text(p.repo, fontWeight = FontWeight.Bold, color = Cyan)
+            Spacer(Modifier.height(8.dp))
+            HubField("New name", name, { name = it }, "e.g. MyApp", singleLine = true, icon = Icons.Default.Edit)
+            Text("Letters, numbers, - _ . only. You need admin rights on the repo. GitHub keeps the old address as a redirect; a GitHub Pages address changes with the name.", Modifier.padding(top = 6.dp), fontSize = 11.sp, color = Muted)
+            if (app) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                HubSwitch(resend, { resend = it })
+                Text("  Re-send signing secrets after", fontSize = 13.sp)
+            }
+            if (vm.repoMsg.isNotBlank()) Text(vm.repoMsg, Modifier.padding(top = 6.dp), fontSize = 12.sp, color = Amber)
+        }
+        BigButton(if (vm.repoBusy) "Renaming…" else "Rename", Icons.Default.Edit) { if (!vm.repoBusy) vm.renameRepo(p, name, resend && app) }
+        if (app) OutlinedButton({ vm.resendSecrets(p) }, Modifier.fillMaxWidth()) { Text("Re-send signing secrets only") }
+        Spacer(Modifier.height(12.dp))
+    }
+}

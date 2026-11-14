@@ -205,7 +205,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
     }
     // contentWindowInsets = 0 so the status bar inset is applied exactly once (statusBarsPadding below)
     // v63/v64: the project pages (project, builds, releases, settings, info, files, file, env, install) are sub pages with a back arrow, so the app bar is hidden there
-    val onProject = route != null && listOf("about", "whatsnew/", "detail/", "builds/", "releases/", "psettings/", "aprompt/", "info/", "files/", "file/", "env/", "install/").any { route.startsWith(it) }
+    val onProject = route != null && listOf("about", "whatsnew/", "detail/", "builds/", "releases/", "psettings/", "rename/", "aprompt/", "info/", "files/", "file/", "env/", "install/").any { route.startsWith(it) }
     Scaffold(containerColor = Bg, contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
         if (!onProject) NavigationBar(containerColor = Surf) {
             tabs.forEach { (r, l, i) ->
@@ -244,6 +244,7 @@ fun goDeploy(vm: HubVM, nav: NavHostController, p: Project) {
             composable("detail/{id}", listOf(navArgument("id") { type = NavType.LongType })) { ProjectScreen(vm, nav, it.arguments!!.getLong("id")) }
             composable("builds/{id}", listOf(navArgument("id") { type = NavType.LongType })) { BuildsScreen(vm, nav, it.arguments!!.getLong("id")) }   // v64
             composable("releases/{id}", listOf(navArgument("id") { type = NavType.LongType })) { ReleasesScreen(vm, nav, it.arguments!!.getLong("id")) }
+            composable("rename/{id}", listOf(navArgument("id") { type = NavType.LongType })) { RenameRepoScreen(vm, nav, it.arguments!!.getLong("id")) }   // v86
             composable("psettings/{id}", listOf(navArgument("id") { type = NavType.LongType })) { ProjectSettingsScreen(vm, nav, it.arguments!!.getLong("id")) }
             composable("install/{id}", listOf(navArgument("id") { type = NavType.LongType })) { InstallScreen(vm, nav, it.arguments!!.getLong("id")) }
         }

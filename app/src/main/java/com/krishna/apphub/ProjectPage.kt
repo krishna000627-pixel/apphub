@@ -123,6 +123,7 @@ private fun statusWord(ok: Boolean?) = when (ok) { true -> "passed"; false -> "f
             IconButton({ menu = true }, Modifier.size(40.dp)) { Icon(Icons.Default.MoreVert, null, tint = Muted) }
             DropdownMenu(menu, { menu = false }) {
                 DropdownMenuItem({ Text("Open on GitHub") }, { menu = false; openUrl(ctx, "https://github.com/${p.repo}") })
+                if (p.repo.contains("/")) DropdownMenuItem({ Text("Rename repo") }, { menu = false; vm.repoMsg = ""; nav.navigate("rename/${p.id}") })
                 DropdownMenuItem({ Text("Copy link") }, { menu = false; vm.copy(link) })
                 DropdownMenuItem({ Text("Share") }, {
                     menu = false

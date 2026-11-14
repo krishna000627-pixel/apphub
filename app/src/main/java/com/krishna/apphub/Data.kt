@@ -219,6 +219,15 @@ class Prefs(ctx: Context) {
     fun autoVer(id: Long) = sp.getBoolean("auto_$id", true)
     fun setAutoVer(id: Long, v: Boolean) { sp.edit().putBoolean("auto_$id", v).apply() }
 
+    /** v85: the settings kept under the repo name (keystore, what's new log, preset flag, Vercel id) follow a renamed repo. */
+    fun moveRepo(old: String, new: String) {
+        val e = sp.edit()
+        listOf("wn_", "ps_", "ks_", "vp_").forEach { k -> sp.all["$k$old"]?.let { v ->
+            when (v) { is String -> e.putString("$k$new", v); is Boolean -> e.putBoolean("$k$new", v) }
+            e.remove("$k$old") } }
+        e.apply()
+    }
+
     fun saveKeys(repo: String, v: String) = put("ks_$repo", v)
     fun keys(repo: String) = s("ks_$repo")
 

@@ -236,6 +236,14 @@ class GitHub(private val prefs: Prefs) {
         return when { c == 0 -> "no network"; c == 401 -> "GitHub session expired. Log in again in Accounts"; msg.isNotBlank() -> msg; else -> "HTTP $c" }
     }
 
+    /** v85: renames the repo on GitHub (same owner). Returns the new "owner/name" and "" on success, otherwise "" and the reason. */
+    suspend fun renameRepo(repo: String, newName: String): Pair<String, String> {
+        val (c, b) = send("PATCH", "/repos/$repo", JSONObject().put("name", newName))
+        if (c in 200..299) return (runCatching { JSONObject(b).optString("full_name") }.getOrDefault("").ifBlank { repo.substringBefore("/") + "/" + newName }) to ""
+        val msg = runCatching { JSONObject(b).optString("message") }.getOrDefault("")
+        return "" to when { c == 0 -> "no network"; c == 401 -> "GitHub session expired. Log in again in Accounts"; c == 403 -> "GitHub refused (no admin rights on this repo)"; c == 422 -> "That name is taken or not allowed"; msg.isNotBlank() -> msg; else -> "HTTP $c" }
+    }
+
     suspend fun setSecret(repo: String, name: String, value: String): Boolean {
         val (c, b) = get("/repos/$repo/actions/secrets/public-key")
         if (c != 200) return false
